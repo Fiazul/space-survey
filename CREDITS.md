@@ -32,6 +32,11 @@ The **3D ship & prop models** are free assets, sourced mainly from:
 
 - Model by **Dingo57** ([CGTrader designer page](https://www.cgtrader.com/designers/dingo57?utm_source=credit&utm_source=credit_item_page)).
 
+**SpaceShip** (`assets/jazoone_spaceship/*`):
+
+- *"SpaceShip"* (https://skfb.ly/oJrVX) by **JazOone**, licensed under
+  **Creative Commons Attribution 4.0** (http://creativecommons.org/licenses/by/4.0/).
+
 **Galaxy model** (`assets/galaxy.glb`):
 
 - *"Galaxy"* (https://skfb.ly/6xEsD) by **991519166**, licensed under
@@ -56,6 +61,14 @@ The **3D ship & prop models** are free assets, sourced mainly from:
   Charon (New Horizons PIA19866). NASA images-assets + Wikimedia Commons.
 
 Swap slot in each recipe for later USGS / NASA / ESA mosaics.
+
+**Engine exhaust** (`assets/fx/exhaust_noise.png`) — **generated in-repo**, no third-party
+asset. `tools/gen_exhaust_noise.py` bakes a seamlessly tiling 256x256 RGBA noise sheet
+(periodic Perlin FBM in R/G/B plus a ridged filament channel in A) with numpy + the
+stdlib `zlib`/`struct`, in the same spirit as the pure-Python `tools/gen_*.py` audio
+generators. `shaders/cruiser_torch.gdshader` and `shaders/exhaust_haze.gdshader` sample
+it for plume turbulence and heat shimmer. Regenerate with
+`python3 tools/gen_exhaust_noise.py`; the result is deterministic (seeded).
 
 **Black hole** — Sagittarius A\* at the galactic core is **procedurally generated** in-shader
 (`scripts/galaxy_model.gd`, the `BH_EHT_SHADER`), styled after its real Event Horizon Telescope

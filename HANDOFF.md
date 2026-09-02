@@ -1,24 +1,117 @@
+# Astryx — AAA booster/thruster pass (2026-09-02)
+
+## What the thruster is now
+
+Four layers, all driven from ONE value (`Ship._propulsion_power` + `_propulsion_surge`)
+so no layer can disagree with another about how hard the engine is working:
+
+1. **Torch cones** — `shaders/cruiser_torch.gdshader`, two per socket (fog sheath +
+   inner core), built by `ShipMesh._add_torch_layer`.
+2. **Nozzle lights** — `OmniLight3D` per socket. The torch is emissive geometry and
+   cannot light anything; this is what puts engine glow on the hull.
+3. **Heat haze** — `shaders/exhaust_haze.gdshader`, a screen-space refraction shell.
+4. **Glow** — unchanged; the existing `WorldEnvironment` picks up the HDR emission.
+
+Layers 2-3 live under a separate `BoosterNozzleRig` node, NOT under the per-ship plume
+root. The plume roots have a checked contract ("N sockets -> exactly 2N CylinderMesh
+children") and the contract tests assert exact child counts.
+
+**There is deliberately no ember/spark particle layer.** One was built (a single
+`GPUParticles3D` per ship on `EMISSION_SHAPE_POINTS`) and removed: with the emitter in
+the scene the hull region washed out warm — a 960x540 frame went from 0.2% to 12.7%
+bright pixels — and shrinking the sparks ~8000x (converting their scale from model to
+world units) barely moved it, 12.0% -> 10.3%. So the cause is the emitter's presence,
+not the quad size, and it was not worth shipping unexplained. If you try again, gate it
+on `tools/render_thruster.tscn ISOLATE=no_embers` before keeping it.
+
+## Torch shader specifics
+
+- **Turbulence** comes from `assets/fx/exhaust_noise.png` (baked by
+  `tools/gen_exhaust_noise.py`), sampled in `(angle, axial - flow)` space so it advects
+  downstream, with a domain warp so filaments curl. It replaced the old `sin()` pair.
+- **Seam:** `atan()` wraps a full turn at the back of the plume; automatic mip
+  selection reads that as a huge UV step and drops to the blurriest mip, drawing a grey
+  line down the exhaust. `flow_sample()` fixes it with `textureGrad` + wrapped
+  derivatives. Do not replace it with a plain `texture()` call.
+- **Shock diamonds** (Mach disks) are the strongest "real rocket" cue. Core layers only
+  (`SHOCK_TRAIN`); on the fog sheath they read as banding.
+- **Temperature ramp:** cold engine = orange, hot = blue-white. Shared with the JazOone
+  hull disc so the disc and its plume never disagree.
+- **Throttle shaping** happens in the vertex stage (`length_scale`, `flare_scale`),
+  stretched about the NOZZLE end, not the centre, so a longer flame keeps its root on
+  the socket. This needs `extra_cull_margin` or the plume pops off at high throttle.
+- **Depth fade** is in WORLD units (view-space depth) while the mesh is in model space,
+  so `_add_torch_layer` converts through the `fit_model` scale.
+
+## JazOone — two things were actually broken
+
+- Its engine discs were gated on `booster_uv_a`/`booster_uv_b` UV discs AND the emissive
+  mask. `tools/probe_jazoone_sockets.gd` proves **no vertex UV lands inside either
+  disc**, so that branch never ran. The UV gate is gone; the emissive mask alone is
+  precise (3464 of 310277 vertices, in exactly two tight clusters).
+- It had no plume geometry at all. `add_jazoone_booster_plumes` now builds it on the two
+  probed sockets.
+- **Mind the sign:** JazOone imports with `yaw: 0`, so its rear is **+Z**. The other
+  three are `yaw: 180` and vent along **-Z**. `_add_torch_layer(..., facing)` carries
+  this; a sign slip buries the flame inside the hull.
+
+## Tooling
+
+- `tools/gen_exhaust_noise.py` — bakes the tiling noise (seeded/deterministic). Periodic
+  Perlin, not value noise (value noise leaves a visible rectilinear grid), with
+  histogram equalisation (plain min/max rescale leaves FBM as grey mush).
+- `tools/probe_jazoone_sockets.gd` — recovers sockets from the emissive mask.
+- `tools/render_thruster.tscn` + `.gd` — offscreen contact sheet, all 4 ships x 3
+  throttle settings, mirroring main.gd's environment. Run as a **scene**, not
+  `--script`:
+  `SHOT_DIR=/tmp/shots xvfb-run -a <godot> --path <copy> res://tools/render_thruster.tscn`
+
+## Gotchas hit
+
+- `TAU` is a **built-in** Godot shader constant; redefining it is a compile error.
+- Headless (`--headless --script`) DOES compile shaders through the dummy renderer, so
+  shader errors surface in the contract tests. Use that as the fast gate.
+- `assets/fx/exhaust_noise.png.import` must stay `compress/mode=0`,
+  `detect_3d/compress_to=0`, `fix_alpha_border=false`. The four channels are
+  independent data; block compression correlates them and alpha-border bleeding
+  corrupts RGB.
+
+---
+
 # Astryx — Authored ship roster and propulsion handoff (2026-08-27)
 
 ## Current state
 
-- The player roster is now exactly three authored ships: **Class II Galactic
-  Cruiser** (default), **Snarkrans Starship**, and **Dingo57 Starship**.
+- The player roster is now four authored ships: **Class II Galactic Cruiser**
+  (default), **Snarkrans Starship**, **Dingo57 Starship**, and **SpaceShip**
+  (JazOone / Sketchfab CC-BY).
+- SpaceShip's `Layer_1` is five `Layer_1_Material_0` chunks of the **whole hull**
+  (vertex-split, not five boosters). Painting them with the additive propulsion
+  shader made the ship solid white. Hull now keeps its albedo; the HDR torch
+  is masked to the two emissive engine discs.
+- SpaceShip yaw is `0`. The Sketchfab GLB already faces correctly; the OBJ
+  ships' `yaw: 180` flipped this one so the nose sat where the engines belong.
 - The previous player ships, their dedicated engine loops/music, and the random
   procedural booster-layout system were removed.
 - Hull customization is restored for every non-booster surface. Propulsion
   surfaces are excluded by shader identity and always remain white-hot.
 - Class II uses its six authored `propulsion` patches as exact sockets. Each has
-  a nested HDR white core and blue-white fog sheath behind the nozzle face.
+  a nested HDR white core and longer cyan fog sheath behind the nozzle face.
 - Snarkrans uses the user-identified `.000` and `.010_...018` upper-booster
   objects plus the `.005_...035` and `.001_...034` lower-pair objects. Their
   three empty centers are filled with dense emissive plugs, then extended with
   the same nested torch treatment.
-- Dingo57's eight user-identified booster groups retain their authored geometry
-  and receive the dedicated HDR propulsion material.
-- Dingo57 `Group_107` and `Group_068` are preserved as dedicated opaque,
-  double-sided hull surfaces; do not merge them back into the shared material
-  bucket or Godot's backface culling makes those pieces appear missing.
+- Dingo57's eight user-identified booster groups retain their authored geometry,
+  get the HDR propulsion material, and now also get fog+core trails from their
+  rear faces (070/109 = center pair halves).
+- The shared torch shader now flows: axial wisps, radial edge fade, white core
+  going cyan toward the tip. JazOone SpaceShip is left as-is.
+- Dingo57 ingest now keeps the eight booster groups as dedicated surfaces
+  and merges every remaining face into one opaque `hull_body` surface.
+  Runtime styling forces that hull opaque and double-sided, including under
+  glassy hangar finish, so thin chassis panels (including bottom groups
+  `053`, `065`, `092`, `104` and the earlier outer groups) cannot vanish.
+  Do not split the hull back into SketchUp glass/opaque material buckets.
 - Booster materials react to throttle, boost, warp charge, and starvation
   sputter. No booster position is randomized.
 

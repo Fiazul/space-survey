@@ -31,6 +31,10 @@ const SHIP_MODELS := [
 	# Dingo57 Starship — all eight user-identified rear groups remain authored geometry;
 	# their surfaces are replaced by torch-bright, edge-faded propulsion emission.
 	{ "name": "Dingo57 Starship", "path": "res://assets/dingo57_starship/3d-model.obj", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "dingo57_starship": true, "color_pick": true, "default_color": "ash" },
+	# SpaceShip — JazOone / Sketchfab CC-BY. Layer_1 is five Layer_1_Material_0
+	# chunks; the first two are the actual boosters and all five take the existing
+	# HDR propulsion shader.
+	{ "name": "SpaceShip", "path": "res://assets/jazoone_spaceship/spaceship.glb", "length": 0.90, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.84, "hp": 210, "bolt_scale": 1.3, "bolt_speed": 1280.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 155.0, "energy_use": 0.74, "warp": 118.0, "light_accent": Color(0.32, 0.70, 1.0), "light_energy": 0.36, "jazoone_spaceship": true, "color_pick": false, "default_color": "silver" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.
@@ -549,8 +553,15 @@ var _finish_choice := {}       # ship name -> "metallic" | "glassy"
 var _engine_pitch := 1.0       # per-ship engine voice character (set on build)
 var _mesh_root: Node3D
 var _engine_mat: StandardMaterial3D   # only used by the primitive fallback
+# Cold end of the exhaust temperature ramp, matched to cruiser_torch's cool_color.
+const ENGINE_COOL := Color(1.0, 0.33, 0.06)
+
 var _propulsion_power := 0.0           # smoothed authored-mesh power (speed driven)
+var _propulsion_surge := 0.0           # decaying kick applied when throttle is punched
 var _authored_propulsion: Array[ShaderMaterial] = [] # Authored rear meshes; speed-reactive
+var _torch_materials: Array[ShaderMaterial] = []     # Torch cones only; these reshape
+var _nozzle_lights: Array[OmniLight3D] = []          # Real light the plume cannot emit
+var _engine_accent := Color(0.35, 0.70, 1.0)         # Hot-end exhaust colour for lights
 var _streaks: GPUParticles3D          # motion streaks at high speed
 var _streak_mat: StandardMaterial3D
 var _cam_zoom := 1.0          # target zoom (mouse wheel)
@@ -1014,12 +1025,49 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 	if _boost_starved:
 		sputter = 0.18 if fmod(t * 11.0, 1.0) < 0.45 else 0.72
 		k = 1.0
+	var previous := _propulsion_power
 	_propulsion_power = lerpf(_propulsion_power, target_power * sputter, k)
-	# All three imported ships use their own named rear propulsion meshes. Keep a
+	# Punching the throttle should visibly kick the flame before it settles: chamber
+	# pressure overshoots, the plume over-expands, then relaxes. Measured as rate of
+	# change (frame-rate independent) and decayed on its own clock, so the kick reads
+	# as a transient rather than just a longer burn. The -1.5 floor ignores the slow
+	# drift of ordinary acceleration and only fires on a real stab at the throttle.
+	var rise := maxf(_propulsion_power - previous, 0.0) / maxf(delta, 0.0001)
+	_propulsion_surge = maxf(
+		_propulsion_surge * (1.0 - clampf(3.6 * delta, 0.0, 1.0)),
+		clampf((rise - 1.5) * 0.10, 0.0, 0.70))
+
+	# All four imported ships use their own named rear propulsion meshes. Keep a
 	# visible idle burn, then increase turbulence and flow with speed.
+	var heat := clampf(_propulsion_power * 1.12 + _propulsion_surge * 0.25, 0.0, 1.0)
 	for propulsion in _authored_propulsion:
 		propulsion.set_shader_parameter("power", lerpf(0.42, 1.0, _propulsion_power))
 		propulsion.set_shader_parameter("flow_speed", lerpf(0.8, 3.1, _propulsion_power))
+		# Exhaust runs orange when cold and blue-white when hot. Torch cones, the
+		# JazOone engine discs and the haze all read the same value, so no layer can
+		# disagree with another about how hard the engine is working.
+		propulsion.set_shader_parameter("temperature", heat)
+
+	# Only the torch cones reshape. Length moves a lot with throttle; flare moves very
+	# little, or the plume balloons outward instead of stretching backward.
+	var length_scale := lerpf(0.52, 1.30, _propulsion_power) + _propulsion_surge * 0.42
+	var flare_scale := lerpf(0.80, 1.06, _propulsion_power) + _propulsion_surge * 0.10
+	var churn := lerpf(0.55, 1.35, _propulsion_power)
+	for torch in _torch_materials:
+		torch.set_shader_parameter("length_scale", length_scale)
+		torch.set_shader_parameter("flare_scale", flare_scale)
+		torch.set_shader_parameter("turbulence", churn)
+
+	# Emissive geometry cannot put a photon on the hull, so these are what actually
+	# make the tail glow when the engines light up.
+	if not _nozzle_lights.is_empty():
+		var lit := ENGINE_COOL.lerp(_engine_accent, smoothstep(0.12, 0.78, heat))
+		var lenergy := lerpf(0.10, 1.45, _propulsion_power) + _propulsion_surge * 0.55
+		# Slight flicker so it reads as combustion rather than a fixed lamp.
+		lenergy *= 1.0 + sin(t * 27.0) * 0.05 * _propulsion_power
+		for light in _nozzle_lights:
+			light.light_color = lit
+			light.light_energy = lenergy
 
 
 func _update_camera(delta: float) -> void:
@@ -1151,6 +1199,9 @@ func _build_ship_model(idx: int) -> void:
 		_mesh_root.remove_child(c)
 		c.queue_free()
 	_authored_propulsion.clear()
+	_torch_materials.clear()
+	_nozzle_lights.clear()
+	_propulsion_surge = 0.0
 	_engine_mat = null
 
 	var info = SHIP_MODELS[idx]
@@ -1194,6 +1245,8 @@ func _build_ship_model(idx: int) -> void:
 		_authored_propulsion = ShipMesh.style_snarkrans_starship(model)
 	elif info.get("dingo57_starship", false):
 		_authored_propulsion = ShipMesh.style_dingo57_starship(model)
+	elif info.get("jazoone_spaceship", false):
+		_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)
 	var picked_palette := _palette_for(_color_for(info.name, info))
 	ShipMesh.color_authored_ship(model, picked_palette.swatch, _finish_for(info.name))
 	_mesh_root.add_child(model)
@@ -1203,10 +1256,29 @@ func _build_ship_model(idx: int) -> void:
 	# The Class II source only supplies six flat propulsion patches. Fit the hull
 	# first, then extend those exact sockets into visible two-layer torch plumes so
 	# exhaust volume cannot alter the intended ship scale.
+	var plumes: Array[ShaderMaterial] = []
 	if info.get("class_ii_cruiser", false):
-		_authored_propulsion.append_array(ShipMesh.add_class_ii_booster_plumes(model))
+		plumes = ShipMesh.add_class_ii_booster_plumes(model)
 	elif info.get("snarkrans_starship", false):
-		_authored_propulsion.append_array(ShipMesh.add_snarkrans_booster_plumes(model))
+		plumes = ShipMesh.add_snarkrans_booster_plumes(model)
+	elif info.get("dingo57_starship", false):
+		plumes = ShipMesh.add_dingo57_booster_plumes(model)
+	elif info.get("jazoone_spaceship", false):
+		plumes = ShipMesh.add_jazoone_booster_plumes(model)
+	# Torch cones are the only layer whose GEOMETRY reacts to throttle, so they are
+	# tracked separately from the flat authored propulsion surfaces and the haze.
+	for material in plumes:
+		if material.shader == ShipMesh.CRUISER_TORCH_SHADER:
+			_torch_materials.append(material)
+	_authored_propulsion.append_array(plumes)
+	# Haze shells and nozzle lights live in their own rig node so the plume roots keep
+	# their "N sockets -> exactly 2N cones" shape; collect them back by name.
+	_authored_propulsion.append_array(ShipMesh.collect_haze_materials(model))
+	_nozzle_lights = ShipMesh.collect_nozzle_lights(model)
+	_engine_accent = info.get("light_accent", Color(0.35, 0.70, 1.0))
+	print("%s: %d torch cones, %d nozzle lights, %d driven materials"
+		% [info.name, _torch_materials.size(), _nozzle_lights.size(),
+		_authored_propulsion.size()])
 	# Bolts spawn close to the nose — just shy of the hull's front tip — so the bright tracer
 	# clearly emerges from the ship rather than floating ahead of it.
 	muzzle = box.size.z * 0.42

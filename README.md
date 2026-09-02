@@ -16,10 +16,10 @@ a small reusable surface kit.
 - **Real positions** — Sun + planets from live **JPL Horizons**, **~50 of the nearest
   real star systems** from the J2000 catalog. Earth is the origin (floating-origin
   engine for AU↔ly scale).
-- **Three authored ships** — **Class II Galactic Cruiser** (default), **Snarkrans
-  Starship**, and **Dingo57 Starship**. Dock with **F** and swap with **1–3**.
-  Each model keeps its own booster meshes, rendered as extremely bright,
-  speed-reactive, edge-faded propulsion—no random procedural booster layouts.
+- **Four authored ships** — **Class II Galactic Cruiser** (default), **Snarkrans
+  Starship**, **Dingo57 Starship**, and **SpaceShip**. Dock with **F** and swap
+  with **1–4**. Each model keeps its own booster meshes, rendered as extremely
+  bright, speed-reactive, edge-faded propulsion—no random procedural booster layouts.
 - **Editable HUD** — drag-place and scale HUD widgets in a layout editor; placement
   persists to your profile (defaults are the shipped layout).
 - **Flight feel** — sublight "space drift" that carries momentum through turns,
@@ -92,7 +92,7 @@ See [`PLANET_GENERATOR.md`](PLANET_GENERATOR.md) for the current cook and LOD co
 **`L-click` fire** ·
 `Num Lock` auto-cruise · `W+C` drift-flip · **`Tab`** waypoint · **`V`** scan · **`L`** codex ·
 **`J`** mission log · **`G`** details · **`M`** map · **`F`** dock / wormhole · **`H`** teleport to Earth ·
-wheel zoom · **`1–3`** swap ships (docked) · `Esc` free cursor / back
+wheel zoom · **`1–4`** swap ships (docked) · `Esc` free cursor / back
 
 ## Run
 Install **Godot 4** (GDScript, no C#), open this folder as a project, press **F5**.

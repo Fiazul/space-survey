@@ -1,5 +1,11 @@
-# Booster-only materials. The downloaded archive omitted its
-# referenced 3d-model.mtl, so hull materials remain untouched/default.
+# Opaque hull plus booster materials. The downloaded archive omitted
+# its referenced 3d-model.mtl; hull_body is forced fully opaque (d 1).
+
+newmtl hull_body
+Kd 0.30 0.31 0.34
+Ks 0.40 0.40 0.40
+Ns 64
+d 1
 
 newmtl booster_group_070
 Kd 1 1 1

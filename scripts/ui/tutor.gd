@@ -51,7 +51,7 @@ var _tips := [
 	{ "t": "Break free", "s": "Trapped near a star?  W + C  to leap out.",
 	  "d": "Stars and planets force-slow you inside their zone — it can feel like you're stuck. Aim AWAY from the body and hold W + tap C: the drift-flip leap bypasses the slow-zone and shoots you clear. Chain it if you're deep in the well." },
 	{ "t": "Switch ships", "s": "Go to a station to switch ships.",
-	  "d": "Fly to any platform/station and press F to dock, then pick one of the three authored hulls (1–3) in the hangar. Each keeps its own mesh-built, torch-bright propulsion." },
+	  "d": "Fly to any platform/station and press F to dock, then pick one of the four authored hulls (1–4) in the hangar. Each keeps its own mesh-built, torch-bright propulsion." },
 ]
 
 var _order := []

@@ -2,16 +2,17 @@
 """Build a Godot-safe Dingo57 OBJ without changing any geometry.
 
 The supplied OBJ has 352 groups and 678 material switches, which exceeds Godot's
-256-surface ArrayMesh limit and truncates the hull. This builder groups all ordinary
-faces by authored material and keeps the eight user-identified booster groups as
-dedicated surfaces. Vertex/UV/normal/face records are copied exactly; only face order
-and surface metadata change.
+256-surface ArrayMesh limit and truncates the hull. SketchUp also splits those
+groups across opaque and Translucent_Glass materials, so a viewer can see
+through panels that are solid in the source model. This builder keeps the eight
+user-identified booster groups as dedicated surfaces and merges every remaining
+face into one opaque hull_body surface. Vertex/UV/normal/face records are copied
+exactly; only face order and surface metadata change.
 """
 
 from __future__ import annotations
 
 import argparse
-import re
 import zipfile
 from collections import OrderedDict
 from pathlib import Path
@@ -19,17 +20,12 @@ from pathlib import Path
 
 BOOSTER_GROUPS = {"Group_113", "Group_111", "Group_115", "Group_070",
                   "Group_109", "Group_072", "Group_076", "Group_074"}
-DOUBLE_SIDED_GROUPS = {"Group_107", "Group_068"}
-
-def clean_name(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", value)
 
 
 def build(source: Path, output: Path, material_output: Path) -> tuple[int, int, int]:
     attributes: list[str] = []
     buckets: OrderedDict[str, list[str]] = OrderedDict()
     current_group = ""
-    current_material = "skp_front_default"
     triangle_count = 0
 
     if source.suffix.lower() == ".zip":
@@ -50,18 +46,14 @@ def build(source: Path, output: Path, material_output: Path) -> tuple[int, int, 
             attributes.append(line)
         elif token == "g" and len(fields) > 1:
             current_group = fields[1]
-        elif token == "usemtl" and len(fields) > 1:
-            current_material = fields[1]
         elif token == "f":
             if current_group in BOOSTER_GROUPS:
                 key = "booster_group_%s" % current_group.removeprefix("Group_")
-            elif current_group in DOUBLE_SIDED_GROUPS:
-                # Keep these two mirrored hull pieces isolated. Their authored
-                # winding is only visible from one side in Godot, so the runtime
-                # styling pass gives just these surfaces two-sided culling.
-                key = "double_sided_group_%s" % current_group.removeprefix("Group_")
             else:
-                key = "hull_%s" % clean_name(current_material)
+                # Keep the whole remaining hull as one opaque surface. Per-material
+                # buckets previously parked chassis faces in Translucent_Glass
+                # surfaces, and one-sided winding then hid those panels in game.
+                key = "hull_body"
             buckets.setdefault(key, []).append(line)
             triangle_count += len(fields) - 3
 
@@ -72,15 +64,16 @@ def build(source: Path, output: Path, material_output: Path) -> tuple[int, int, 
         stream.write("\n".join(attributes))
         stream.write("\n")
         for key, faces in buckets.items():
-            material = key.removeprefix("hull_") if key.startswith("hull_") else key
-            stream.write("\no %s\nusemtl %s\ns 1\n" % (key, material))
+            stream.write("\no %s\nusemtl %s\ns 1\n" % (key, key))
             stream.write("\n".join(faces))
             stream.write("\n")
 
     with material_output.open("w", encoding="utf-8", newline="\n") as stream:
-        stream.write("# Booster-only materials. The downloaded archive omitted its\n")
-        stream.write("# referenced 3d-model.mtl, so hull materials remain untouched/default.\n\n")
-        material_blocks = []
+        stream.write("# Opaque hull plus booster materials. The downloaded archive omitted\n")
+        stream.write("# its referenced 3d-model.mtl; hull_body is forced fully opaque (d 1).\n\n")
+        material_blocks = [
+            "newmtl hull_body\nKd 0.30 0.31 0.34\nKs 0.40 0.40 0.40\nNs 64\nd 1",
+        ]
         for group in sorted(BOOSTER_GROUPS):
             name = "booster_group_%s" % group.removeprefix("Group_")
             material_blocks.append("newmtl %s\nKd 1 1 1\nKs 1 1 1\nNs 128\nd 1" % name)

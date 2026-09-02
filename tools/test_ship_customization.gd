@@ -7,7 +7,7 @@ const TEST_TINT := Color(0.10, 0.66, 0.66)
 const SHIPS := [
 	{"key": "class", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "surfaces": 5, "boosters": 1},
 	{"key": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj", "surfaces": 77, "boosters": 4},
-	{"key": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj", "surfaces": 41, "boosters": 8},
+	{"key": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj", "surfaces": 9, "boosters": 8},
 ]
 
 
@@ -70,11 +70,14 @@ func _initialize() -> void:
 				or material is ShaderMaterial:
 				continue
 			var surface_name: String = model.mesh.surface_get_name(si).to_lower()
-			if surface_name.contains("double_sided_group_107") \
-				or surface_name.contains("double_sided_group_068"):
+			# Dingo57 is a thin-shell SketchUp hull. Glassy finish may polish it,
+			# but it must stay fully opaque and double-sided or panels vanish.
+			if String(spec.key) == "dingo57" or surface_name.begins_with("outer_chassis_group_") \
+				or surface_name == "hull_body" or surface_name.begins_with("hull_"):
 				failed += _check("%s_repaired_hull_%d_stays_opaque" % [spec.key, si],
 					material is BaseMaterial3D \
 					and (material as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
+					and is_equal_approx((material as BaseMaterial3D).albedo_color.a, 1.0) \
 					and (material as BaseMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED)
 				continue
 			failed += _check("%s_hull_%d_glassy" % [spec.key, si],

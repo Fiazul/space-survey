@@ -49,24 +49,33 @@ func _initialize() -> void:
 	failed += _check("twelve_booster_meshes", plume_root != null and plume_root.get_child_count() == 12)
 	var torch_meshes_ok := plume_root != null
 	var torch_shaders_ok := true
+	var open_cones := true
 	if plume_root != null:
 		for child in plume_root.get_children():
 			torch_meshes_ok = torch_meshes_ok and child is MeshInstance3D \
 				and (child as MeshInstance3D).mesh is CylinderMesh
+			if child is MeshInstance3D and (child as MeshInstance3D).mesh is CylinderMesh:
+				var cone := (child as MeshInstance3D).mesh as CylinderMesh
+				open_cones = open_cones and not cone.cap_bottom and not cone.cap_top
 			var torch_mat := (child as MeshInstance3D).material_override as ShaderMaterial
 			torch_shaders_ok = torch_shaders_ok and torch_mat != null \
 				and torch_mat.shader == MeshStyler.CRUISER_TORCH_SHADER \
-				and torch_mat.shader.code.contains("640.0") \
-				and torch_mat.shader.code.contains("tip_fade")
+				and torch_mat.shader.code.contains("1920.0") \
+				and torch_mat.shader.code.contains("tip_fade") \
+				and torch_mat.shader.code.contains("wispy") \
+				and torch_mat.shader.code.contains("billow") \
+				and torch_mat.shader.code.contains("VERTEX.x")
 	failed += _check("tapered_torch_geometry", torch_meshes_ok)
+	failed += _check("open_plasma_cones", open_cones)
 	failed += _check("torch_hdr_edge_fade", torch_shaders_ok)
+	failed += _check("torch_video_flow", torch_shaders_ok)
 
 	# The standalone test runner does not initialize project autoload identifiers
 	# before compiling ship.gd, so check registry wiring as source and exercise the
 	# actual Ship node through the normal project-start smoke test.
 	var ship_source := FileAccess.get_file_as_string("res://scripts/flight/ship.gd")
 	failed += _check("default_registry_entry", ship_source.find("{ \"name\": \"Class II Galactic Cruiser\"") >= 0)
-	failed += _check("three_ship_roster", ship_source.count("{ \"name\":") == 3)
+	failed += _check("four_ship_roster", ship_source.count("{ \"name\":") == 4)
 	failed += _check("authored_propulsion_hook", ship_source.find("_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)") >= 0)
 	failed += _check("authored_plume_hook", ship_source.find("ShipMesh.add_class_ii_booster_plumes(model)") >= 0)
 	failed += _check("no_procedural_boosters", not ship_source.contains("_build_boosters") and not ship_source.contains("BOOSTER_LAYOUTS"))

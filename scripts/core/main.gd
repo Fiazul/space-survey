@@ -1679,7 +1679,7 @@ func _input(event: InputEvent) -> void:
 		ship.auto_cruise = false
 		hud.toast = "AUTO-CRUISE  OFF"
 		hud.toast_t = 2.0
-	elif docked and key >= KEY_1 and key <= KEY_3:
+	elif docked and key >= KEY_1 and key <= KEY_4:
 		ship.swap_ship(key - KEY_1)
 		combat.player_hp = ship.max_hp   # new hull -> its full defence
 

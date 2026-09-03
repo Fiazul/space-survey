@@ -17,7 +17,7 @@ uniform vec4 cool_color : source_color = vec4(1.0, 0.33, 0.06, 1.0);
 uniform vec4 hot_color : source_color = vec4(0.30, 0.72, 1.0, 1.0);
 uniform float power : hint_range(0.0, 1.0) = 0.45;
 uniform float flow_speed : hint_range(0.0, 6.0) = 1.4;
-uniform float brightness : hint_range(0.5, 4.0) = 4.0;
+uniform float brightness : hint_range(0.05, 4.0) = 4.0;
 uniform float temperature : hint_range(0.0, 1.0) = 1.0;
 // The two authored engine discs are found by the emissive mask alone. There used to be
 // a pair of UV disc centres gating this as well, but tools/probe_jazoone_sockets.gd
@@ -41,7 +41,10 @@ void fragment() {
 	METALLIC = orm.b;
 	ROUGHNESS = orm.g;
 	NORMAL_MAP = texture(normal_tex, UV).rgb;
-	EMISSION = emis * 4.0;
+	// 4.0 put the whole hull's authored emissive well into HDR, and the glow turned
+	// that into a halo covering a quarter of the chase-view frame. Keep the lit panels
+	// lit, keep them under the bloom threshold.
+	EMISSION = emis * 0.9;
 
 	if (booster > 0.5) {
 		float facing = abs(dot(normalize(NORMAL), normalize(VIEW)));
@@ -52,11 +55,15 @@ void fragment() {
 		float fine = sin(local_position.z * 0.62 + local_position.x * 0.41 + flow * 4.7);
 		float turbulence = clamp(0.72 + broad * 0.16 + fine * 0.12, 0.35, 1.0);
 		float shimmer = mix(0.86, 1.12, turbulence);
-		float energy = mix(64.0, 128.0, power) * shimmer * brightness;
+		// Above display white so the disc reads as a hot throat, not 20x above it:
+		// With brightness 0.40 (see style_jazoone_spaceship) this is 0.2 at rest, 0.43
+		// at cruise and 1.03 at full boost - roughly where un-boosted cruise used to
+		// sit. `power` arrives as 0..Ship.POWER_CEIL (0.75).
+		float energy = mix(0.5, 4.6, pow(power, 1.4)) * shimmer * brightness;
 		// Same ramp the plume uses: a cold engine glows orange, a hot one blue-white.
 		vec3 tint = mix(cool_color.rgb, hot_color.rgb, smoothstep(0.12, 0.78, temperature));
 		vec3 white_core = mix(tint * plasma_color.rgb, vec3(1.0), 0.90 * temperature);
-		ALBEDO = vec3(1.0);
+		ALBEDO = white_core;
 		METALLIC = 0.0;
 		ROUGHNESS = 1.0;
 		EMISSION = white_core * energy * visibility;

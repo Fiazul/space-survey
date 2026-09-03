@@ -1,3 +1,229 @@
+# Astryx — exposure + glow-radius pass (2026-09-03)
+
+Three complaints across two rounds: the booster was too bright and fought the rest of
+the image, the ship read as tiny while flying, and then the glow SKIRT was too wide.
+All measured in the CHASE view, not the 3/4 beauty view — that distinction is the whole
+story of this pass. The scale work on the camera was reverted (see below); the exposure
+and glow work stands.
+
+## Measure it in the view you actually play in
+
+`tools/render_thruster.tscn` gained `VIEW=chase`, which puts the camera exactly where
+`Ship._update_camera` puts it (CAM_OFFSET hull lengths back, FOV_BASE) instead of the
+flattering 3/4 side angle. Also `CAM_FOV` / `CAM_BACK` / `CAM_UP` / `CAM_PITCH` to
+photograph a candidate rig without editing ship.gd, and `TORCH_GAIN` / `PROP_GAIN` to
+scale the emissive shaders' `brightness` for a sweep.
+
+The 3/4 sheet from the previous pass looked fine. The same build in the chase view was
+a white blob with the hull invisible. Anything tuned only on the 3/4 sheet is untested.
+
+## What was actually too bright (measured, not guessed)
+
+Isolation renders at 960x540, p99 luminance and % of frame above 0.08:
+
+| ship | as shipped | torch+prop shaders zeroed | nozzle rig hidden |
+|---|---|---|---|
+| class_ii | 0.081 / 1.03% | 0.081 / 1.03% | **0.017 / 0.34%** |
+| dingo57 | 0.289 / 4.13% | 0.289 / 4.13% | **0.033 / 0.59%** |
+| snarkrans | 0.270 / 3.65% | 0.272 / 3.67% | **0.087 / 1.07%** |
+| jazoone | 0.653 / 25.3% | **0.268 / 3.70%** | 0.623 / 22.7% |
+
+So on three of four ships the entire blowout was the **OmniLight3D nozzle lights**, and
+the torch cones contributed nothing — setting their `brightness` to 0.0 changed the
+frame by less than one part in a thousand. On JazOone it was its **hull-booster shader**
+and the lights were nearly irrelevant. The plume shader everyone reaches for first was
+innocent both times.
+
+Fixes, all of them measured:
+
+- **Nozzle lights** (`ship_mesh._add_nozzle_light`, `ship._update_authored_propulsion`):
+  range `socket_radius * 7.0 -> 4.0`, attenuation `1.6 -> 2.2`, energy ramp
+  `0.10..1.45 -> 0.04..0.42`, and per-light energy now divided by
+  `sqrt(2 / nozzle_count)`. These lights ADD: a flat energy made dingo57's eight
+  nozzles four times brighter than JazOone's two. sqrt not 1/n, or an eight-engine ship
+  ends up looking weaker than a two-engine one.
+- **`cruiser_propulsion.gdshader`**: energy `mix(64,128,power) -> mix(1.6,7.0,power)`
+  (x brightness 4.0 = 6.4..28, was 256..512). Gained the same `cool_color`/`hot_color`/
+  `temperature` ramp the torch and JazOone disc already had, and `ALBEDO` is now the
+  tinted colour rather than `vec3(1.0)` — under `blend_add` a white ALBEDO puts a floor
+  of white under the patch and defeats the ramp entirely. Before this, every engine bell
+  was the same flat white plate at idle as at full burn.
+- **`jazoone_hull_booster.gdshader`**: whole-hull `EMISSION = emis * 4.0 -> * 0.9`, disc
+  energy `mix(64,128) -> mix(0.9,4.0)`, and its material `brightness 4.0 -> 0.40` in
+  `style_jazoone_spaceship`. JazOone's discs are ~10% of hull length in radius each, far
+  bigger relative to the ship than the other hulls' patches, so it needs its own number.
+
+## THE BIG ONE: `render_mode unshaded` discards EMISSION
+
+Every "HDR energy" constant in `cruiser_torch.gdshader` and
+`cruiser_propulsion.gdshader` was dead code. Godot 4 takes ALBEDO as the final colour
+for an `unshaded` material and never adds the emission term. Both shaders are
+`render_mode unshaded, blend_add, ...`, so what reached the screen was `ALBEDO * ALPHA`
+and nothing else.
+
+Proven twice, in the 3/4 side view at full burn, 960x540:
+
+| change | clipped px | total light |
+|---|---|---|
+| as shipped | 2874 | 9278 |
+| torch `brightness` = 0 (energy 0) | 2846 | 9329 |
+| both shaders' EMISSION x100 | 2846 | 9329 |
+| plumes HIDDEN | 2288 | 5513 |
+
+Zeroing the energy and multiplying it by 100 give the same frame; hiding the geometry
+removes 40% of all the light. The energy term is not a control at all.
+
+That is why several rounds of "the booster is too bright" got nowhere: the torch core's
+`mix(480.0, 1920.0, power) * 3.4` = 6528 was never reaching a pixel, and
+`tools/test_class_ii_cruiser.gd` asserted the literal `"1920.0"` was present, so the
+number looked load-bearing.
+
+What was actually too bright: `ALBEDO = torch_color` (near white) with `ALPHA` up to
+0.88 laid down most of a white plate PER LAYER, and six sockets x two overlapping cones
+summed into a slab across the whole tail. `cruiser_propulsion` was worse -
+`ALBEDO = vec3(1.0)` with an `ALPHA` floor of **0.45**, so grazing faces never faded.
+
+The fix, in both shaders: **ALBEDO carries the HDR value** (it goes straight to the
+rgba16f buffer, so values above 1.0 still bloom), `EMISSION = vec3(0.0)`, and the energy
+ramp is scaled to peak just below 1.0 per layer so a dozen overlapping layers sum to a
+hot core instead of a slab. Torch peak 0.45, propulsion peak 0.9. `cruiser_led.gdshader`
+was always fine, because its ALBEDO is black and it puts everything in... EMISSION -
+which means the LED strip is drawn entirely by its ALPHA. Worth a look some day.
+
+### Per-ship gain, because the emissive AREA differs tenfold
+
+`tools/probe_propulsion_area.gd` measures how much of each hull the additive booster
+shader covers: **class_ii 0.64%, dingo57 4.30%, snarkrans 6.69%** (JazOone's discs are
+their own case). These layers add, so one flat brightness washes the wide-area ships out
+while leaving class_ii correct - which is why snarkrans kept a white patch across its
+mid-hull after the ALBEDO fix landed. `DINGO57_BOOSTER_GAIN` and
+`SNARKRANS_BOOSTER_GAIN` in ship_mesh.gd scale by `sqrt(class_ii_area / own_area)`, the
+same reasoning as the per-nozzle light share in ship.gd.
+
+Side view at full burn, before vs after, on snarkrans (the worst case):
+clipped px **2874 -> 1374**, inner-ring luminance **0.963 -> 0.399**, total light
+**9278 -> 4742**. The hull silhouette survives, and the plume cones are still there.
+
+**Rule: in an `unshaded` shader, never write to EMISSION.** Put the value on ALBEDO.
+The contract tests now assert this in both shaders so the trap cannot be re-set.
+
+**Second rule: measure in more than one camera angle.** The chase view (dead astern,
+looking down the cone axis) said the torch contributed nothing, which was true in that
+view and badly wrong in general - every cone wall is edge-on from directly behind. The
+side view is where the plumes actually have area. `tools/render_thruster.tscn` renders
+the 3/4 side by default and the chase view with `VIEW=chase`; check both.
+
+`tools/probe_propulsion_area.gd` prints which surfaces carry the additive booster
+shaders and how big they are as a share of the hull, which is how "the whole booster
+shell is painted white-hot" got ruled out (the shells are 0.4-0.8% of the ship).
+
+## `power` reaches the shaders as 0..POWER_CEIL, not 0.42..1.0
+
+`Ship._update_authored_propulsion` used to hand the shaders
+`lerpf(0.42, 1.0, _propulsion_power)`. Work out where the flight states actually land
+on that: ordinary cruise with no Shift is `550 / (SUBLIGHT_MAX * BOOST_MULT)` = 0.33 of
+`_propulsion_power`, which mapped to **0.61**; full boost clamps `_propulsion_power` to
+0.82, mapping to **0.90**. So un-boosted flight already sat near the top of every
+brightness ramp and Shift added almost nothing visible.
+
+`POWER_CEIL = 0.75` and a straight `_propulsion_power * POWER_CEIL` pulls the curve
+down, and each shader's idle constant came down with it so the ramp keeps its range.
+What lands where now (core-layer torch value, x brightness 3.4):
+
+| state | now | before |
+|---|---|---|
+| at rest | 0.068 | 0.264 |
+| cruise, no Shift | 0.134 | 0.331 |
+| full boost | 0.349 | 0.477 |
+
+Full boost now lands roughly where un-boosted cruise used to sit, and cruise is 2.6x
+below boost instead of 1.4x. Same treatment on the engine bells
+(`cruiser_propulsion`), the JazOone disc, and the nozzle lights
+(`0.04..0.42 -> 0.015..0.20`).
+
+**Colour is not affected by any of this.** The orange -> white -> blue ramp is driven by
+`temperature`, which comes off `_propulsion_power` directly and never went through the
+`power` mapping.
+
+`tools/render_thruster.tscn`'s three shots are now `rest` / `cruise` / `boost` at the
+`_propulsion_power` values those states really produce (0.0 / 0.33 / 0.82), rather than
+the old arbitrary 0.0 / 0.45 / 1.0.
+
+## Halo radius is the glow chain, not the shader
+
+Second round of the same complaint, phrased as "the radius of the brightness should be
+lower — is the core too hot?". The core was not the problem.
+
+`Environment.set_glow_level(n, w)`: level 1 is a half-resolution blur, level 5 is 1/32.
+Whatever weight level 5 carries gets smeared over an enormous area. main.gd had
+`1:0.2 / 3:0.4 / 5:0.7` — the MOST weight on the WIDEST blur — so every hot pixel grew a
+soft ball. Now `1:0.8 / 2:0.4 / 3:0.15 / 5:0.0`, and `glow_bloom 0.15 -> 0.05`.
+
+Radius at which the ring-mean luminance is still visible, chase view, full burn:
+
+| ship | before | after |
+|---|---|---|
+| dingo57 | 111 px | 77 px |
+| snarkrans | 142 px | 77 px |
+| jazoone | 199 px | 87 px |
+
+**Halving the plume shaders' energy on top of this changed the frame by less than 0.1%**
+(r_glow 65 vs 65, clipped-core pixels 1251 vs 1251 on dingo57). So do not reach for the
+emissive constants when the complaint is "the glow is too wide" — they are already below
+the point where they matter, and the skirt is entirely the level weights.
+
+A tighter variant was measured and NOT shipped: `glow_hdr_threshold 1.0 -> 1.8` with
+`glow_bloom 0.0` takes dingo57/snarkrans to 65 px. It is left alone because raising the
+threshold globally silences bloom on everything emitting between 1.0 and 1.8 — lasers,
+LED strips, distant stars — and none of those render in this harness, so it could not be
+verified. Try it if the skirt is still too wide, but look at combat and the starfield.
+
+`tools/render_thruster.tscn` takes `GLOW_L1..L5`, `GLOW_THRESHOLD`, `GLOW_INTENSITY`,
+`GLOW_STRENGTH`, `GLOW_BLOOM` for exactly this sweep. Shell note: pass them with
+`env VAR=x ... cmd`, not `"$@"` — expanded words are not treated as assignment prefixes,
+so a sweep written the obvious way silently runs every profile at the defaults.
+
+**Rule of thumb for this project's environment** (FILMIC, `tonemap_exposure 0.7`,
+`glow_hdr_threshold 1.0`): emissive linear values clip somewhere around 4. Anything
+above ~40 is a flat white plate whose only remaining variable is halo size, and between
+480 and 6528 the rendered frame is bit-identical. If a value is in the hundreds, it is
+not "HDR headroom", it is broken.
+
+## Making the ship feel big
+
+- **Chase rig: TRIED AND REVERTED. Do not redo it.** `FOV_BASE 70 -> 48`,
+  `CAM_OFFSET (0, 0.5, 2.6) -> (0, 0.16, 1.75)`, `CAM_VIEW_PITCH_DEG 0 -> 5`, plus a
+  positional lag on the rig (`CAM_POS_LAG` / `CAM_POS_SLACK`) so the hull swung in
+  frame during a turn. On paper it worked — a hull-length object spanned 0.642 of frame
+  height instead of 0.275, and the eye sat +0.2 degrees off the hull axis instead of
+  +10.9 above it. In the hand it felt LAGGY rather than heavy: easing the camera
+  position reads as input lag, not as mass. Everything above is back to its original
+  value. If you want to try scale again, the camera is the wrong lever; the rig stays
+  welded to the hull with only its BASIS lagging, via `CAM_LAG`.
+- **Streak field rescaled to hull lengths** (`Ship._fit_streaks`, `STREAK_BOX_Z`,
+  `STREAK_FIELD_HULLS`) — KEPT. The field was authored in raw units and against an 80 m
+  hull worked out to ~560 hull lengths deep, made of streaks 30 hull lengths long, all
+  of it far away. Debris that big sliding past tells the eye the ship is a speck. It is
+  now 14 x 5 hull lengths with 0.75-hull streaks flowing at 75 hull lengths/sec. One
+  node scale does the whole rescale — box, velocities and mesh — because the particles
+  run in `local_coords`. `_fit_streaks` is called again on every ship swap.
+  `tools/test_streak_scale.gd` locks the conversion down.
+
+## Still open
+
+- **The torch plume cones are close to invisible in the chase view.** Proven, not
+  suspected: `brightness = 0` on all of them moves p99 by <0.001 and hiding the whole
+  plume root moves the lit fraction from 0.24% to 0.34% on class_ii and not at all on
+  dingo57. Seen end-on down its own axis the cone's walls are all edge-on, and
+  `soft_edge = mix(0.06, 1.0, pow(facing, 1.15))` in `cruiser_torch.gdshader` drops them
+  to 6%. The plume geometry is also small: class_ii's core cone is ~4.5% of hull length
+  across. Now that the lights no longer dominate there is headroom to make the plume the
+  thing you actually see — that is the next piece of work, and it was NOT done here.
+- Shock diamonds remain compiled-but-never-visually-confirmed (carried over).
+- All rendering here was llvmpipe software Vulkan. Performance is untested.
+
+---
+
 # Astryx — AAA booster/thruster pass (2026-09-02)
 
 ## What the thruster is now

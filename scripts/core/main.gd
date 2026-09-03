@@ -175,7 +175,7 @@ func _ready() -> void:
 	# frame (with a little lag) so it isn't rigidly bolted to the hull.
 	var cam := Camera3D.new()
 	cam.current = true
-	cam.fov = 70.0
+	cam.fov = Ship.FOV_BASE   # ship._update_camera owns it after the first frame
 	cam.near = 0.05
 	# Keep the spherical star shell well inside the flat camera far plane. A
 	# near-equal far value clips the forward cap into a camera-following black circle.
@@ -1824,16 +1824,30 @@ func _setup_environment() -> void:
 	# glow_bloom>0 was haloing the lit metal hull into a "bulb"; with bloom 0 and
 	# an HDR threshold, only pixels brighter than 1.0 (emissive bodies) bloom, so
 	# the ship reads as shiny lit metal with a gradient, not a glowing bulb.
-	env.glow_enabled = true
+	# GLOW OFF. Every "the booster is too bright" round came back to the glow chain
+	# turning an already-clipped pixel into a ball. With it off, an emissive surface is
+	# just an emissive surface. The Settings > Glow dropdown still turns it back on for
+	# anyone who wants it; the quality presets deliberately no longer force it.
+	env.glow_enabled = false
 	env.glow_normalized = true     # normalize levels so the neon thruster bloom blends evenly
 	env.glow_intensity = 0.9
-	env.glow_bloom = 0.15          # subtle bleed on emissive parts (was haloing the hull)
+	env.glow_bloom = 0.05          # low-level bleed; 0.15 lifted the whole frame slightly
 	env.glow_strength = 0.85
 	env.glow_hdr_threshold = 1.0
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-	env.set_glow_level(1, 0.2)
-	env.set_glow_level(3, 0.4)
-	env.set_glow_level(5, 0.7)
+	# THE LEVEL WEIGHTS ARE THE HALO RADIUS. Level 1 is a half-resolution blur, level 5
+	# is 1/32 — whatever weight level 5 carries is smeared over an enormous area. The old
+	# 1:0.2 / 3:0.4 / 5:0.7 put the MOST weight on the widest blur, which is why every
+	# hot pixel grew a soft ball that swallowed the ship. Measured in the chase view, the
+	# radius at which the ring-mean luminance is still visible, at full burn:
+	#     old 111 px (dingo57) / 142 px (snarkrans) / 199 px (jazoone)
+	#     now  77 px           /  77 px            /  87 px
+	# Same core, same emissive values — halving the plume shaders' energy on top of this
+	# moved the frame by less than 0.1%, so the core was never the problem, the skirt was.
+	env.set_glow_level(1, 0.8)
+	env.set_glow_level(2, 0.4)
+	env.set_glow_level(3, 0.15)
+	env.set_glow_level(5, 0.0)
 
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.7   # global -30% brightness (keeps colour + specular)

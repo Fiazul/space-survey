@@ -156,6 +156,10 @@ const CAM_OFFSET := Vector3(0.0, 0.5, 2.6)
 # Rig position + aim rotate together, so the ship stays framed where it is — only the angle shifts.
 const CAM_VIEW_PITCH_DEG := 0.0
 const CAM_LAG := 6.0
+# There is deliberately NO positional lag on the chase rig. One was added (the camera
+# easing toward its ideal spot on its own clock, so the hull swings in frame during a
+# hard turn) and removed: it reads as input lag, not as mass. The rig stays welded to
+# the hull and only its BASIS lags, via CAM_LAG above.
 # Free-look (hold RMB or T): mouse orbits the camera instead of steering; the ship
 # holds its heading and flies on. Released, the view eases back behind the ship.
 const LOOK_YAW_LIMIT := 2.7     # how far around the ship the view can swing (rad)
@@ -555,6 +559,13 @@ var _mesh_root: Node3D
 var _engine_mat: StandardMaterial3D   # only used by the primitive fallback
 # Cold end of the exhaust temperature ramp, matched to cruiser_torch's cool_color.
 const ENGINE_COOL := Color(1.0, 0.33, 0.06)
+# Ceiling on the `power` value handed to the booster shaders. `power` used to map onto
+# 0.42..1.0, which put ORDINARY CRUISE (no Shift) at 0.61 and full boost at 0.90 - so
+# un-boosted flight already sat near the top of the brightness ramp and Shift added
+# almost nothing. 0.75 pulls the whole curve down so full boost now lands roughly where
+# un-boosted cruise used to be, and cruise sits well below that. Colour is unaffected:
+# the orange -> white -> blue ramp is driven by `temperature`, not by this.
+const POWER_CEIL := 0.75
 
 var _propulsion_power := 0.0           # smoothed authored-mesh power (speed driven)
 var _propulsion_surge := 0.0           # decaying kick applied when throttle is punched
@@ -1041,7 +1052,7 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 	# visible idle burn, then increase turbulence and flow with speed.
 	var heat := clampf(_propulsion_power * 1.12 + _propulsion_surge * 0.25, 0.0, 1.0)
 	for propulsion in _authored_propulsion:
-		propulsion.set_shader_parameter("power", lerpf(0.42, 1.0, _propulsion_power))
+		propulsion.set_shader_parameter("power", _propulsion_power * POWER_CEIL)
 		propulsion.set_shader_parameter("flow_speed", lerpf(0.8, 3.1, _propulsion_power))
 		# Exhaust runs orange when cold and blue-white when hot. Torch cones, the
 		# JazOone engine discs and the haze all read the same value, so no layer can
@@ -1062,7 +1073,16 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 	# make the tail glow when the engines light up.
 	if not _nozzle_lights.is_empty():
 		var lit := ENGINE_COOL.lerp(_engine_accent, smoothstep(0.12, 0.78, heat))
-		var lenergy := lerpf(0.10, 1.45, _propulsion_power) + _propulsion_surge * 0.55
+		# Per-light energy is divided down as the nozzle count rises. These lights add,
+		# so a flat energy made dingo57's eight nozzles four times as bright as
+		# JazOone's two and bleached the hull white around the tail. sqrt, not 1/n: the
+		# eye reads light roughly logarithmically, and 1/n makes an eight-engine ship
+		# look weaker than a two-engine one.
+		var share := sqrt(2.0 / maxf(float(_nozzle_lights.size()), 1.0))
+		# Same story as POWER_CEIL: 0.04..0.42 had cruise at 0.165 and boost at 0.352.
+		# Now boost lands where cruise used to be.
+		var lenergy := (lerpf(0.015, 0.20, _propulsion_power)
+			+ _propulsion_surge * 0.09) * share
 		# Slight flicker so it reads as combustion rather than a fixed lamp.
 		lenergy *= 1.0 + sin(t * 27.0) * 0.05 * _propulsion_power
 		for light in _nozzle_lights:
@@ -1130,6 +1150,24 @@ func _build_visual() -> void:
 # A field of thin additive streaks that stream past the ship — only at speed, so
 # you feel "fast" without any HUD number. Lives on the ship (origin), in local
 # coords, flowing +Z (toward/behind the chase camera).
+# Scale cue, not a speed cue. The field below is authored in raw units: a box 45 deep
+# with 2.4-long streaks. Against an 80 m hull (_hull_km = 0.08) that is a field ~560
+# hull lengths deep made of debris 30 hull lengths long, all of it far away — and
+# debris that big sliding past tells the eye the ship is a speck. _fit_streaks rescales
+# the whole emitter (box, velocities and streak mesh together, which node scale does in
+# one go because the particles run in local_coords) so the field is measured in HULL
+# LENGTHS. Streaks then pass close to the hull at hull-relevant size, and the parallax
+# reads as "something big is moving" instead of "a dot is drifting".
+const STREAK_BOX_Z := 45.0        # the authored emission_box_extents.z below
+const STREAK_FIELD_HULLS := 14.0  # how deep the field should actually be, in hull lengths
+
+
+func _fit_streaks() -> void:
+	if _streaks == null:
+		return
+	_streaks.scale = Vector3.ONE * (_hull_km * STREAK_FIELD_HULLS / STREAK_BOX_Z)
+
+
 func _build_streaks() -> void:
 	_streaks = GPUParticles3D.new()
 	add_child(_streaks)
@@ -1158,6 +1196,7 @@ func _build_streaks() -> void:
 	_streak_mat.albedo_color = Color(0.7, 0.9, 1.0, 0.0)
 	streak.material = _streak_mat
 	_streaks.draw_pass_1 = streak
+	_fit_streaks()
 
 
 # Density + brightness + flow speed all ramp with the ship's RAW speed. Two ramps so
@@ -1252,6 +1291,7 @@ func _build_ship_model(idx: int) -> void:
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
+	_fit_streaks()   # the debris field is measured in hull lengths; this hull just changed
 	var box := ShipMesh.fit_model(_mesh_root, model, _hull_km)
 	# The Class II source only supplies six flat propulsion patches. Fit the hull
 	# first, then extend those exact sockets into visible two-layer torch plumes so
@@ -1284,10 +1324,15 @@ func _build_ship_model(idx: int) -> void:
 	muzzle = box.size.z * 0.42
 	muzzle_drop = box.size.y * 0.18   # emerge a little below centre (lowered to match the
 									  # hull's new lower framing), where the guns sit
-	var accent: Color = picked_palette.get("accent",
-		info.get("light_accent", Color(1.0, 0.70, 0.84)))
-	var lenergy: float = float(info.get("light_energy", 1.0))
-	ShipMesh.add_hull_lights(_mesh_root, box, accent, lenergy)
+	# NO ship-attached lights. The three key/fill/core omnis that used to go here are
+	# gone along with the per-nozzle lights: point lights sitting a few metres off a
+	# polished metallic hull clip their own specular and diffuse long before the
+	# diffuse term looks bright, and the result was an engine bay that blew out to
+	# white in the running game while an offscreen render of the same ship looked fine.
+	# The hull is now lit by main.gd's scene sun (1.05) + counter-fill (0.35) and the
+	# 0.2 ambient, which is what actually defines its form. `accent` / `light_energy`
+	# stay in SHIP_MODELS and SHIP_PALETTES - they still drive the exhaust colour - and
+	# ShipMesh.add_hull_lights still exists if this is ever reinstated.
 
 
 # --- Ship-swap API (called by main when docked) ---
@@ -1526,4 +1571,5 @@ func _build_primitive_ship() -> void:
 	engine.position = Vector3(0.0, 0.0, 1.2)
 	_mesh_root.add_child(engine)
 	_hull_km = HULL_KM
+	_fit_streaks()
 	_mesh_root.scale = Vector3.ONE * (HULL_KM / 3.4)

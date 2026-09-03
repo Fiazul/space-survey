@@ -128,11 +128,31 @@ void fragment() {
 	}
 
 	float body = clamp(tip_fade * wispy * soft_edge, 0.0, 1.0);
-	// Deliberately far above display white so the WorldEnvironment glow produces a
-	// torch-hot core and soft bloom.
-	float energy = mix(480.0, 1920.0, power) * brightness * (1.0 + diamonds * 2.4);
-
-	ALBEDO = torch_color;
-	EMISSION = torch_color * energy * body * near_fade;
+	// READ THIS BEFORE CHANGING ANY NUMBER HERE.
+	//
+	// `render_mode unshaded` DISCARDS EMISSION. Godot 4 takes ALBEDO as the final
+	// colour for an unshaded material and never adds the emission term, so the old
+	// mix(480.0, 1920.0, power) - 1632..6528 on the core layer - was dead code that
+	// never reached a pixel. Proven twice over: zeroing `brightness` outright and
+	// multiplying EMISSION by 100 each move a 960x540 frame's total luminance by well
+	// under 1%, while HIDING the plumes removes 40% of all the light in the frame.
+	//
+	// What actually reached the screen was `ALBEDO * ALPHA` under blend_add: with
+	// ALBEDO = torch_color (near white) and ALPHA up to 0.88, each layer laid down
+	// most of a white plate, and six sockets x two overlapping cones summed to a slab
+	// across the whole tail that no energy tuning could touch.
+	//
+	// So: ALBEDO carries the HDR value (it goes straight to the rgba16f buffer, values
+	// above 1.0 bloom), and `energy` is a real control again.
+	//
+	// `power` arrives as 0..Ship.POWER_CEIL (0.75), so this ramp spans the throttle
+	// properly - it used to arrive as 0.42..1.0, which meant idle already sat three
+	// fifths of the way up. Landing points, with the core layer's brightness 3.4:
+	//   at rest      0.02 -> 0.07     (a dull ember, not half throttle)
+	//   cruise       0.04 -> 0.13
+	//   full boost   0.10 -> 0.35     (about where un-boosted cruise used to sit)
+	float energy = mix(0.02, 0.20, pow(power, 1.6)) * brightness * (1.0 + diamonds * 2.4);
+	ALBEDO = torch_color * energy * body * near_fade;
+	EMISSION = vec3(0.0);
 	ALPHA = clamp(opacity * body * near_fade, 0.0, 0.88);
 }

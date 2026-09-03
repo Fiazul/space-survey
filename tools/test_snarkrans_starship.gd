@@ -53,9 +53,14 @@ func _initialize() -> void:
 	failed += _check("lower_shell_shader", lower_shell_surface >= 0 and model.get_surface_override_material(lower_shell_surface) is ShaderMaterial)
 	for booster_surface in [tip_surface, lower_surface, upper_shell_surface, lower_shell_surface]:
 		var drive := model.get_surface_override_material(booster_surface) as ShaderMaterial
+		# `brightness` is no longer a flat 4.0 across the fleet: it is scaled against
+		# how much of each hull the additive booster shader covers (see
+		# SNARKRANS_BOOSTER_GAIN in ship_mesh.gd and tools/probe_propulsion_area.gd).
+		# Snarkrans has the largest emissive area of the four, so it gets the lowest
+		# gain; a flat value put a white slab across its mid-hull.
 		failed += _check("booster_ultimate_white", drive != null \
 			and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-			and float(drive.get_shader_parameter("brightness")) == 4.0)
+			and float(drive.get_shader_parameter("brightness")) == MeshStyler.SNARKRANS_BOOSTER_GAIN)
 	failed += _check("legacy_shadow_mesh_removed", model.mesh is ArrayMesh and (model.mesh as ArrayMesh).shadow_mesh == null)
 
 	var plume_materials := MeshStyler.add_snarkrans_booster_plumes(model)

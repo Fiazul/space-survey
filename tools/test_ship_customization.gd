@@ -45,10 +45,16 @@ func _initialize() -> void:
 			if material != null and propulsion_ids.has(material.get_instance_id()):
 				seen_boosters += 1
 				var drive := material as ShaderMaterial
+				# This test's job is that the hull PAINT pass never repaints a booster
+				# surface, so it checks plasma_color is still white and the HDR gain is
+				# still set. The gain itself is per-ship now (the *_BOOSTER_GAIN
+				# constants in ship_mesh.gd, scaled by emissive area), so assert a
+				# plausible range rather than the old flat 4.0.
+				var gain := float(drive.get_shader_parameter("brightness")) if drive != null else -1.0
 				failed += _check("%s_booster_%d_still_white" % [spec.key, si],
 					drive != null \
 					and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-					and float(drive.get_shader_parameter("brightness")) == 4.0)
+					and gain > 0.0 and gain <= 4.0)
 			elif material is ShaderMaterial:
 				seen_leds += 1
 				failed += _check("%s_led_%d_tinted_not_replaced" % [spec.key, si],

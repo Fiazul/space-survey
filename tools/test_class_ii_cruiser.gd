@@ -34,7 +34,28 @@ func _initialize() -> void:
 	var led := model.get_surface_override_material(1) as ShaderMaterial
 	var drive := model.get_surface_override_material(2) as ShaderMaterial
 	failed += _check("led_mask_bound", led != null and led.get_shader_parameter("led_mask") != null)
-	failed += _check("propulsion_hdr_hot", drive != null and drive.shader.code.contains("128.0"))
+	# This used to assert the literal "128.0" was in the shader, which pinned the exact
+	# constant that made every engine bell a flat clipped white plate. Assert the SHAPE
+	# instead: the energy must rise with throttle, and its top must stay inside the
+	# range where FILMIC + glow_hdr_threshold 1.0 still resolve a core rather than a
+	# featureless blob. Anything in the hundreds is what this test now exists to catch.
+	var ramp := RegEx.new()
+	ramp.compile("mix\\(([0-9.]+), *([0-9.]+), *(?:pow\\()?power")
+	var hit: RegExMatch = ramp.search(drive.shader.code) if drive != null else null
+	var idle_energy := float(hit.get_string(1)) if hit != null else -1.0
+	var full_energy := float(hit.get_string(2)) if hit != null else -1.0
+	var gain := float(drive.get_shader_parameter("brightness")) if drive != null else 0.0
+	print("class_ii_cruiser: propulsion energy %.2f..%.2f x brightness %.2f = %.1f..%.1f"
+		% [idle_energy, full_energy, gain, idle_energy * gain, full_energy * gain])
+	failed += _check("propulsion_energy_ramps_with_throttle",
+		hit != null and idle_energy > 0.0 and full_energy > idle_energy)
+	failed += _check("propulsion_hdr_is_on_albedo_not_emission",
+		drive != null and drive.shader.code.contains("ALBEDO = white_core * energy")
+		and drive.shader.code.contains("EMISSION = vec3(0.0)"))
+	failed += _check("propulsion_peak_stays_off_the_slab", full_energy * gain <= 1.5)
+	failed += _check("propulsion_temperature_ramp", drive != null \
+		and drive.shader.code.contains("cool_color") \
+		and drive.shader.code.contains("temperature"))
 	failed += _check("propulsion_never_angle_invisible", drive != null \
 		and drive.shader.code.contains("mix(0.58, 1.0, edge_softness)"))
 	failed += _check("propulsion_ultimate_white", drive != null \
@@ -60,7 +81,6 @@ func _initialize() -> void:
 			var torch_mat := (child as MeshInstance3D).material_override as ShaderMaterial
 			torch_shaders_ok = torch_shaders_ok and torch_mat != null \
 				and torch_mat.shader == MeshStyler.CRUISER_TORCH_SHADER \
-				and torch_mat.shader.code.contains("1920.0") \
 				and torch_mat.shader.code.contains("tip_fade") \
 				and torch_mat.shader.code.contains("wispy") \
 				and torch_mat.shader.code.contains("billow") \
@@ -69,6 +89,33 @@ func _initialize() -> void:
 	failed += _check("open_plasma_cones", open_cones)
 	failed += _check("torch_hdr_edge_fade", torch_shaders_ok)
 	failed += _check("torch_video_flow", torch_shaders_ok)
+
+	# This used to assert the literal "1920.0" was in the torch shader, which is how a
+	# core "energy" of 6528 survived several rounds of "the booster is too bright" - it
+	# was never reaching a pixel at all. `render_mode unshaded` DISCARDS EMISSION in
+	# Godot 4, so an unshaded additive pass shows ALBEDO * ALPHA and nothing else.
+	# Both properties below exist to stop that trap being re-set:
+	#
+	#   1. The HDR value must be on ALBEDO. If someone moves it back to EMISSION the
+	#      plume goes invisible and no amount of tuning the constant brings it back.
+	#   2. Its top must stay inside the range where a hot core still resolves instead
+	#      of summing, across a dozen overlapping cone layers, into a white slab.
+	var torch_code := MeshStyler.CRUISER_TORCH_SHADER.code
+	failed += _check("torch_hdr_is_on_albedo_not_emission",
+		torch_code.contains("ALBEDO = torch_color * energy")
+		and torch_code.contains("EMISSION = vec3(0.0)"))
+	var tramp := RegEx.new()
+	tramp.compile("mix\\(([0-9.]+), *([0-9.]+), *pow\\(power")
+	var thit: RegExMatch = tramp.search(torch_code)
+	var t_idle := float(thit.get_string(1)) if thit != null else -1.0
+	var t_full := float(thit.get_string(2)) if thit != null else -1.0
+	# 3.4 is the hottest `brightness` any ship hands the core layer (see ship_mesh.gd);
+	# 0.82 the highest opacity, and the two multiply into what lands on the frame.
+	print("class_ii_cruiser: torch energy %.3f..%.3f x core brightness 3.40 x opacity 0.82 -> peak %.2f"
+		% [t_idle, t_full, t_full * 3.4 * 0.82])
+	failed += _check("torch_energy_ramps_with_throttle",
+		thit != null and t_idle > 0.0 and t_full > t_idle)
+	failed += _check("torch_peak_stays_off_the_slab", t_full * 3.4 * 0.82 <= 1.5)
 
 	# The standalone test runner does not initialize project autoload identifiers
 	# before compiling ship.gd, so check registry wiring as source and exercise the

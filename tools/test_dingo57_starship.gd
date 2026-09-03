@@ -58,10 +58,16 @@ func _initialize() -> void:
 	for group in BOOSTER_GROUPS:
 		for si in booster_surfaces.get(group, []):
 			var material := model.get_surface_override_material(si)
+				# `brightness` was pinned to exactly 4.0 on every ship. It is now
+				# per-ship, scaled against how much of each hull the additive booster
+				# shader actually covers (see the *_BOOSTER_GAIN constants in
+				# ship_mesh.gd and tools/probe_propulsion_area.gd) - a flat value
+				# washed out the wide-area hulls. What matters here is that the paint
+				# pass never touches these surfaces, so assert the range, not a number.
 			failed += _check("group_%s_torch_shader" % group,
 				material is ShaderMaterial \
 				and (material as ShaderMaterial).get_shader_parameter("plasma_color") == Color.WHITE \
-				and float((material as ShaderMaterial).get_shader_parameter("brightness")) == 4.0)
+				and float((material as ShaderMaterial).get_shader_parameter("brightness")) == MeshStyler.DINGO57_BOOSTER_GAIN)
 	var styled_hull: BaseMaterial3D = null
 	if hull_surface >= 0:
 		styled_hull = model.get_surface_override_material(hull_surface) as BaseMaterial3D

@@ -57,6 +57,14 @@ const DINGO57_BOOSTER_SOCKETS := [
 # yaw 0, so its rear is +Z - the opposite of the other three ships.
 # Mach-disk intensity on the inner core layers. The outer fog sheath passes 0.0.
 const SHOCK_TRAIN := 2.6
+# Per-ship gain for the additive booster shader, compensating for how much of each hull
+# it covers (tools/probe_propulsion_area.gd): class_ii 0.64%, dingo57 4.30%,
+# snarkrans 6.69%. class_ii keeps 4.0; the others are scaled by
+# sqrt(class_ii_area / own_area) so a ship with ten times the emissive area does not
+# come out ten times as washed. JazOone carries its own number in
+# style_jazoone_spaceship for the same reason.
+const DINGO57_BOOSTER_GAIN := 1.6
+const SNARKRANS_BOOSTER_GAIN := 1.3
 
 const JAZOONE_BOOSTER_SOCKETS := [
 	{ "center": Vector3(0.85526, -0.14978, 3.83112), "radius": 0.81380 },
@@ -282,7 +290,12 @@ static func _attach_socket_extras(model: Node3D, sockets: Array, facing: float,
 		var socket: Dictionary = sockets[i]
 		var center: Vector3 = socket.center
 		var radius: float = float(socket.radius)
-		_add_nozzle_light(rig, "BoosterLight%02d" % (i + 1), center, radius, facing, accent)
+		# NO nozzle light. Removed on request after it was measured, on the REAL ship
+		# via tools/probe_live_scene.gd, as the whole blowout: hiding just these six
+		# OmniLights took a frame's clipped-pixel count from 1717 to 192, while hiding
+		# the heat haze moved it to 1645 and hiding the plume cones to 1677. Dropping
+		# specular to 0 only got it to 885. _add_nozzle_light is kept below, unused, so
+		# the reasoning survives; call it again only with a live-probe frame to show it.
 		_add_heat_haze(rig, "BoosterHaze%02d" % (i + 1), center, radius,
 			radius * 7.5, facing, world_scale)
 	return rig
@@ -292,7 +305,8 @@ static func _attach_socket_extras(model: Node3D, sockets: Array, facing: float,
 # hull. This is what actually makes the tail glow when the engines light up. Range is
 # a few socket radii on purpose: a wide nozzle light bleaches the whole ship.
 static func _add_nozzle_light(parent: Node3D, light_name: String, center: Vector3,
-		socket_radius: float, facing: float, accent: Color) -> OmniLight3D:
+		socket_radius: float, facing: float, accent: Color,
+		world_scale := 1.0) -> OmniLight3D:
 	var light := OmniLight3D.new()
 	light.name = light_name
 	# Sit it just outside the nozzle plane so it rakes the hull around the engine
@@ -300,8 +314,34 @@ static func _add_nozzle_light(parent: Node3D, light_name: String, center: Vector
 	light.position = center + Vector3(0.0, 0.0, facing * socket_radius * 0.9)
 	light.light_color = accent
 	light.light_energy = 0.0        # ship.gd drives this from live throttle
-	light.omni_range = socket_radius * 7.0
-	light.omni_attenuation = 1.6
+	# `socket_radius` is in raw MODEL units, and omni_range is a plain distance - the
+	# one number here that is NOT implicitly in the mesh's own space. Unconverted it
+	# came out as 34 for class_ii and 652 for dingo57 against a 0.12 km hull, i.e. a
+	# light reaching hundreds of hull lengths out into the solar system and lighting
+	# planets, station props and the star shell. tools/probe_live_scene.gd prints these
+	# next to the hull key light (range 0.9) if you need to see it again.
+	#
+	# _add_heat_haze below already converts its depth fade through `world_scale`; this
+	# is the same conversion, and it was simply missing. Range now lands near the hull
+	# lights' 0.48-0.9, which is what "a few socket radii" was always meant to mean.
+	#
+	# Separately measured: at the old range 7.0 / attenuation 1.6 these were the ENTIRE
+	# blowout on class_ii, dingo57 and snarkrans - hiding the nozzle rig in the chase
+	# view dropped p99 luminance 0.081 -> 0.017 (class_ii) and 0.289 -> 0.033 (dingo57)
+	# while the torch and propulsion shaders, zeroed, changed nothing.
+	# 12x the socket radius, in WORLD units: enough to rake the aft third of the hull
+	# (39 m of a 122 m Class II, 21 m of a 128 m Dingo57) and nothing beyond the ship.
+	light.omni_range = socket_radius * 12.0 * world_scale
+	light.omni_attenuation = 2.2
+	# THE reason the engines blew out in-game while the offscreen harness looked fine.
+	# These sit ~3 m off a polished metallic hull, and light_specular defaults to 1.0:
+	# six point lights at point-blank range on low-roughness metal give six specular
+	# hotspots that clip long before the diffuse term is anywhere near 1.0. Measured on
+	# the REAL ship via tools/probe_live_scene.gd - hiding just these six lights took
+	# the frame's clipped-pixel count from 1717 to 192, while hiding the heat haze
+	# changed it to 1645 and hiding the plumes to 1677. This is a glow spill in the
+	# engine bay, not a highlight source, so it has no business writing specular.
+	light.light_specular = 0.0
 	light.shadow_enabled = false
 	parent.add_child(light)
 	return light
@@ -403,7 +443,14 @@ static func style_snarkrans_starship(model: Node3D) -> Array[ShaderMaterial]:
 				var propulsion := ShaderMaterial.new()
 				propulsion.shader = CRUISER_PROPULSION_SHADER
 				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
-				propulsion.set_shader_parameter("brightness", 4.0)
+				# Area-compensated, NOT a taste value. tools/probe_propulsion_area.gd
+				# measures how much of each hull the additive booster shader covers:
+				# class_ii 0.64%, dingo57 4.30%, snarkrans 6.69%. These layers ADD, so
+				# a flat brightness makes the ship with ten times the emissive area ten
+				# times as washed - which is exactly what ate snarkrans' mid-hull.
+				# Scaled by sqrt(class_ii_area / this_area), same reasoning as the
+				# per-nozzle light share in ship.gd.
+				propulsion.set_shader_parameter("brightness", SNARKRANS_BOOSTER_GAIN)
 				mi.set_surface_override_material(si, propulsion)
 				propulsion_materials.append(propulsion)
 	return propulsion_materials
@@ -452,7 +499,8 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	var material := ShaderMaterial.new()
 	material.shader = CRUISER_PROPULSION_SHADER
 	material.set_shader_parameter("plasma_color", Color.WHITE)
-	material.set_shader_parameter("brightness", 4.0)
+	# Snarkrans-only, and it sits right on top of the booster faces above.
+	material.set_shader_parameter("brightness", SNARKRANS_BOOSTER_GAIN)
 
 	var plug := MeshInstance3D.new()
 	plug.name = plug_name
@@ -511,7 +559,8 @@ static func style_dingo57_starship(model: Node3D) -> Array[ShaderMaterial]:
 				var propulsion := ShaderMaterial.new()
 				propulsion.shader = CRUISER_PROPULSION_SHADER
 				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
-				propulsion.set_shader_parameter("brightness", 4.0)
+				# See SNARKRANS_BOOSTER_GAIN: eight emissive groups, 4.30% of the hull.
+				propulsion.set_shader_parameter("brightness", DINGO57_BOOSTER_GAIN)
 				mi.set_surface_override_material(si, propulsion)
 				propulsion_materials.append(propulsion)
 			else:
@@ -575,7 +624,12 @@ static func style_jazoone_spaceship(model: Node3D) -> Array[ShaderMaterial]:
 			hull.set_shader_parameter("orm_tex", orm_tex)
 			hull.set_shader_parameter("normal_tex", normal_tex)
 			hull.set_shader_parameter("plasma_color", Color.WHITE)
-			hull.set_shader_parameter("brightness", 4.0)
+			# JazOone's two engine discs are far larger relative to its hull than the
+			# other ships' booster patches (~10% of hull length in radius, each), so the
+			# same energy that reads as a hot throat on them buries this ship in bloom.
+			# Measured in the chase view: at 4.0 the glow covered 44% of the frame at
+			# cruise and the hull was invisible; 0.40 leaves two hot bells and a hull.
+			hull.set_shader_parameter("brightness", 0.40)
 			mi.set_surface_override_material(si, hull)
 			propulsion_materials.append(hull)
 	print("jazoone: styled %d Layer_1 chunks with textured hull + two engine discs" \
@@ -624,7 +678,13 @@ static func color_authored_ship(model: Node3D, tint: Color, finish: String) -> i
 			continue
 		for si in mi.mesh.get_surface_count():
 			var active := mi.get_active_material(si)
-			var surface_tag: String = mi.mesh.surface_get_name(si).to_lower()
+			# Primitive meshes have no surface_get_name. The game colours the hull
+			# before the plumes exist, but the render harness builds them first and the
+			# raw call aborted this whole loop on the first CylinderMesh it reached,
+			# leaving part of the hull uncoloured.
+			var surface_tag := ""
+			if mi.mesh.has_method("surface_get_name"):
+				surface_tag = String(mi.mesh.surface_get_name(si)).to_lower()
 			if active is ShaderMaterial:
 				var shader_material := active as ShaderMaterial
 				if shader_material.shader == CRUISER_PROPULSION_SHADER \

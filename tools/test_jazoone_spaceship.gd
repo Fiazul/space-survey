@@ -38,13 +38,19 @@ func _initialize() -> void:
 			continue
 		for si in mi.mesh.get_surface_count():
 			var material := mi.get_surface_override_material(si) as ShaderMaterial
+			# The brightness bound below was pinned to exactly 4.0. JazOone's two engine
+			# discs are far larger relative to its hull than the other ships' booster
+			# patches, and at 4.0 the glow off them covered 44% of the chase-view frame
+			# with the hull invisible inside it. Assert the disc stays under the clip
+			# ceiling rather than asserting the number that caused that.
 			failed += _check("mesh_%d_surface_%d_mixed_shader" % [i, si],
 				material != null \
 				and material.shader == MeshStyler.JAZOONE_HULL_BOOSTER_SHADER \
 				and material.get_shader_parameter("albedo_tex") != null \
 				and material.get_shader_parameter("emissive_tex") != null \
 				and material.get_shader_parameter("plasma_color") == Color.WHITE \
-				and float(material.get_shader_parameter("brightness")) == 4.0)
+				and float(material.get_shader_parameter("brightness")) > 0.0 \
+				and float(material.get_shader_parameter("brightness")) <= 1.0)
 			if material != null and material.shader != null:
 				var code: String = material.shader.code
 				failed += _check("hull_albedo_path", code.contains("albedo_tex"))

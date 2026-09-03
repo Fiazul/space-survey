@@ -10,22 +10,37 @@ extends Node3D
 
 const ShipMesh := preload("res://scripts/flight/ship_mesh.gd")
 
+# `accent` / `light_energy` are copied from Ship.SHIP_MODELS, and `swatch` from the
+# palette each ship defaults to, so add_hull_lights and color_authored_ship get what the
+# real ship gets. A generic grey hull under a generic cool key light is NOT the game.
 const SHIPS := [
 	{ "label": "class_ii", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj",
-		"yaw": 180.0, "kind": "class_ii" },
+		"yaw": 180.0, "kind": "class_ii",
+		"accent": Color(0.72, 0.85, 1.00), "swatch": Color(0.42, 0.60, 0.95),
+		"light_energy": 0.42, "finish": "metal" },
 	{ "label": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj",
-		"yaw": 180.0, "kind": "snarkrans" },
+		"yaw": 180.0, "kind": "snarkrans",
+		"accent": Color(0.85, 0.90, 1.00), "swatch": Color(0.30, 0.31, 0.34),
+		"light_energy": 0.38, "finish": "metal" },
 	{ "label": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj",
-		"yaw": 180.0, "kind": "dingo57" },
+		"yaw": 180.0, "kind": "dingo57",
+		"accent": Color(0.92, 0.95, 1.00), "swatch": Color(0.74, 0.76, 0.80),
+		"light_energy": 0.34, "finish": "metal" },
 	{ "label": "jazoone", "path": "res://assets/jazoone_spaceship/spaceship.glb",
-		"yaw": 0.0, "kind": "jazoone" },
+		"yaw": 0.0, "kind": "jazoone",
+		"accent": Color(0.90, 0.93, 1.00), "swatch": Color(0.82, 0.84, 0.88),
+		"light_energy": 0.36, "finish": "metal" },
 ]
 
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
+# The three states worth looking at, in Ship._propulsion_power terms:
+#   rest    engines lit but idle
+#   cruise  ordinary sublight flight with no Shift - 550 / (SUBLIGHT_MAX * BOOST_MULT)
+#   boost   Shift held; Ship clamps _propulsion_power up to 0.82
 const SHOTS := [
-	{ "label": "idle", "power": 0.0, "surge": 0.0 },
-	{ "label": "cruise", "power": 0.45, "surge": 0.0 },
-	{ "label": "burn", "power": 1.0, "surge": 0.55 },
+	{ "label": "rest", "power": 0.0, "surge": 0.0 },
+	{ "label": "cruise", "power": 0.33, "surge": 0.0 },
+	{ "label": "boost", "power": 0.82, "surge": 0.30 },
 ]
 
 var _camera: Camera3D
@@ -36,6 +51,32 @@ var _out_dir := "/tmp/thruster_shots"
 var _detail := false
 var _isolate := ""
 var _env: Environment
+# VIEW=chase reproduces the ACTUAL in-game framing (Ship._update_camera): the camera
+# sits CAM_OFFSET hull-lengths behind/above the hull and looks straight down the ship's
+# forward axis, so the plumes point at the lens. The default 3/4 side view flatters the
+# thruster; "too bright" is a complaint about the chase view, so tune against this one.
+var _view := ""
+# Mirrors of Ship's camera constants, overridable per run so a candidate rig can be
+# photographed without editing ship.gd first.
+var _cam_back := 2.6      # CAM_OFFSET.z, in hull lengths
+var _cam_up := 0.5        # CAM_OFFSET.y, in hull lengths
+var _cam_pitch := 0.0     # CAM_VIEW_PITCH_DEG
+var _cam_fov := 70.0      # FOV_BASE
+# Brightness sweep. TORCH_GAIN scales the torch cones' `brightness`, PROP_GAIN the
+# authored propulsion / JazOone hull discs. Lets a candidate exposure be photographed
+# without editing the shaders, so the shipped constants are picked from measurements.
+var _torch_gain := 1.0
+var _prop_gain := 1.0
+# Glow chain overrides. The HALO RADIUS around a hot pixel is set here, not by the
+# shader: level 5 is a 1/32-resolution blur, so whatever weight it carries is painted
+# over an enormous area. GLOW_L* are the per-level weights, GLOW_THRESHOLD the HDR
+# value a pixel must exceed to bloom at all.
+var _glow := {1: 0.8, 2: 0.4, 3: 0.15, 4: 0.0, 5: 0.0}
+var _glow_on := false   # matches main.gd; GLOW_ON=1 to compare against glow enabled
+var _glow_threshold := 1.0
+var _glow_intensity := 0.9
+var _glow_strength := 0.85
+var _glow_bloom := 0.05
 
 
 func _ready() -> void:
@@ -46,14 +87,33 @@ func _ready() -> void:
 	# ISOLATE=no_rig|no_plumes|hull_only hides layers so an unexplained bright shape
 	# can be attributed to the layer that actually draws it.
 	_isolate = OS.get_environment("ISOLATE")
+	_view = OS.get_environment("VIEW")
+	_cam_back = _envf("CAM_BACK", _cam_back)
+	_cam_up = _envf("CAM_UP", _cam_up)
+	_cam_pitch = _envf("CAM_PITCH", _cam_pitch)
+	_cam_fov = _envf("CAM_FOV", _cam_fov)
+	_torch_gain = _envf("TORCH_GAIN", _torch_gain)
+	_prop_gain = _envf("PROP_GAIN", _prop_gain)
+	for lvl in _glow.keys():
+		_glow[lvl] = _envf("GLOW_L%d" % lvl, _glow[lvl])
+	_glow_threshold = _envf("GLOW_THRESHOLD", _glow_threshold)
+	_glow_intensity = _envf("GLOW_INTENSITY", _glow_intensity)
+	_glow_strength = _envf("GLOW_STRENGTH", _glow_strength)
+	_glow_bloom = _envf("GLOW_BLOOM", _glow_bloom)
 	DirAccess.make_dir_recursive_absolute(_out_dir)
 	get_window().size = Vector2i(960, 540)
 	_build_environment()
 	_build_starfield()
+	_build_scene_lights()
 	_camera = Camera3D.new()
 	_camera.far = 4000.0
 	add_child(_camera)
 	call_deferred("_run")
+
+
+func _envf(key: String, fallback: float) -> float:
+	var raw := OS.get_environment(key)
+	return float(raw) if raw != "" else fallback
 
 
 func _build_environment() -> void:
@@ -64,16 +124,17 @@ func _build_environment() -> void:
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.22, 0.25, 0.34)
 	env.ambient_light_energy = 0.2
-	env.glow_enabled = true
+	env.glow_enabled = OS.get_environment("GLOW_ON") == "1" or _glow_on
 	env.glow_normalized = true
-	env.glow_intensity = 0.9
-	env.glow_bloom = 0.15
-	env.glow_strength = 0.85
-	env.glow_hdr_threshold = 1.0
+	env.glow_hdr_threshold = _glow_threshold
+	env.glow_intensity = _glow_intensity
+	env.glow_strength = _glow_strength
+	env.glow_bloom = _glow_bloom
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE
-	env.set_glow_level(1, 0.2)
-	env.set_glow_level(3, 0.4)
-	env.set_glow_level(5, 0.7)
+	for lvl in _glow.keys():
+		env.set_glow_level(int(lvl), float(_glow[lvl]))
+	print("render: glow levels %s threshold %.2f intensity %.2f strength %.2f bloom %.2f"
+		% [_glow, _glow_threshold, _glow_intensity, _glow_strength, _glow_bloom])
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.7
 	if _detail:
@@ -87,6 +148,33 @@ func _build_environment() -> void:
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
+
+
+# main.gd puts a DirectionalLight3D sun (energy 1.05) and a cool counter-fill (0.35) in
+# the scene. This harness had NEITHER for its whole life, which is why its output stopped
+# matching the game: in-game the hull is lit, its specular can cross the glow threshold
+# on its own, and the plume is judged against a lit hull rather than a black one. SUN_YAW
+# rotates the key so a given ship can be checked with the light behind or beside it.
+func _build_scene_lights() -> void:
+	var yaw := deg_to_rad(_envf("SUN_YAW", -55.0))
+	var pitch := deg_to_rad(_envf("SUN_PITCH", -22.0))
+	var dir := (Basis(Vector3.UP, yaw) * Basis(Vector3.RIGHT, pitch)) * Vector3.FORWARD
+
+	var sun := DirectionalLight3D.new()
+	sun.light_energy = 1.05
+	sun.light_color = Color(1.0, 0.96, 0.88)
+	sun.shadow_enabled = false
+	add_child(sun)
+	sun.look_at(dir, Vector3.UP)
+
+	var fill := DirectionalLight3D.new()
+	fill.light_energy = 0.35
+	fill.light_color = Color(0.6, 0.72, 1.0)
+	fill.shadow_enabled = false
+	add_child(fill)
+	fill.look_at(-dir + Vector3(0.0, -0.6, 0.0), Vector3.UP)
+	print("render: scene lights sun 1.05 + fill 0.35, sun_yaw %.0f pitch %.0f"
+		% [rad_to_deg(yaw), rad_to_deg(pitch)])
 
 
 # Something has to sit behind the plume or the heat-haze refraction is invisible.
@@ -161,7 +249,10 @@ func _build_ship(ship: Dictionary):
 		"jazoone": driven.append_array(ShipMesh.style_jazoone_spaceship(model))
 	holder.add_child(model)
 	model.rotation = Vector3(0.0, deg_to_rad(float(ship.yaw)), 0.0)
-	ShipMesh.fit_model(holder, model, 4.0)
+	# Ship._build_ship_model lights the hull off the AABB fit_model RETURNS - the hull
+	# alone. This harness used to call combined_aabb AFTER building the plumes, so the
+	# key/fill/core reach was computed from a box several times too big.
+	var hull_box := ShipMesh.fit_model(holder, model, 4.0)
 
 	var plumes: Array[ShaderMaterial] = []
 	match ship.kind:
@@ -177,11 +268,11 @@ func _build_ship(ship: Dictionary):
 	var lights := ShipMesh.collect_nozzle_lights(model)
 	# The game recolours every non-propulsion surface before lighting it; without this
 	# the raw imported materials render nothing like the shipped ship.
-	ShipMesh.color_authored_ship(model, Color(0.62, 0.66, 0.74), "metal")
-	var box := ShipMesh.combined_aabb(holder)
-	# Match the roster's light_energy band (0.34-0.42). Higher blows metallic hulls
-	# into a featureless bloom blob.
-	ShipMesh.add_hull_lights(holder, box, Color(0.9, 0.92, 1.0), 0.40)
+	ShipMesh.color_authored_ship(model, ship.swatch, String(ship.finish))
+	# Ship._build_ship_model no longer adds ANY ship-attached lights - the scene sun +
+	# fill light the hull. Adding them here would put this harness back out of step
+	# with the game, which is the mistake that made its earlier output worthless.
+	var _unused_box := hull_box
 
 	# Finer-grained: hide one rig layer at a time.
 	var rig := model.get_node_or_null("BoosterNozzleRig")
@@ -223,7 +314,17 @@ func _build_ship(ship: Dictionary):
 	# which just shows a saturated end-cap - so weight the camera to the SIDE and
 	# only slightly aft, to see the plume across its length.
 	_camera.position = centre + Vector3(1.0, 0.30, 0.58).normalized() * reach * 0.95
-	if _detail:
+	_camera.fov = 75.0
+	if _view == "chase":
+		# hull_len is the fit_model target below, not `reach` (which includes the plumes).
+		var hull_len := 4.0
+		var chase := Basis(Vector3.RIGHT, deg_to_rad(_cam_pitch))
+		_camera.fov = _cam_fov
+		_camera.global_transform = Transform3D(
+			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len))
+		print("render: VIEW=chase fov=%.1f back=%.2f up=%.2f pitch=%.1f"
+			% [_cam_fov, _cam_back, _cam_up, _cam_pitch])
+	elif _detail:
 		# Frame the exhaust column itself, not the ship: push aft of the hull and
 		# close in, so one plume spans the frame.
 		var aft := centre + Vector3(0.0, 0.0, full.size.z * 0.42)
@@ -231,6 +332,15 @@ func _build_ship(ship: Dictionary):
 		_camera.look_at(aft, Vector3.UP)
 	else:
 		_camera.look_at(centre, Vector3.UP)
+	if _torch_gain != 1.0 or _prop_gain != 1.0:
+		for m in driven:
+			var is_torch := m.shader == ShipMesh.CRUISER_TORCH_SHADER
+			var b = m.get_shader_parameter("brightness")
+			if b == null:
+				continue
+			m.set_shader_parameter("brightness",
+				float(b) * (_torch_gain if is_torch else _prop_gain))
+		print("render: gains torch=%.3f prop=%.3f" % [_torch_gain, _prop_gain])
 	print("render: built %s  aabb=%s  lights=%d torches=%d driven=%d"
 		% [ship.label, full.size, lights.size(), torches.size(), driven.size()])
 	return { "model": holder, "torches": torches, "driven": driven, "lights": lights }
@@ -240,7 +350,7 @@ func _build_ship(ship: Dictionary):
 func _apply_power(rig: Dictionary, p: float, surge: float) -> void:
 	var heat := clampf(p * 1.12 + surge * 0.25, 0.0, 1.0)
 	for m in rig.driven:
-		m.set_shader_parameter("power", lerpf(0.42, 1.0, p))
+		m.set_shader_parameter("power", p * 0.75)   # Ship.POWER_CEIL
 		m.set_shader_parameter("flow_speed", lerpf(0.8, 3.1, p))
 		m.set_shader_parameter("temperature", heat)
 	for m in rig.torches:
@@ -248,6 +358,7 @@ func _apply_power(rig: Dictionary, p: float, surge: float) -> void:
 		m.set_shader_parameter("flare_scale", lerpf(0.80, 1.06, p) + surge * 0.10)
 		m.set_shader_parameter("turbulence", lerpf(0.55, 1.35, p))
 	var lit := Color(1.0, 0.33, 0.06).lerp(Color(0.35, 0.70, 1.0), smoothstep(0.12, 0.78, heat))
+	var share := sqrt(2.0 / maxf(float(rig.lights.size()), 1.0))
 	for l in rig.lights:
 		l.light_color = lit
-		l.light_energy = lerpf(0.10, 1.45, p) + surge * 0.55
+		l.light_energy = (lerpf(0.015, 0.20, p) + surge * 0.09) * share

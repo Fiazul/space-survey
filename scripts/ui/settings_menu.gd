@@ -222,22 +222,22 @@ func _on_quality(idx: int) -> void:
 			vp.msaa_3d = Viewport.MSAA_8X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 			vp.use_taa = true
-			if env != null:
-				env.glow_enabled = true
+			# Glow is off by default now (see main.gd _setup_environment); a quality
+			# preset should not silently switch it back on. Use the Glow row for that.
 		1:   # High — native res, strong MSAA + glow
 			scale = 1.0
 			vp.msaa_3d = Viewport.MSAA_4X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 			vp.use_taa = false
-			if env != null:
-				env.glow_enabled = true
+			# Glow is off by default now (see main.gd _setup_environment); a quality
+			# preset should not silently switch it back on. Use the Glow row for that.
 		2:   # Balanced — native res, light AA + glow
 			scale = 1.0
 			vp.msaa_3d = Viewport.MSAA_2X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 			vp.use_taa = false
-			if env != null:
-				env.glow_enabled = true
+			# Glow is off by default now (see main.gd _setup_environment); a quality
+			# preset should not silently switch it back on. Use the Glow row for that.
 		3:   # Performance — lower res, no MSAA, no glow
 			scale = 0.75
 			vp.msaa_3d = Viewport.MSAA_DISABLED

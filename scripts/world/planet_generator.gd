@@ -657,10 +657,19 @@ static func _noise3(p: Vector3) -> float:
 
 
 static func fbm3(p: Vector3) -> float:
+	return fbm3_octaves(p, 5)
+
+
+# Same fbm with a chosen octave count. fbm3() must stay at FIVE because it mirrors
+# planet_cook.gdshader exactly - change that and the tile's hills stop matching the
+# crust painted on the globe. Decorative detail can afford fewer: each octave is 8
+# hash() calls (40 sin() at five), and that is the single dominant cost in a ring
+# rebuild. Octaves 4 and 5 contribute at most 9% of the amplitude.
+static func fbm3_octaves(p: Vector3, octaves: int) -> float:
 	var a := 0.5
 	var s := 0.0
 	var q := p
-	for _i in 5:
+	for _i in maxi(octaves, 1):
 		s += a * _noise3(q)
 		q *= 2.07
 		a *= 0.5

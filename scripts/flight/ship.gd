@@ -297,7 +297,7 @@ const NEWTON_BALLISTIC := 0.005
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g
-const DEV_THRUST_MULT := 1000000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 100000000000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 
 # True when a warp ship is blazing fast — combat + crosshair are disabled.
 func is_hypersonic() -> bool:

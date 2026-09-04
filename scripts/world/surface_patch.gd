@@ -27,6 +27,16 @@ const RING_STEP := 4.0              # each ring out is this much coarser
 # rings sample the same height function at different rates, so their edges do not
 # meet exactly; the skirt hides that gap and is invisible from above.
 const SKIRT_QUADS := 1.0
+# Rebuild a ring after the hull has crossed this fraction of the ring's REACH,
+# not one of its quads. One quad meant ring 0 - which is 3.2 km wide - rebuilt
+# every 50 m: at 230 m/s that is 4.6 full rebuilds a second, and a rebuild
+# measured 240 ms. Drifting an eighth of the reach off-centre still leaves
+# 1.2 km of fine ground ahead of the hull.
+const REBUILD_FRAC := 0.125
+# At most one ring may rebuild per update. Four rings landing in one frame is the
+# 1.2 second freeze seen on arrival; spread over four frames it is four hitches.
+# Ring 0 is checked first, so the ground under the hull always wins the slot.
+const RINGS_PER_UPDATE := 1
 const PROP_MAX := 220
 
 var _ring_land: Array[MeshInstance3D] = []
@@ -142,22 +152,36 @@ static func should_show(body: String, physical: bool, alt: float, kill: float,
 	return PlanetGenerator.ground_stamp_ok(alt, kill, ceiling)
 
 
+# `sampler` is the SHARED height function, passed in rather than constructed here.
+# It used to call PlanetGenerator.terrain_sampler() itself, which meant the tile
+# and main's contact kill held DIFFERENT instances - two 14.6 MB height-map loads,
+# and the one-shared-function design this slice rests on was not actually true in
+# the shipped path. They agreed only because the maths is deterministic.
 func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
-		alt: float, kill: float, ceiling: float, recipe: Dictionary) -> void:
+		alt: float, kill: float, ceiling: float, recipe: Dictionary,
+		sampler: TerrainSampler) -> void:
+	if sampler == null:
+		visible = false
+		return
 	if not should_show(body, physical, alt, kill, ceiling, recipe):
 		visible = false
 		return
-	if _body != body or _sampler == null:
-		bind_body(recipe, PlanetGenerator.terrain_sampler(recipe))
+	if _body != body or _sampler != sampler:
+		bind_body(recipe, sampler)
 		_body = body
 	visible = true
 	var hit: Vector3 = ship_pos.normalized() * radius
 	# Each ring rebuilds only when the hull has crossed one of ITS OWN quads, so
 	# ring 0 follows you closely and cheaply while ring 3 almost never moves.
+	var built := 0
 	for i in RING_COUNT:
-		if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > ring_quad_km(i):
+		if built >= RINGS_PER_UPDATE:
+			break
+		var drift := ring_reach_km(i) * REBUILD_FRAC
+		if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > drift:
 			_build_ring(i, hit, radius)
 			_ring_anchor[i] = hit
+			built += 1
 	_tris = 0
 	for m in _ring_land:
 		_tris += _tri_count(m)
@@ -192,6 +216,17 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	skirt_st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var skirted := false
 	var prop_xforms: Array[Transform3D] = []
+	# Sample every unique grid point ONCE. Quads share corners, so emitting
+	# per-quad called _vert four times for the same position: 16,384 calls where
+	# 65x65 = 4,225 points exist. The height function costs ~10 us a call (fbm3
+	# alone is 40 sin() per height), so that 4x waste was ~180 ms per ring.
+	var side := RING_SEGS + 1
+	var grid: Array = []
+	grid.resize(side * side)
+	for j in side:
+		for i in side:
+			grid[j * side + i] = _vert(hit, up, east, north, radius,
+				-half + quad * float(i), -half + quad * float(j))
 	for j in RING_SEGS:
 		for i in RING_SEGS:
 			var e0 := -half + quad * float(i)
@@ -202,10 +237,10 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			if hole > 0.0 and maxf(absf(e0), absf(e1)) <= hole \
 					and maxf(absf(n0), absf(n1)) <= hole:
 				continue
-			var p00 := _vert(hit, up, east, north, radius, e0, n0)
-			var p10 := _vert(hit, up, east, north, radius, e1, n0)
-			var p01 := _vert(hit, up, east, north, radius, e0, n1)
-			var p11 := _vert(hit, up, east, north, radius, e1, n1)
+			var p00: Dictionary = grid[j * side + i]
+			var p10: Dictionary = grid[j * side + i + 1]
+			var p01: Dictionary = grid[(j + 1) * side + i]
+			var p11: Dictionary = grid[(j + 1) * side + i + 1]
 			var wet: float = (float(p00.w) + float(p10.w) + float(p01.w) + float(p11.w)) * 0.25
 			var st: SurfaceTool = wat_st if wet > 0.55 else land_st
 			var nrm: Vector3 = (p10.p - p00.p).cross(p01.p - p00.p)
@@ -313,7 +348,7 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 # no detail — see the spec.
 func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
 	if _aimg != null:
-		return _sample(_aimg, uv)
+		return _sampler.albedo_color(dir)
 	var mixf: float = PlanetGenerator.fbm3(dir * 5.0 + Vector3(_seed, _seed, _seed))
 	return _crust_a.lerp(_crust_b, clampf(mixf, 0.0, 1.0)).lightened(clampf(h - 0.5, 0.0, 0.3))
 
@@ -541,6 +576,12 @@ func _place_props(xforms: Array[Transform3D], hit: Vector3, east: Vector3, north
 # What the tile is actually made of right now — read by tools/test_surface_band.gd
 # and the cook tape, so "it showed something" can be told apart from "it showed
 # the right world's ground".
+# Is this tile reading the given height function? Test hook for the invariant
+# that the tile, the contact kill and the ship's ground clamp share ONE instance.
+func uses_sampler(sampler: TerrainSampler) -> bool:
+	return _sampler == sampler
+
+
 func report() -> Dictionary:
 	return {
 		"body": _body,

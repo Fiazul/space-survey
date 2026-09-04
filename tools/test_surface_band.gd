@@ -247,8 +247,13 @@ func _tile() -> int:
 
 	var dir := Vector3(0.42, 0.31, 0.85).normalized()
 	var pos: Vector3 = dir * (MOON_R + 1.0)      # 1 km over the surface
+	var sampler: TerrainSampler = G.terrain_sampler(moon)
+	patch.bind_body(moon, sampler)
 	var m_ceiling := _ceiling_of(moon)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon)
+	# ONE ring builds per update, so a cold tile needs RING_COUNT updates. Four
+	# rings landing in a single frame was the 1.2 s freeze on arrival.
+	for _i in SP.RING_COUNT:
+		patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	var r: Dictionary = patch.report()
 
 	failed += _check("tile_is_visible_1km_over_the_moon", bool(r.visible))
@@ -260,19 +265,20 @@ func _tile() -> int:
 
 	# Standing still must not throw the rings away and rebuild them.
 	var tris0 := int(r.tris)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon)
+	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	failed += _check("standing_still_keeps_the_same_rings",
 		int(patch.report().tris) == tris0)
 
 	# Climbing out of the band puts it away again.
-	patch.update_for(dir * (MOON_R + 40.0), "Moon", true, MOON_R, 40.0, AIRLESS_KILL, m_ceiling, moon)
+	patch.update_for(dir * (MOON_R + 40.0), "Moon", true, MOON_R, 40.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	failed += _check("tile_hides_above_the_band", not bool(patch.report().visible))
 
 	# Earth at EZ: the regression commit 8933730 fixed, checked on the live object
 	# and not only on the arithmetic.
 	var earth_recipe := G.recipe_for({"name": "Earth"})
 	patch.update_for(Vector3(0.0, 6471.0, 0.0), "Earth", true, 6371.0, 100.0,
-		EARTH_KILL, _ceiling_of(earth_recipe), earth_recipe)
+		EARTH_KILL, _ceiling_of(earth_recipe), earth_recipe,
+		G.terrain_sampler(earth_recipe))
 	failed += _check("no_ground_tile_at_earth_ez", not bool(patch.report().visible))
 
 	print("surface_band: tile  %d tris across %d rings, %d/%d props, body %s"

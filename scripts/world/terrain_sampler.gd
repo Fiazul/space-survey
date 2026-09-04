@@ -44,23 +44,56 @@ const FBM_CEILING := 0.96875
 # building instead of just interpolating between texels.
 const DETAIL_FREQ := 900.0         # cycles across the body; ~44 km wavelength on Earth
 const DETAIL_MAX_M := 420.0        # amplitude at full slope
+# Three octaves, not five. Each octave is 8 hash() calls, and this fbm is the
+# single dominant cost in a ring rebuild (4,225 heights x 40 sin() at five
+# octaves). Octaves 4 and 5 together carry under 9% of the amplitude - at most
+# 39 m here. crust_height() still uses the full five, because THAT one has to
+# mirror planet_cook.gdshader exactly.
+const DETAIL_OCTAVES := 3
 const NOISE_WORLD_SLOPE := 0.35    # a noise world is already rugged at every scale
 
-var _himg: Image                   # height map, or null -> noise
-var _simg: Image                   # water mask, or null
-var _aimg: Image                   # albedo, for the map half of surface_color
+# Maps are cached as RAW SINGLE-CHANNEL BYTES, not as Images.
+# Image.get_pixel() from GDScript costs an Object call per texel, and one
+# height_m() makes ~20 of them (4 for the bilinear, 16 more for the slope). That
+# measured 11.78 us per call, which at 16,384 calls per ring is 267 ms - 3.7 fps,
+# exactly what was reported in play. Direct byte indexing runs the SAME bilinear
+# maths with none of the dispatch. Earth's height map is 5400x2700 = 14.6 MB here.
+var _h_bytes := PackedByteArray()
+var _h_w := 0
+var _h_h := 0
+var _s_bytes := PackedByteArray()
+var _s_w := 0
+var _s_h := 0
+var _aimg: Image                   # kept for callers that still want the Image
+# Albedo as raw RGB bytes: _color_at reads it once per grid vertex, which is 4,225
+# Image.get_pixel() calls per ring rebuild.
+var _a_bytes := PackedByteArray()
+var _a_w := 0
+var _a_h := 0
 var _seed := 0.0                   # the SAME seed the cook material got
 var _land := 1.0                   # recipe land_amount, the water cut with no mask
 var _has_map := false
 
 
 func _init(recipe: Dictionary) -> void:
-	_himg = _img_of(str(recipe.get("height", "")))
-	_simg = _img_of(str(recipe.get("specular", "")))
-	_aimg = _img_of(str(recipe.get("albedo", "")))
+	var hm := _load_gray(str(recipe.get("height", "")))
+	_h_bytes = hm.bytes
+	_h_w = hm.w
+	_h_h = hm.h
+	var wm := _load_gray(str(recipe.get("specular", "")))
+	_s_bytes = wm.bytes
+	_s_w = wm.w
+	_s_h = wm.h
+	var am := _img_of(str(recipe.get("albedo", "")))
+	if am != null:
+		am.convert(Image.FORMAT_RGB8)
+		_a_bytes = am.get_data()
+		_a_w = am.get_width()
+		_a_h = am.get_height()
+	_aimg = am
 	_seed = float(recipe.get("seed", 0.0))
 	_land = float(recipe.get("land_amount", 1.0))
-	_has_map = _himg != null
+	_has_map = _h_w > 0
 
 
 # Metres above sea level at a point on the crust. `dir` is an outward unit vector
@@ -68,7 +101,7 @@ func _init(recipe: Dictionary) -> void:
 func height_m(dir: Vector3) -> float:
 	var base: float
 	if _has_map:
-		base = (_bilinear(_himg, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
+		base = (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
 	else:
 		# No map: the cook shader's own crust fbm, so the tile agrees with the globe.
 		base = PlanetGenerator.crust_height(dir, _seed) * NOISE_RELIEF_KM * 1000.0
@@ -84,7 +117,7 @@ func height_m(dir: Vector3) -> float:
 func base_height_m(dir: Vector3) -> float:
 	var base: float
 	if _has_map:
-		base = (_bilinear(_himg, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
+		base = (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
 	else:
 		base = PlanetGenerator.crust_height(dir, _seed) * NOISE_RELIEF_KM * 1000.0
 	return maxf(base, 0.0) if not DEM_HAS_BATHYMETRY else base
@@ -102,7 +135,8 @@ func _detail_m(dir: Vector3, base_m: float) -> float:
 	if base_m < 1.0:
 		return 0.0                 # keep water flat
 	var slope := slope01(dir)
-	var n: float = PlanetGenerator.fbm3(dir * DETAIL_FREQ + Vector3(_seed, _seed, _seed))
+	var n: float = PlanetGenerator.fbm3_octaves(
+		dir * DETAIL_FREQ + Vector3(_seed, _seed, _seed), DETAIL_OCTAVES)
 	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope
 
 
@@ -112,9 +146,11 @@ func slope01(dir: Vector3) -> float:
 	if not _has_map:
 		return NOISE_WORLD_SLOPE
 	var uv := _dir_uv(dir)
-	var e := 1.0 / float(_himg.get_width())
-	var dx := _bilinear(_himg, uv + Vector2(e, 0.0)) - _bilinear(_himg, uv - Vector2(e, 0.0))
-	var dy := _bilinear(_himg, uv + Vector2(0.0, e)) - _bilinear(_himg, uv - Vector2(0.0, e))
+	var e := 1.0 / float(_h_w)
+	var dx := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(e, 0.0)) \
+		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(e, 0.0))
+	var dy := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(0.0, e)) \
+		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(0.0, e))
 	return clampf(sqrt(dx * dx + dy * dy) * 22.0, 0.0, 1.0)
 
 
@@ -133,8 +169,8 @@ func alt_above_ground_km(pos: Vector3, body_radius_km: float) -> float:
 
 
 func is_water(dir: Vector3) -> bool:
-	if _simg != null:
-		return _bilinear(_simg, _dir_uv(dir)) > 0.5
+	if _s_w > 0:
+		return _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) > 0.5
 	if _has_map:
 		return height_m(dir) <= 0.5
 	# No mask and no map: the cook shader's land_amount cut on fbm.
@@ -177,14 +213,38 @@ func swept_contact(from: Vector3, to: Vector3, body_radius_km: float,
 	return false
 
 
+# Nearest-texel albedo colour. Nearest is fine here: at these altitudes the map
+# spans under two texels across the whole ring, so interpolating it buys nothing -
+# that blur is a data limit, and slice A5 is what addresses it.
+func albedo_color(dir: Vector3) -> Color:
+	if _a_w <= 0:
+		return Color(0.45, 0.40, 0.35)
+	var uv := _dir_uv(dir)
+	var x := clampi(int(fposmod(uv.x, 1.0) * float(_a_w)), 0, _a_w - 1)
+	var y := clampi(int(clampf(uv.y, 0.0, 0.999) * float(_a_h)), 0, _a_h - 1)
+	var i := (y * _a_w + x) * 3
+	return Color(float(_a_bytes[i]) / 255.0, float(_a_bytes[i + 1]) / 255.0,
+		float(_a_bytes[i + 2]) / 255.0)
+
+
 func report() -> Dictionary:
 	return {
 		"height_source": "map" if _has_map else "noise",
-		"water_source": "mask" if _simg != null else ("height" if _has_map else "noise"),
+		"water_source": "mask" if _s_w > 0 else ("height" if _has_map else "noise"),
 		"max_height_km": max_height_km(),
 		"scale_m": DEM_SCALE_M,
 		"seed": _seed,
 	}
+
+
+# Load a map as one byte per texel. FORMAT_R8 so the red channel - the only one
+# height and water masks use - is contiguous and indexable without a stride.
+func _load_gray(path: String) -> Dictionary:
+	var img := _img_of(path)
+	if img == null:
+		return { "bytes": PackedByteArray(), "w": 0, "h": 0 }
+	img.convert(Image.FORMAT_R8)
+	return { "bytes": img.get_data(), "w": img.get_width(), "h": img.get_height() }
 
 
 func _img_of(path: String) -> Image:
@@ -208,22 +268,24 @@ func _dir_uv(dir: Vector3) -> Vector2:
 
 # BILINEAR, not nearest. Nearest is what makes 7.42 km texels read as blocks, and
 # it also keeps every 8-bit step (~36 m at this scale) as a visible terrace.
-func _bilinear(img: Image, uv: Vector2) -> float:
-	var w := img.get_width()
-	var h := img.get_height()
+# Indexes raw bytes rather than calling Image.get_pixel - identical arithmetic,
+# without ~20 Object calls per height_m(). tools/test_earth_terrain.gd's
+# mesh_matches_the_height_function is what proves the results did not move.
+func _bilinear_bytes(bytes: PackedByteArray, w: int, h: int, uv: Vector2) -> float:
+	if w <= 0 or h <= 0:
+		return 0.0
 	var fx := fposmod(uv.x, 1.0) * float(w) - 0.5
 	var fy := clampf(uv.y, 0.0, 1.0) * float(h) - 0.5
 	var x0 := int(floor(fx))
 	var y0 := int(floor(fy))
 	var tx := fx - float(x0)
 	var ty := fy - float(y0)
-	var s00 := _texel(img, x0, y0)
-	var s10 := _texel(img, x0 + 1, y0)
-	var s01 := _texel(img, x0, y0 + 1)
-	var s11 := _texel(img, x0 + 1, y0 + 1)
-	return lerpf(lerpf(s00, s10, tx), lerpf(s01, s11, tx), ty)
-
-
-func _texel(img: Image, x: int, y: int) -> float:
-	return img.get_pixel(posmod(x, img.get_width()),
-		clampi(y, 0, img.get_height() - 1)).r
+	var xa := posmod(x0, w)
+	var xb := posmod(x0 + 1, w)
+	var ra := clampi(y0, 0, h - 1) * w
+	var rb := clampi(y0 + 1, 0, h - 1) * w
+	var s00 := float(bytes[ra + xa])
+	var s10 := float(bytes[ra + xb])
+	var s01 := float(bytes[rb + xa])
+	var s11 := float(bytes[rb + xb])
+	return lerpf(lerpf(s00, s10, tx), lerpf(s01, s11, tx), ty) / 255.0

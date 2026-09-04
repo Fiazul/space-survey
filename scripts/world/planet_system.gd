@@ -729,7 +729,7 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 					FlightModeScript.band_speed_cap_units(salt))
 		_surface.position = -ship_pos
 		_surface.update_for(ship_pos, nearest_name, near_physical, nearest_radius,
-			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe)
+			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler)
 
 
 # The shared TerrainSampler for a body, built once. main's contact kill and the

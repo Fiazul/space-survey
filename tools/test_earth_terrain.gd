@@ -229,7 +229,18 @@ func _rings() -> int:
 	# Build at 1 km over the Moon.
 	var dir := Vector3(0.42, 0.31, 0.85).normalized()
 	var m_ceiling: float = G.band_ceiling_km(sampler)
-	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon)
+	# ONE ring builds per update, so a cold tile takes RING_COUNT updates to fill.
+	# Four rings in one frame was a 1.2 s freeze on arrival; spread over four
+	# frames it is four hitches. Assert the contract rather than assuming one call.
+	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
+	var first: PackedInt32Array = patch.report().ring_verts
+	var built_first := 0
+	for v in first:
+		if v > 0:
+			built_first += 1
+	failed += _check("one_update_builds_one_ring", built_first == SP.RINGS_PER_UPDATE)
+	for _i in SP.RING_COUNT:
+		patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
 	var r: Dictionary = patch.report()
 
 	failed += _check("all_rings_built", int(r.rings) == SP.RING_COUNT)
@@ -255,6 +266,11 @@ func _rings() -> int:
 	# test uses; under-height means the mesh sits inside it and you watch terrain
 	# pass below you as you die. The first draft measured only over-height, and a
 	# mutation that put the ENTIRE mesh below the ground passed it.
+	# The tile must hold the SHARED instance, not one of its own. It used to build
+	# its own, so the tile and the contact kill were two samplers - two 14.6 MB
+	# loads, and the one-function design this slice rests on was untrue in the
+	# shipped path.
+	failed += _check("tile_holds_the_shared_sampler", patch.uses_sampler(sampler))
 	failed += _check("mesh_never_floats_above_the_ground", float(err.over) < 0.001)
 	failed += _check("mesh_never_sinks_below_the_ground", float(err.under) < 0.001)
 	failed += _check("mesh_matches_the_height_function", worst < 0.001)
@@ -262,7 +278,8 @@ func _rings() -> int:
 	# Constant budget with altitude is the whole point of rings: detail and reach
 	# stop competing. A single plate had to trade one for the other.
 	var tris_low := int(r.tris)
-	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon)
+	for _i in SP.RING_COUNT:
+		patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
 	var tris_high := int(patch.report().tris)
 	failed += _check("triangle_budget_is_constant_with_altitude", tris_low == tris_high)
 	failed += _check("triangle_budget_is_within_range",

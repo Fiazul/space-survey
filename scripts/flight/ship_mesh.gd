@@ -58,18 +58,133 @@ const DINGO57_BOOSTER_SOCKETS := [
 # Mach-disk intensity on the inner core layers. The outer fog sheath passes 0.0.
 const SHOCK_TRAIN := 2.6
 # Per-ship gain for the additive booster shader, compensating for how much of each hull
-# it covers (tools/probe_propulsion_area.gd): class_ii 0.64%, dingo57 4.30%,
-# snarkrans 6.69%. class_ii keeps 4.0; the others are scaled by
-# sqrt(class_ii_area / own_area) so a ship with ten times the emissive area does not
-# come out ten times as washed. JazOone carries its own number in
-# style_jazoone_spaceship for the same reason.
-const DINGO57_BOOSTER_GAIN := 1.6
-const SNARKRANS_BOOSTER_GAIN := 1.3
+# it lights: gain = 4.0 * sqrt(class_ii_area / own_area), so a ship with ten times the
+# emissive area does not come out ten times as washed, and ship size cancels because
+# the areas are fractions of hull.
+#
+# These are derived from EFFECTIVE area now, not raw surface area, because
+# cruiser_propulsion.gdshader grades its energy against the nozzle sockets and fades to
+# zero before the mesh ends. tools/probe_propulsion_area.gd integrates that falloff over
+# the triangles and prints the whole table:
+#
+#     ship        raw %   effective %   kept   gain
+#     class_ii     0.64          0.68   108%   4.00  (anchor)
+#     dingo57      4.30          0.50    12%   4.68
+#     snarkrans    6.69          1.20    18%   3.02
+#
+# The housings and shells are what dropped out - snarkrans' upper/lower shells now
+# integrate to 0.00% - so the old 1.6 and 1.3 were mostly compensating for area that is
+# no longer lit at all. Deriving from raw area after the border landed would have
+# over-compensated all over again in the opposite direction.
+#
+# What this costs: dingo57 and snarkrans now emit ~34% and ~42% of the total light they
+# used to, which is the excess that came from lighting their housings. class_ii, the
+# anchor, is unchanged at 106%.
+const CLASS_II_BOOSTER_GAIN := 4.0
+const DINGO57_BOOSTER_GAIN := 4.68
+const SNARKRANS_BOOSTER_GAIN := 3.02
+# JazOone's two engine discs are far larger relative to its hull than the other ships'
+# booster patches (~10% of hull length in radius, each), so the energy that reads as a
+# hot throat on them buries this ship in bloom. Measured in the chase view: at 4.0 the
+# glow covered 44% of the frame at cruise and the hull was invisible; 0.40 leaves two
+# hot bells and a hull.
+#
+# Unchanged by the border work, deliberately. This ship never had the housing problem
+# the other three did: its emissive region IS the throat (measured 2.52% of the hull
+# raw, 2.63% effective - it keeps 104% of its area, where dingo57 keeps 12%). So the
+# socket falloff here redistributes the SAME total energy into a hot centre and a
+# 50%-value rim instead of a flat disc, which is what this ship needed, and its total
+# light does not move - no risk of re-running the blowout this number was measured
+# against. Peak at full boost: 1.29 broad, 1.94 at the very centre.
+const JAZOONE_BOOSTER_GAIN := 0.40
 
 const JAZOONE_BOOSTER_SOCKETS := [
 	{ "center": Vector3(0.85526, -0.14978, 3.83112), "radius": 0.81380 },
 	{ "center": Vector3(-1.19826, 0.69599, 3.69080), "radius": 0.82240 },
 ]
+
+# --- THE booster brightness knob -------------------------------------------------
+# Change this number, press F5, look at the ship. It is the single lever for how hot
+# the exhaust reads, and it scales EVERY booster layer on all four ships: the authored
+# propulsion surfaces, both torch cone layers (fog sheath + white core), Snarkrans'
+# nozzle plugs and JazOone's engine discs. The per-ship gains above are area
+# compensation, not taste - leave them alone and turn this instead, so the fleet keeps
+# its relative balance.
+#
+#   1.0 = as shipped   0.5 = half as hot   2.0 = twice as hot
+#
+# The last booster pass left the plume very subtle (with glow off it measures within
+# 2 px of hiding it entirely), so up is the interesting direction. Watch for the ships
+# with the widest emissive area - snarkrans and JazOone slab out first.
+#
+# A static var rather than a const so a tool CAN sweep it in-process without editing
+# this file - tools/test_booster_brightness.gd does exactly that, and restores it after.
+# Nothing else assigns it today; render_thruster.gd has its own separate torch/prop
+# sweep that applies on top. Read at BUILD time: the ship rebuilds on hangar change or
+# restart, so F5 is the loop, not live in flight.
+# KEEP THE DECIMAL POINT. `:= 20` infers an INT, and then every fractional value
+# assigned to it truncates - 0.8 becomes 0, which silently kills the boosters.
+static var booster_brightness := 18.0
+
+
+# Every `brightness` handed to a booster shader goes through here. One place to look
+# when a plume is the wrong intensity, and one place the knob has to apply.
+static func booster_gain(base_gain: float) -> float:
+	return base_gain * booster_brightness
+
+
+# cruiser_propulsion.gdshader grades its energy against the same sockets that position
+# the plumes, so the glow ends inside the housing instead of at the mesh boundary (see
+# the shaping block in that shader for the measured reason). Must match the array size
+# declared there.
+const SHAPE_SOCKET_MAX := 8
+
+
+# Hand a propulsion material the sockets its surface contains, in the SURFACE's own
+# vertex space. `axis` is the local axis the exhaust runs along - model +/-Z for the
+# authored hull surfaces, but +Y for _add_dense_booster_plug's own rotated cylinder.
+static func _wire_nozzle_shape(material: ShaderMaterial, sockets: Array,
+		to_local: Transform3D, axis: Vector3) -> void:
+	var centres := PackedVector3Array()
+	var radii := PackedFloat32Array()
+	# A scaled mesh instance would otherwise get radii in the wrong space; the socket
+	# constants are authored in model units. Uniform scale is assumed, as everywhere
+	# else that converts through `world_scale`; non-uniform scale would need a radius
+	# per axis, and no current asset has any.
+	var scale: float = to_local.basis.get_scale().x
+	for socket in sockets:
+		if centres.size() >= SHAPE_SOCKET_MAX:
+			break
+		centres.append(to_local * (socket.center as Vector3))
+		radii.append(float(socket.radius) * scale)
+	# Pad to the declared array size. The shader only reads up to socket_count, but an
+	# under-filled uniform array is left holding whatever the driver had there.
+	while centres.size() < SHAPE_SOCKET_MAX:
+		centres.append(Vector3.ZERO)
+		radii.append(1.0)
+	material.set_shader_parameter("socket_pos", centres)
+	material.set_shader_parameter("socket_r", radii)
+	material.set_shader_parameter("socket_count", mini(sockets.size(), SHAPE_SOCKET_MAX))
+	# The AXIS needs converting too, not just the centres. JazOone's Layer_1 chunks sit
+	# under a parent chain that both rotates and scales them (measured: socket radius
+	# 0.81 -> 30.09, a factor of 36.96, with an axis swap), so model-space +Z is not
+	# +Z in the chunk's vertex space. Passing the axis through unconverted graded the
+	# discs along the wrong direction. Normalised because to_local carries the scale.
+	material.set_shader_parameter("shape_axis", (to_local.basis * axis).normalized())
+
+
+# Socket constants are authored in the MODEL's space. Every current ship loads as one
+# MeshInstance3D so this is identity, but a nested asset would put the surface's vertex
+# space somewhere else entirely and silently misplace every nozzle.
+static func _model_to_surface_space(model: Node3D, mi: MeshInstance3D) -> Transform3D:
+	var t := Transform3D.IDENTITY
+	var node: Node = mi
+	while node != null and node != model:
+		if node is Node3D:
+			t = (node as Node3D).transform * t
+		node = node.get_parent()
+	return t.affine_inverse()
+
 
 # --- AABB / fitting --------------------------------------------------------
 
@@ -147,7 +262,12 @@ static func style_class_ii_cruiser(model: Node3D) -> Array[ShaderMaterial]:
 				var propulsion := ShaderMaterial.new()
 				propulsion.shader = CRUISER_PROPULSION_SHADER
 				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
-				propulsion.set_shader_parameter("brightness", 4.0)
+				propulsion.set_shader_parameter("brightness",
+					booster_gain(CLASS_II_BOOSTER_GAIN))
+				# All six patches live in this one surface, so the material carries all
+				# six sockets and each fragment grades against its nearest.
+				_wire_nozzle_shape(propulsion, CLASS_II_BOOSTER_SOCKETS,
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
 				mi.set_surface_override_material(si, propulsion)
 				propulsion_materials.append(propulsion)
 			elif tag.contains("eng_covers") or tag.contains("eng covers") or ordinal == 4:
@@ -238,7 +358,7 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 	var material := ShaderMaterial.new()
 	material.shader = CRUISER_TORCH_SHADER
 	material.set_shader_parameter("edge_color", Color(0.28, 0.70, 1.0))
-	material.set_shader_parameter("brightness", brightness)
+	material.set_shader_parameter("brightness", booster_gain(brightness))
 	material.set_shader_parameter("opacity", opacity)
 	material.set_shader_parameter("white_mix", white_mix)
 	material.set_shader_parameter("plume_length", length)
@@ -450,7 +570,13 @@ static func style_snarkrans_starship(model: Node3D) -> Array[ShaderMaterial]:
 				# times as washed - which is exactly what ate snarkrans' mid-hull.
 				# Scaled by sqrt(class_ii_area / this_area), same reasoning as the
 				# per-nozzle light share in ship.gd.
-				propulsion.set_shader_parameter("brightness", SNARKRANS_BOOSTER_GAIN)
+				propulsion.set_shader_parameter("brightness",
+					booster_gain(SNARKRANS_BOOSTER_GAIN))
+				# The tip/bottom/shell surfaces each span more than one housing, and
+				# the three sockets sit within a radius of each other, so every surface
+				# gets all three rather than a guessed one-to-one mapping.
+				_wire_nozzle_shape(propulsion, SNARKRANS_BOOSTER_SOCKETS,
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
 				mi.set_surface_override_material(si, propulsion)
 				propulsion_materials.append(propulsion)
 	return propulsion_materials
@@ -500,7 +626,12 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	material.shader = CRUISER_PROPULSION_SHADER
 	material.set_shader_parameter("plasma_color", Color.WHITE)
 	# Snarkrans-only, and it sits right on top of the booster faces above.
-	material.set_shader_parameter("brightness", SNARKRANS_BOOSTER_GAIN)
+	material.set_shader_parameter("brightness", booster_gain(SNARKRANS_BOOSTER_GAIN))
+	# The plug IS the throat, so it keeps the core boost and only loses its outer rim.
+	# CylinderMesh runs along +Y and this node is rotated, not the mesh, so the shaping
+	# axis is Y in the plug's own vertex space and the socket sits at its origin.
+	_wire_nozzle_shape(material, [{ "center": Vector3.ZERO, "radius": radius }],
+		Transform3D.IDENTITY, Vector3(0.0, 1.0, 0.0))
 
 	var plug := MeshInstance3D.new()
 	plug.name = plug_name
@@ -560,7 +691,13 @@ static func style_dingo57_starship(model: Node3D) -> Array[ShaderMaterial]:
 				propulsion.shader = CRUISER_PROPULSION_SHADER
 				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
 				# See SNARKRANS_BOOSTER_GAIN: eight emissive groups, 4.30% of the hull.
-				propulsion.set_shader_parameter("brightness", DINGO57_BOOSTER_GAIN)
+				propulsion.set_shader_parameter("brightness",
+					booster_gain(DINGO57_BOOSTER_GAIN))
+				# Eight groups and eight sockets, but nothing in the asset maps
+				# booster_group_NNN to a socket index - 070/109 are two halves of one
+				# bell. Pass all eight and let the nearest-socket search sort it out.
+				_wire_nozzle_shape(propulsion, DINGO57_BOOSTER_SOCKETS,
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
 				mi.set_surface_override_material(si, propulsion)
 				propulsion_materials.append(propulsion)
 			else:
@@ -624,12 +761,15 @@ static func style_jazoone_spaceship(model: Node3D) -> Array[ShaderMaterial]:
 			hull.set_shader_parameter("orm_tex", orm_tex)
 			hull.set_shader_parameter("normal_tex", normal_tex)
 			hull.set_shader_parameter("plasma_color", Color.WHITE)
-			# JazOone's two engine discs are far larger relative to its hull than the
-			# other ships' booster patches (~10% of hull length in radius, each), so the
-			# same energy that reads as a hot throat on them buries this ship in bloom.
-			# Measured in the chase view: at 4.0 the glow covered 44% of the frame at
-			# cruise and the hull was invisible; 0.40 leaves two hot bells and a hull.
-			hull.set_shader_parameter("brightness", 0.40)
+			# See JAZOONE_BOOSTER_GAIN for why this ship's discs run so much cooler
+			# than the other three ships' booster patches.
+			hull.set_shader_parameter("brightness", booster_gain(JAZOONE_BOOSTER_GAIN))
+			# The emissive mask says WHICH texels are engine; the sockets say how the
+			# energy is graded across them. Without this the disc is a hard-rimmed
+			# plate - the mask is saturated, so it carries no gradient of its own.
+			# JazOone imports with yaw 0: its exhaust runs +Z like its plumes.
+			_wire_nozzle_shape(hull, JAZOONE_BOOSTER_SOCKETS,
+				_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
 			mi.set_surface_override_material(si, hull)
 			propulsion_materials.append(hull)
 	print("jazoone: styled %d Layer_1 chunks with textured hull + two engine discs" \
@@ -758,6 +898,27 @@ static func _prepare_legacy_obj(mi: MeshInstance3D) -> void:
 		var visual_mesh := mi.mesh.duplicate() as ArrayMesh
 		visual_mesh.shadow_mesh = null
 		mi.mesh = visual_mesh
+
+
+# Visual layer the hull is tagged with so ONE light can be aimed at the ship and
+# nothing else. Everything in the game otherwise sits on layer 1, so a light whose
+# cull mask is only this bit touches the ship and neither the planets, the station,
+# nor the props. See Ship.HULL_FILL_* for the light that uses it.
+const SHIP_FILL_LAYER := 2   # bit 2 (value 2), layer 1 stays set so the sun still lights us
+
+
+# OR the ship-fill layer onto every piece of geometry under `model`, so the chase
+# fill light can find the hull. Additive/unshaded plume layers are tagged too, which
+# is harmless - they skip lighting entirely - and keeps the walk dumb and total.
+static func tag_fill_layer(model: Node) -> int:
+	var tagged := 0
+	if model is VisualInstance3D:
+		var vi := model as VisualInstance3D
+		vi.layers = vi.layers | SHIP_FILL_LAYER
+		tagged += 1
+	for child in model.get_children():
+		tagged += tag_fill_layer(child)
+	return tagged
 
 
 # A small key + fill + core light rig parented to the hull (travels with the ship).

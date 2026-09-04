@@ -196,6 +196,9 @@ const HULL_FILL_PITCH_DEG := -24.0       # - = from above, shining down onto the
 var velocity := Vector3.ZERO
 var true_pos := Vector3.ZERO   # absolute position in game units (floating origin)
 var speed_limit := INF         # set by main from PlanetSystem; eases us down near a body
+# The nearest body's shared height function, assigned by main each frame. The SAME
+# instance the ground rings and the contact kill use - three readers, one function.
+var terrain: TerrainSampler
 var nearest_dir := Vector3.ZERO  # toward nearest body; we only ease down when approaching it
 var nearest_name := ""           # body F10 / tape use (Sun when you're at the Sun)
 var nearest_dist := INF        # distance to nearest body; set by main (warp arrival ease-out)
@@ -557,12 +560,26 @@ func _newton_corotate(dt: float) -> void:
 
 
 func _newton_ground() -> void:
-	# Pin at Earth's 6400 km floor so you never punch through the air into the skin.
-	var min_r := Ephemeris.EARTH_MIN_R_KM
+	# Backstop so a physics substep can never put the hull INSIDE the rock. This
+	# used to pin at a flat 6400 km from Earth's centre, which is 29 km altitude -
+	# an independent blocker on the Earth flyover: removing the kill bubble alone
+	# would still have stopped every descent 29 km up and looked like the band was
+	# broken. Now it pins at the terrain beneath you plus the contact margin, so the
+	# swept kill in main._update_skin_kill sees contact and fires.
+	#
+	# true_pos is Earth-centred (Earth is the origin anchor), so this clamp is
+	# Earth's. Other bodies are handled by the kill itself, which works in each
+	# body's own frame.
 	var r := true_pos.length()
-	if r >= min_r or r < 0.001:
+	if r < 0.001:
 		return
 	var n := true_pos / r
+	var contact: float = Ephemeris.surface_kill_km("Earth")
+	var min_r: float = Ephemeris.EARTH_RADIUS_KM + contact
+	if terrain != null:
+		min_r = terrain.ground_radius_km(n, Ephemeris.EARTH_RADIUS_KM) + contact
+	if r >= min_r:
+		return
 	true_pos = n * min_r
 	var inward := velocity.dot(n)
 	if inward < 0.0:

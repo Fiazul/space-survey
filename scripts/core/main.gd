@@ -373,6 +373,9 @@ func _process(delta: float) -> void:
 	ship.fly(delta)
 	planets.refresh(ship.true_pos, delta)
 	ship.speed_limit = planets.speed_limit   # eases the ship down near a body
+	# Hand the ship the SAME height function the ground rings and the contact kill
+	# read, so its substep ground clamp cannot disagree with either.
+	ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
 	ship.nearest_dir = planets.nearest_dir   # only ease down when approaching it
 	ship.nearest_name = planets.nearest_name
 	ship.nearest_dist = planets.nearest_dist # warp ships ease out of warp on arrival
@@ -1481,6 +1484,13 @@ func _update_core_hazard(rem: float, delta: float) -> void:
 		_core_kill()
 
 
+# Last frame's ship offset from the nearest body's centre, for the swept contact
+# test. _prev_body records which body that was, so a change of nearest body does
+# not sweep a segment across interplanetary space and report a false crash.
+var _prev_from_centre := Vector3.ZERO
+var _prev_body := ""
+
+
 func _update_skin_kill(delta: float) -> void:
 	if _skin_dying:
 		_skin_t += delta
@@ -1500,9 +1510,28 @@ func _update_skin_kill(delta: float) -> void:
 		return
 	if planets.nearest_dist >= INF or planets.nearest_radius <= 0.0:
 		return
-	var alt: float = planets.nearest_dist - planets.nearest_radius
-	var kill_km: float = Ephemeris.surface_kill_km(planets.nearest_name)
-	if alt <= kill_km:
+	var sampler := planets.terrain_sampler_for(planets.nearest_name)
+	if sampler == null:
+		return
+	# The sampler works in the BODY's frame. planets.rel_of() is the render-space
+	# vector ship->body, so the ship's offset from that body's centre is its
+	# negation. Using the sphere-relative altitude here instead would be wrong by
+	# the full height of the terrain - 8.9 km over Everest.
+	var from_centre: Vector3 = -planets.rel_of(planets.nearest_name)
+	if from_centre.length() < 0.001:
+		return
+	var contact: float = Ephemeris.surface_kill_km(planets.nearest_name)
+	# SWEEP the segment this frame covered, not just where it ended. Both ends of
+	# one frame's travel can be clear air with a ridge standing between them, and
+	# a frame-rate dip is exactly when that happens - see
+	# tools/test_earth_terrain.gd, which asserts a point test WOULD have missed it.
+	# _prev_body guards against sweeping across interplanetary space when the
+	# nearest body changes.
+	var prev: Vector3 = _prev_from_centre if _prev_body == planets.nearest_name \
+		else from_centre
+	_prev_from_centre = from_centre
+	_prev_body = planets.nearest_name
+	if sampler.swept_contact(prev, from_centre, planets.nearest_radius, contact):
 		_skin_begin(planets.nearest_name)
 
 
@@ -1824,14 +1853,21 @@ func _setup_environment() -> void:
 	# glow_bloom>0 was haloing the lit metal hull into a "bulb"; with bloom 0 and
 	# an HDR threshold, only pixels brighter than 1.0 (emissive bodies) bloom, so
 	# the ship reads as shiny lit metal with a gradient, not a glowing bulb.
-	# GLOW OFF. Every "the booster is too bright" round came back to the glow chain
-	# turning an already-clipped pixel into a ball. With it off, an emissive surface is
-	# just an emissive surface. The Settings > Glow dropdown still turns it back on for
-	# anyone who wants it; the quality presets deliberately no longer force it.
-	env.glow_enabled = false
+	# ONE GLOW LEVEL, and it is ON. There used to be a High/Low pair (High = the values
+	# below, Low = glow off entirely), which is not two qualities, it is a toggle wearing
+	# the wrong labels. This is the single setting that sits BETWEEN them: the same tuned
+	# level weights and HDR threshold as the old High, at roughly half its amplitude.
+	#   old High:  intensity 0.9, bloom 0.05   <- the "booster grew a ball" config
+	#   old Low:   glow off                    <- nothing blooms at all
+	#   now:       intensity 0.45, bloom 0.0   <- a halo on the plume, no frame lift
+	# glow_intensity is the amplitude dial on the whole blur chain, so halving it halves
+	# both the halo's brightness and the radius at which it is still visible. bloom goes
+	# to 0 because it bleeds EVERY pixel regardless of the HDR threshold - harmless while
+	# glow was off, a flat lift across the frame now that it ships on.
+	env.glow_enabled = true
 	env.glow_normalized = true     # normalize levels so the neon thruster bloom blends evenly
-	env.glow_intensity = 0.9
-	env.glow_bloom = 0.05          # low-level bleed; 0.15 lifted the whole frame slightly
+	env.glow_intensity = 0.45      # half of the old High; the one glow variant
+	env.glow_bloom = 0.0           # no untresholded bleed — see above
 	env.glow_strength = 0.85
 	env.glow_hdr_threshold = 1.0
 	env.glow_blend_mode = Environment.GLOW_BLEND_MODE_ADDITIVE

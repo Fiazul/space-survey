@@ -28,7 +28,21 @@ func _initialize() -> void:
 	failed += _check("spin_stable", is_equal_approx(eph.spin_rad_s("Earth"), eph.spin_rad_s("Earth")))
 	failed += _check("geo_space", eph.flight_zone("Earth", E.GEO_RADIUS_KM) == "SPACE")
 	failed += _check("earth_air", eph.flight_zone("Earth", E.EARTH_RADIUS_KM + 50.0) == "AIR")
-	failed += _check("earth_skin", eph.flight_zone("Earth", E.EARTH_RADIUS_KM + 10.0) == "SKIN")
+	# 10 km used to be SKIN, because SKIN meant "inside the kill margin" and that
+	# margin was a 29 km bubble. With contact kill the margin is 20 m, so 10 km is
+	# flyable AIR - which is the whole point of the change.
+	failed += _check("ten_km_is_flyable_air_not_skin",
+		eph.flight_zone("Earth", E.EARTH_RADIUS_KM + 10.0) == "AIR")
+	failed += _check("skin_is_only_the_contact_margin",
+		eph.flight_zone("Earth", E.EARTH_RADIUS_KM + 0.01) == "SKIN")
+	# KNOWN LIMITATION, asserted so it is not mistaken for correctness: flight_zone
+	# measures from the SPHERE, while the contact kill measures from the terrain
+	# beneath you. Over Everest the tape can therefore read AIR at the moment you
+	# crash. Fixing it means giving Ephemeris a terrain dependency, which is the
+	# wrong direction for an autoload, so the zone label stays sphere-relative and
+	# the kill stays authoritative.
+	failed += _check("zone_label_is_sphere_relative_by_design",
+		eph.flight_zone("Earth", E.EARTH_RADIUS_KM + 8.0) == "AIR")
 	failed += _check("earth_inside", eph.flight_zone("Earth", 6000.0) == "INSIDE")
 	failed += _check("earth_center", eph.flight_zone("Earth", 500.0) == "CENTER")
 	failed += _check("moon_space", eph.flight_zone("Moon", E.MOON_RADIUS_KM + 1.0) == "SPACE")

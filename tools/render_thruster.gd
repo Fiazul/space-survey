@@ -65,8 +65,13 @@ var _cam_fov := 70.0      # FOV_BASE
 # Brightness sweep. TORCH_GAIN scales the torch cones' `brightness`, PROP_GAIN the
 # authored propulsion / JazOone hull discs. Lets a candidate exposure be photographed
 # without editing the shaders, so the shipped constants are picked from measurements.
+# These two are the SPLIT sweep (torch against propulsion). To move the whole fleet at
+# once, set ShipMesh.booster_brightness instead - that is the shipped knob, and it
+# applies on top of whatever these do.
 var _torch_gain := 1.0
 var _prop_gain := 1.0
+var _knob := -1.0        # KNOB=<f> overrides ShipMesh.booster_brightness for the shot
+var _shape_off := false  # SHAPE=0 renders the pre-border flat plate for comparison
 # Glow chain overrides. The HALO RADIUS around a hot pixel is set here, not by the
 # shader: level 5 is a 1/32-resolution blur, so whatever weight it carries is painted
 # over an enormous area. GLOW_L* are the per-level weights, GLOW_THRESHOLD the HDR
@@ -94,6 +99,16 @@ func _ready() -> void:
 	_cam_fov = _envf("CAM_FOV", _cam_fov)
 	_torch_gain = _envf("TORCH_GAIN", _torch_gain)
 	_prop_gain = _envf("PROP_GAIN", _prop_gain)
+	# KNOB photographs a candidate ShipMesh.booster_brightness without editing
+	# ship_mesh.gd - the whole point of that value being a static var. Unset leaves
+	# whatever the file says, so a plain run shows what the game would show.
+	_knob = _envf("KNOB", -1.0)
+	if _knob > 0.0:
+		ShipMesh.booster_brightness = _knob
+	# SHAPE=0 strips the nozzle sockets back off every material after the build, which
+	# is the A/B for the border work: socket_count = 0 is the old flat plate that lit
+	# the whole authored patch. Nothing else can turn the shaping off.
+	_shape_off = OS.get_environment("SHAPE") == "0"
 	for lvl in _glow.keys():
 		_glow[lvl] = _envf("GLOW_L%d" % lvl, _glow[lvl])
 	_glow_threshold = _envf("GLOW_THRESHOLD", _glow_threshold)
@@ -206,7 +221,13 @@ func _build_starfield() -> void:
 
 
 func _run() -> void:
+	# SHIP=<label> renders one ship instead of the whole sheet. Four ships x three
+	# shots is minutes of wall clock on software Vulkan, and most questions are about
+	# one hull.
+	var only := OS.get_environment("SHIP")
 	for ship in SHIPS:
+		if only != "" and String(ship.label) != only:
+			continue
 		var rig = await _build_ship(ship)
 		if rig == null:
 			print("render: SKIP %s (model failed to load)" % ship.label)
@@ -332,6 +353,13 @@ func _build_ship(ship: Dictionary):
 		_camera.look_at(aft, Vector3.UP)
 	else:
 		_camera.look_at(centre, Vector3.UP)
+	if _shape_off:
+		var stripped := 0
+		for m in driven:
+			if m.get_shader_parameter("socket_count") != null:
+				m.set_shader_parameter("socket_count", 0)
+				stripped += 1
+		print("render: SHAPE=0, sockets stripped from %d materials (flat plate)" % stripped)
 	if _torch_gain != 1.0 or _prop_gain != 1.0:
 		for m in driven:
 			var is_torch := m.shader == ShipMesh.CRUISER_TORCH_SHADER

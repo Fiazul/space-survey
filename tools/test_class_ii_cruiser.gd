@@ -45,14 +45,50 @@ func _initialize() -> void:
 	var idle_energy := float(hit.get_string(1)) if hit != null else -1.0
 	var full_energy := float(hit.get_string(2)) if hit != null else -1.0
 	var gain := float(drive.get_shader_parameter("brightness")) if drive != null else 0.0
-	print("class_ii_cruiser: propulsion energy %.2f..%.2f x brightness %.2f = %.1f..%.1f"
-		% [idle_energy, full_energy, gain, idle_energy * gain, full_energy * gain])
+	print("class_ii_cruiser: propulsion energy %.2f..%.2f x brightness %.2f = %.1f..%.1f  (booster_brightness knob %.2f)"
+		% [idle_energy, full_energy, gain, idle_energy * gain, full_energy * gain,
+		MeshStyler.booster_brightness])
 	failed += _check("propulsion_energy_ramps_with_throttle",
 		hit != null and idle_energy > 0.0 and full_energy > idle_energy)
 	failed += _check("propulsion_hdr_is_on_albedo_not_emission",
 		drive != null and drive.shader.code.contains("ALBEDO = white_core * energy")
 		and drive.shader.code.contains("EMISSION = vec3(0.0)"))
-	failed += _check("propulsion_peak_stays_off_the_slab", full_energy * gain <= 1.5)
+	# Ceiling guards on ShipMesh.booster_brightness. Turn the knob far enough up and the
+	# plume stops resolving anything and becomes a featureless slab under FILMIC +
+	# glow_hdr_threshold 1.0. These failing means you went too far, not that they are
+	# stale - the knob's value is printed above so the number is in the output.
+	#
+	# Two thresholds, because the shader is no longer a uniform plate. The BROAD value
+	# is what most of the lit surface gets and has to stay off the slab; the small core
+	# at the inner edge is allowed above 1.0, because a clipped core surrounded by
+	# falloff is what reads as a hot throat rather than a white patch.
+	var core_boost := float(drive.get_shader_parameter("core_boost")) \
+		if drive != null and drive.get_shader_parameter("core_boost") != null else 1.5
+	#
+	# Split into two checks on purpose. The CALIBRATION contract uses the knob-free
+	# base constant, so it stays meaningful and testable whatever the knob is parked
+	# at - it is the shipped look that must be off the slab. The knob's own product is
+	# a separate check, and its name is the message: if only that one fails, the code
+	# is fine and the value in ship_mesh.gd is too high.
+	var base := MeshStyler.CLASS_II_BOOSTER_GAIN
+	failed += _check("propulsion_calibration_stays_off_the_slab",
+		full_energy * base <= 1.5)
+	failed += _check("propulsion_calibration_core_bounded",
+		full_energy * base * core_boost <= 3.0)
+	failed += _check("booster_brightness_knob_within_safe_window",
+		full_energy * gain * core_boost <= 3.0)
+	# The shaping itself, structurally. class_ii is the ship the border does NOT change
+	# much - 100% of its authored patch area is already within 1.0 r of a nozzle axis
+	# (tools/probe_booster_shape.gd), so what it gains here is the core gradient, while
+	# dingo57 had 87% of its lit area outside the nozzle. Assert the code path and the
+	# wiring anyway: this is the shader all three OBJ ships share, and a material that
+	# loses its sockets silently reverts to the flat plate.
+	failed += _check("propulsion_has_a_nozzle_border", drive != null \
+		and drive.shader.code.contains("smoothstep(border_start, border_end, radial_n)") \
+		and drive.shader.code.contains("visibility * shape"))
+	failed += _check("propulsion_sockets_wired", drive != null \
+		and int(drive.get_shader_parameter("socket_count")) \
+			== MeshStyler.CLASS_II_BOOSTER_SOCKETS.size())
 	failed += _check("propulsion_temperature_ramp", drive != null \
 		and drive.shader.code.contains("cool_color") \
 		and drive.shader.code.contains("temperature"))
@@ -60,7 +96,8 @@ func _initialize() -> void:
 		and drive.shader.code.contains("mix(0.58, 1.0, edge_softness)"))
 	failed += _check("propulsion_ultimate_white", drive != null \
 		and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-		and float(drive.get_shader_parameter("brightness")) == 4.0)
+		and float(drive.get_shader_parameter("brightness"))
+			== MeshStyler.booster_gain(MeshStyler.CLASS_II_BOOSTER_GAIN))
 
 	var plume_materials := MeshStyler.add_class_ii_booster_plumes(model)
 	failed += _check("six_authored_booster_sockets", MeshStyler.CLASS_II_BOOSTER_SOCKETS.size() == 6)
@@ -109,13 +146,26 @@ func _initialize() -> void:
 	var thit: RegExMatch = tramp.search(torch_code)
 	var t_idle := float(thit.get_string(1)) if thit != null else -1.0
 	var t_full := float(thit.get_string(2)) if thit != null else -1.0
-	# 3.4 is the hottest `brightness` any ship hands the core layer (see ship_mesh.gd);
-	# 0.82 the highest opacity, and the two multiply into what lands on the frame.
-	print("class_ii_cruiser: torch energy %.3f..%.3f x core brightness 3.40 x opacity 0.82 -> peak %.2f"
-		% [t_idle, t_full, t_full * 3.4 * 0.82])
+	# This used to multiply by a literal 3.4, described as "the hottest brightness any
+	# ship hands the core layer". It was not - snarkrans passes 3.50 (ship_mesh.gd) -
+	# and being a literal it also ignored ShipMesh.booster_brightness entirely, so the
+	# torch ceiling could never fire however far the knob went. Read the built core
+	# layer instead: add_class_ii_booster_plumes returns fog/core in pairs, and the
+	# core is the hotter of each pair. 0.82 is the core layer's opacity.
+	var core_brightness := 0.0
+	for m in plume_materials:
+		core_brightness = maxf(core_brightness,
+			float(m.get_shader_parameter("brightness")))
+	print("class_ii_cruiser: torch energy %.3f..%.3f x core brightness %.2f x opacity 0.82 -> peak %.2f"
+		% [t_idle, t_full, core_brightness, t_full * core_brightness * 0.82])
 	failed += _check("torch_energy_ramps_with_throttle",
 		thit != null and t_idle > 0.0 and t_full > t_idle)
-	failed += _check("torch_peak_stays_off_the_slab", t_full * 3.4 * 0.82 <= 1.5)
+	failed += _check("torch_core_is_the_hotter_layer",
+		core_brightness == MeshStyler.booster_gain(3.40))
+	failed += _check("torch_calibration_stays_off_the_slab",
+		t_full * 3.40 * 0.82 <= 1.5)
+	failed += _check("torch_knob_within_safe_window",
+		t_full * core_brightness * 0.82 <= 1.5)
 
 	# The standalone test runner does not initialize project autoload identifiers
 	# before compiling ship.gd, so check registry wiring as source and exercise the

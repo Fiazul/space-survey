@@ -16,8 +16,16 @@ extends SceneTree
 const G := preload("res://scripts/world/planet_generator.gd")
 const SP := preload("res://scripts/world/surface_patch.gd")
 
-const EARTH_KILL := 29.0     # tools/test_skin_kill.gd pins this
-const AIRLESS_KILL := 0.1    # Ephemeris.SURFACE_KILL_FLOOR_KM
+const E := preload("res://scripts/autoload/ephemeris.gd")
+# The contact margin, read from the SHIPPED constant rather than copied. It was
+# 29.0 for Earth and 0.1 elsewhere, back when the kill was an altitude bubble.
+#
+# Read, not copied, on purpose: with a local 0.02 here, widening the shipped
+# margin back to 29 km left every assertion in this file green while Earth's band
+# was actually shut in the game - the exact decoupling that let the band sit
+# unreachable for two slices without a single test noticing.
+const EARTH_KILL := E.CONTACT_KILL_FLOOR_KM
+const AIRLESS_KILL := E.CONTACT_KILL_FLOOR_KM
 
 
 func _initialize() -> void:
@@ -54,13 +62,14 @@ func _band() -> int:
 	failed += _check("airless_band_is_at_least_2km_thick",
 		moon_alts.size() > 0 and float(moon_alts[-1]) - float(moon_alts[0]) > 2.0)
 
-	# Earth's band is STILL empty, but the reason has changed. Its ceiling now
-	# clears Everest (16.16 km); what keeps the band shut is the 29 km kill bubble
-	# sitting above that ceiling. Moving the kill to contact is what opens Earth,
-	# and this assertion inverts when it does.
-	failed += _check("earth_band_waits_on_the_kill_line", earth_alts.is_empty())
-	failed += _check("earths_ceiling_is_no_longer_what_shuts_it",
-		_ceiling_of(earth) > 8.848)
+	# EARTH'S BAND IS LIVE. This is the inverse of an assertion planted two slices
+	# ago (earth_band_still_empty_until_the_kill_line_moves) specifically so that
+	# moving the kill line would announce itself. It has.
+	failed += _check("earth_band_is_no_longer_empty", earth_alts.size() > 0)
+	failed += _check("earth_band_reaches_everest_height",
+		earth_alts.size() > 0 and float(earth_alts[-1]) > 8.848)
+	failed += _check("earth_band_opens_near_the_ground",
+		earth_alts.size() > 0 and float(earth_alts[0]) < 0.2)
 	# ...and the regression that closed it stays closed.
 	failed += _check("no_tile_at_earth_ez",
 		not G.ground_stamp_ok(100.0, EARTH_KILL, _ceiling_of(earth)))
@@ -91,6 +100,9 @@ func _band() -> int:
 	print("surface_band: airless band %.2f..%.2f km (ceiling %.2f from %.2f km of relief)"
 		% [float(moon_alts[0]), float(moon_alts[-1]), _ceiling_of(moon),
 		G.terrain_sampler(moon).max_height_km()])
+	print("surface_band: EARTH band %.2f..%.2f km (ceiling %.2f from %.2f km of terrain) — LIVE"
+		% [float(earth_alts[0]), float(earth_alts[-1]), _ceiling_of(earth),
+		G.terrain_sampler(earth).max_height_km()])
 	return failed
 
 

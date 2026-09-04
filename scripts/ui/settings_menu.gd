@@ -1,7 +1,7 @@
 class_name SettingsMenu
 extends CanvasLayer
 # Esc-toggled settings overlay: Master Volume, Mouse Sensitivity, and GFX
-# (Glow quality, Render scale, Fullscreen). Opening pauses flight and frees the
+# (Glow, Render scale, Fullscreen). Opening pauses flight and frees the
 # cursor; closing restores capture. process_mode = ALWAYS so it keeps running
 # (and Esc keeps working) while the tree is paused.
 #
@@ -31,7 +31,7 @@ var _open := false
 var _master_bus := 0
 var _fs_check: CheckButton
 var _rs_option: OptionButton   # render-scale dropdown (kept so presets can drive it)
-var _glow_option: OptionButton # glow dropdown (kept so presets can drive it)
+var _glow_check: CheckButton   # single glow on/off (kept so presets can drive it)
 
 
 func _ready() -> void:
@@ -127,13 +127,15 @@ func _build() -> void:
 	sens.value_changed.connect(_on_sensitivity)
 	col.add_child(_row("Mouse Sensitivity", sens))
 
-	# --- Glow quality ---
-	_glow_option = OptionButton.new()
-	_glow_option.add_item("High")   # index 0
-	_glow_option.add_item("Low")    # index 1
-	_glow_option.selected = 0 if (env != null and env.glow_enabled) else 1
-	_glow_option.item_selected.connect(_on_glow)
-	col.add_child(_row("Glow", _glow_option))
+	# --- Glow ---
+	# ONE variant, not a High/Low pair. The old dropdown's "High" was the full-strength
+	# chain and its "Low" was glow off, so it read as a quality choice while actually
+	# being a toggle. main.gd now ships a single mid-strength glow (see the ONE GLOW
+	# LEVEL note in _setup_environment); all this row does is turn it on or off.
+	_glow_check = CheckButton.new()
+	_glow_check.button_pressed = env != null and env.glow_enabled
+	_glow_check.toggled.connect(_on_glow)
+	col.add_child(_row("Glow", _glow_check))
 
 	# --- Render scale (incl. >100% ultra-resolution supersampling) ---
 	_rs_option = OptionButton.new()
@@ -198,9 +200,9 @@ func _on_sensitivity(t: float) -> void:
 	if ship != null:
 		ship.mouse_sens = lerpf(SENS_MIN, SENS_MAX, t)
 
-func _on_glow(idx: int) -> void:
+func _on_glow(on: bool) -> void:
 	if env != null:
-		env.glow_enabled = (idx == 0)
+		env.glow_enabled = on
 
 func _on_render_scale(idx: int) -> void:
 	_apply_render_scale(RENDER_SCALES[idx])
@@ -222,22 +224,22 @@ func _on_quality(idx: int) -> void:
 			vp.msaa_3d = Viewport.MSAA_8X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 			vp.use_taa = true
-			# Glow is off by default now (see main.gd _setup_environment); a quality
-			# preset should not silently switch it back on. Use the Glow row for that.
+			# There is only ONE glow variant now (see main.gd _setup_environment), so a
+			# quality preset has nothing to pick — it leaves the Glow row alone.
 		1:   # High — native res, strong MSAA + glow
 			scale = 1.0
 			vp.msaa_3d = Viewport.MSAA_4X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_DISABLED
 			vp.use_taa = false
-			# Glow is off by default now (see main.gd _setup_environment); a quality
-			# preset should not silently switch it back on. Use the Glow row for that.
+			# There is only ONE glow variant now (see main.gd _setup_environment), so a
+			# quality preset has nothing to pick — it leaves the Glow row alone.
 		2:   # Balanced — native res, light AA + glow
 			scale = 1.0
 			vp.msaa_3d = Viewport.MSAA_2X
 			vp.screen_space_aa = Viewport.SCREEN_SPACE_AA_FXAA
 			vp.use_taa = false
-			# Glow is off by default now (see main.gd _setup_environment); a quality
-			# preset should not silently switch it back on. Use the Glow row for that.
+			# There is only ONE glow variant now (see main.gd _setup_environment), so a
+			# quality preset has nothing to pick — it leaves the Glow row alone.
 		3:   # Performance — lower res, no MSAA, no glow
 			scale = 0.75
 			vp.msaa_3d = Viewport.MSAA_DISABLED
@@ -251,8 +253,8 @@ func _on_quality(idx: int) -> void:
 		var ri := RENDER_SCALES.find(scale)
 		if ri >= 0:
 			_rs_option.selected = ri
-	if _glow_option != null:
-		_glow_option.selected = 0 if (env != null and env.glow_enabled) else 1
+	if _glow_check != null:
+		_glow_check.button_pressed = env != null and env.glow_enabled
 
 func _is_fullscreen() -> bool:
 	var m := get_window().mode

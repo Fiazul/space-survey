@@ -77,7 +77,9 @@ func _initialize() -> void:
 	failed += _check("the_slow_case_actually_drops", bool(slow.dropped))
 	failed += _check("shell_never_accelerates_you",
 		slow.vel.length() <= crawl_speed + 1.0e-6)
-	failed += _check("f9_not_on_kill", punch.pos.length() > E.EARTH_MIN_R_KM + 1.0)
+	# The shell must sit above the ground, not on it. Was EARTH_MIN_R_KM + 1;
+	# that 6400 km bubble is retired, so this states the intent directly.
+	failed += _check("f9_not_on_kill", punch.pos.length() > E.EARTH_RADIUS_KM + 1.0)
 	var far_side: Dictionary = M.break_at_exclusion(geo, inward * 1.0e8, 1.0, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("punch_not_far_side", far_side.pos.x > 0.0)
 	var coast: Dictionary = M.break_at_exclusion(geo, inward * 0.001, 0.25, Vector3.ZERO, earth_ez, 0.0)

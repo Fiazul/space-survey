@@ -5,9 +5,9 @@ extends SceneTree
 const MeshStyler := preload("res://scripts/flight/ship_mesh.gd")
 const TEST_TINT := Color(0.10, 0.66, 0.66)
 const SHIPS := [
-	{"key": "class", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "surfaces": 5, "boosters": 1},
-	{"key": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj", "surfaces": 77, "boosters": 4},
-	{"key": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj", "surfaces": 9, "boosters": 8},
+	{"key": "class", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "surfaces": 5, "boosters": 1, "base": MeshStyler.CLASS_II_BOOSTER_GAIN},
+	{"key": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj", "surfaces": 77, "boosters": 4, "base": MeshStyler.SNARKRANS_BOOSTER_GAIN},
+	{"key": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj", "surfaces": 9, "boosters": 8, "base": MeshStyler.DINGO57_BOOSTER_GAIN},
 ]
 
 
@@ -47,14 +47,18 @@ func _initialize() -> void:
 				var drive := material as ShaderMaterial
 				# This test's job is that the hull PAINT pass never repaints a booster
 				# surface, so it checks plasma_color is still white and the HDR gain is
-				# still set. The gain itself is per-ship now (the *_BOOSTER_GAIN
-				# constants in ship_mesh.gd, scaled by emissive area), so assert a
-				# plausible range rather than the old flat 4.0.
+				# still set. Assert the ship's OWN base gain rather than a range: a
+				# range ceiling scaled by the knob (the previous version) would pass a
+				# paint bug that wrote any value under it, and a fixed 4.0 ceiling broke
+				# the moment the gains were re-derived from effective area (dingo57 is
+				# 4.68 now). Dividing the material value back out by the knob is exact -
+				# booster_gain is a single multiply.
 				var gain := float(drive.get_shader_parameter("brightness")) if drive != null else -1.0
+				var base := gain / maxf(MeshStyler.booster_brightness, 0.0001)
 				failed += _check("%s_booster_%d_still_white" % [spec.key, si],
 					drive != null \
 					and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-					and gain > 0.0 and gain <= 4.0)
+					and gain > 0.0 and is_equal_approx(base, float(spec.base)))
 			elif material is ShaderMaterial:
 				seen_leds += 1
 				failed += _check("%s_led_%d_tinted_not_replaced" % [spec.key, si],

@@ -31,6 +31,43 @@ func _initialize() -> void:
 	failed += _check("five_chunks_styled", propulsion.size() == 5)
 	failed += _check("not_the_full_ship_torch",
 		MeshStyler.JAZOONE_HULL_BOOSTER_SHADER != MeshStyler.CRUISER_PROPULSION_SHADER)
+	# The per-surface check below compares against booster_gain(), so it follows the
+	# ShipMesh.booster_brightness knob. This one does not: the disc's BASE gain has to
+	# stay under the clip ceiling no matter where the knob is parked, because that is
+	# the number the 44%-of-frame blowout came from.
+	failed += _check("disc_base_gain_under_clip_ceiling",
+		MeshStyler.JAZOONE_BOOSTER_GAIN > 0.0 and MeshStyler.JAZOONE_BOOSTER_GAIN <= 1.0)
+	# And the value that actually reaches the shader, which the check above cannot see.
+	# Replacing the old per-surface `brightness <= 1.0` with an equality against
+	# booster_gain() made the ceiling follow the knob, which meant nothing on THIS ship
+	# failed when the knob drove its discs back through the blowout - and this is the
+	# ship with the least headroom of the four. `power` arrives capped at
+	# Ship.POWER_CEIL (0.75); the core boost applies at the centre of the disc.
+	var disc_ramp := RegEx.new()
+	disc_ramp.compile("mix\\(([0-9.]+), *([0-9.]+), *pow\\(power, *([0-9.]+)\\)\\)")
+	var disc_hit: RegExMatch = disc_ramp.search(MeshStyler.JAZOONE_HULL_BOOSTER_SHADER.code)
+	var disc_peak := 0.0    # the shipped calibration, knob-free
+	var disc_live := 0.0    # what the knob in ship_mesh.gd currently produces
+	if disc_hit != null:
+		var lo := float(disc_hit.get_string(1))
+		var hi := float(disc_hit.get_string(2))
+		var e := float(disc_hit.get_string(3))
+		disc_peak = lerpf(lo, hi, pow(0.75, e)) * MeshStyler.JAZOONE_BOOSTER_GAIN
+		disc_live = lerpf(lo, hi, pow(0.75, e)) \
+			* MeshStyler.booster_gain(MeshStyler.JAZOONE_BOOSTER_GAIN)
+	print("jazoone: disc peak %.2f broad, %.2f at centre; live %.2f (knob %.2f)"
+		% [disc_peak, disc_peak * 1.5, disc_live * 1.5, MeshStyler.booster_brightness])
+	# Calibration first, then the live knob, so a too-high knob names itself instead of
+	# looking like the disc gain regressed. This ship has the least headroom of the
+	# four: the window is about x1.29 before its centre passes 2.5.
+	failed += _check("disc_calibration_peak_bounded",
+		disc_hit != null and disc_peak * 1.5 <= 2.5)
+	failed += _check("disc_knob_within_safe_window", disc_live * 1.5 <= 2.5)
+	# The border itself. The mask is saturated (probe_propulsion_area.gd: the gradient
+	# keeps 96.1% of lit texels), so without socket shaping this disc is a hard-rimmed
+	# flat plate whatever the mask does.
+	failed += _check("disc_shaped_by_sockets",
+		MeshStyler.JAZOONE_HULL_BOOSTER_SHADER.code.contains("smoothstep(border_start, border_end, radial_n)"))
 	for i in meshes.size():
 		var mi := meshes[i]
 		if mi.mesh == null:
@@ -49,8 +86,10 @@ func _initialize() -> void:
 				and material.get_shader_parameter("albedo_tex") != null \
 				and material.get_shader_parameter("emissive_tex") != null \
 				and material.get_shader_parameter("plasma_color") == Color.WHITE \
-				and float(material.get_shader_parameter("brightness")) > 0.0 \
-				and float(material.get_shader_parameter("brightness")) <= 1.0)
+				and float(material.get_shader_parameter("brightness"))
+					== MeshStyler.booster_gain(MeshStyler.JAZOONE_BOOSTER_GAIN) \
+				and int(material.get_shader_parameter("socket_count"))
+					== MeshStyler.JAZOONE_BOOSTER_SOCKETS.size())
 			if material != null and material.shader != null:
 				var code: String = material.shader.code
 				failed += _check("hull_albedo_path", code.contains("albedo_tex"))

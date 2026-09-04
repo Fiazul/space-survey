@@ -67,7 +67,8 @@ func _initialize() -> void:
 			failed += _check("group_%s_torch_shader" % group,
 				material is ShaderMaterial \
 				and (material as ShaderMaterial).get_shader_parameter("plasma_color") == Color.WHITE \
-				and float((material as ShaderMaterial).get_shader_parameter("brightness")) == MeshStyler.DINGO57_BOOSTER_GAIN)
+				and float((material as ShaderMaterial).get_shader_parameter("brightness"))
+					== MeshStyler.booster_gain(MeshStyler.DINGO57_BOOSTER_GAIN))
 	var styled_hull: BaseMaterial3D = null
 	if hull_surface >= 0:
 		styled_hull = model.get_surface_override_material(hull_surface) as BaseMaterial3D

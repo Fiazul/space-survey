@@ -68,11 +68,19 @@ const SATURN_SPIN_RAD_S := 1.6378e-4
 const URANUS_SPIN_RAD_S := -1.0124e-4
 const NEPTUNE_SPIN_RAD_S := 1.083e-4
 const SUN_SPIN_RAD_S := 2.9e-6
-# No landing. Math: skin 6371 + air 100 = 6471 ≈ 6500 from centre.
-# You never go below 6400 from Earth's centre → kill alt = 6400 − 6371 = 29 km.
-# 100 m is the absolute floor for airless worlds. Never go tighter than that.
-const EARTH_MIN_R_KM := 6400.0
-const SURFACE_KILL_FLOOR_KM := 0.1
+# No landing — but you die on CONTACT with terrain, not at an altitude.
+#
+# This replaced a 29 km bubble (EARTH_MIN_R_KM = 6400, kill = 6400 - 6371) plus a
+# 100 m floor for everything else. That rule killed you at a fixed radius from the
+# centre regardless of what was under you: the Pacific and the summit of Everest
+# were equally lethal at the same altitude, and Earth could never show ground at
+# all, because the bubble sat 29 km above it.
+#
+# Now: TerrainSampler computes the ground beneath your own position, and the kill
+# fires when the hull is within this margin of it. 20 m is under the hull's own
+# size and 60x the mesh's float32 quantisation (~0.32 m at these radii), so the
+# mesh can never make it fire early.
+const CONTACT_KILL_FLOOR_KM := 0.02
 const SURFACE_KILL_SECS := 2.2
 # Extra kilometres above the body's base kill, by name. Gravity can raise this later.
 var surface_kill_extra_km := {}
@@ -320,6 +328,12 @@ func flight_zone(body_name: String, dist_km: float) -> String:
 	var alt := dist_km - rad
 	if alt < 0.0:
 		return "INSIDE"
+	# SPHERE-relative, deliberately. The contact kill measures from the terrain
+	# beneath the hull (TerrainSampler + main._update_skin_kill), so over Everest
+	# this can still say AIR at the moment you crash. Ephemeris is an autoload with
+	# no terrain dependency by design, and the kill - not this label - is
+	# authoritative. tools/test_newton.gd asserts the discrepancy so it cannot be
+	# mistaken for correctness.
 	if alt <= surface_kill_km(body_name):
 		return "SKIN"
 	var air := atmo_top_km(body_name)
@@ -328,13 +342,13 @@ func flight_zone(body_name: String, dist_km: float) -> String:
 	return "SPACE"
 
 
-# Live kill altitude above the skin. Always >= 100 m. Earth is 29 km (r = 6400).
+# Contact margin: how close the hull may get to the ground BELOW IT before that
+# is a crash. Not an altitude above the sphere any more — see
+# CONTACT_KILL_FLOOR_KM. Every world uses the same margin; gravity or a hull
+# upgrade can still widen one through surface_kill_extra_km.
 func surface_kill_km(body_name: String = "") -> float:
 	var extra := maxf(float(surface_kill_extra_km.get(body_name, 0.0)), 0.0)
-	var base := SURFACE_KILL_FLOOR_KM
-	if body_name == "Earth" or body_name == "":
-		base = maxf(base, EARTH_MIN_R_KM - EARTH_RADIUS_KM)
-	return base + extra
+	return CONTACT_KILL_FLOOR_KM + extra
 
 
 # Safe park after a skin kill. Earth → sunlit GEO. Other worlds → sunward high park.
@@ -345,7 +359,9 @@ func sweet_spot(body_name: String = "") -> Vector3:
 	var rad := body_radius_km(body_name)
 	if rad <= 0.0:
 		return geo_start_pos()
-	var park := rad + maxf(surface_kill_km(body_name) * 4.0, 80.0)
+	# Park clear of the BAND, not clear of the old 29 km bubble. kill * 4 would now
+	# be 80 m, which would respawn you inside the terrain you just died on.
+	var park := rad + maxf(atmo_top_km(body_name) * 1.5, 120.0)
 	var sun := scene_pos("Sun")
 	var out: Vector3 = bpos - sun
 	if out.length_squared() < 0.0001:

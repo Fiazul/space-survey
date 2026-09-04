@@ -60,7 +60,8 @@ func _initialize() -> void:
 		# gain; a flat value put a white slab across its mid-hull.
 		failed += _check("booster_ultimate_white", drive != null \
 			and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-			and float(drive.get_shader_parameter("brightness")) == MeshStyler.SNARKRANS_BOOSTER_GAIN)
+			and float(drive.get_shader_parameter("brightness"))
+				== MeshStyler.booster_gain(MeshStyler.SNARKRANS_BOOSTER_GAIN))
 	failed += _check("legacy_shadow_mesh_removed", model.mesh is ArrayMesh and (model.mesh as ArrayMesh).shadow_mesh == null)
 
 	var plume_materials := MeshStyler.add_snarkrans_booster_plumes(model)

@@ -198,13 +198,54 @@ At 60 fps the anchors above hold with margin everywhere (the tightest point is
 2000 m/s -> 33 m against a 50 m quad). At 20 fps they do not, which is the second
 reason the kill test sweeps rather than samples a point.
 
+### A5. Surface colour, because the map runs out before the geometry does
+
+Measured on the shipped tile: at 1 km altitude a 10 km plate covers **1.9
+texels** of the Moon's 2048px albedo, 0.96 on Mars, and **0.51 on Earth**. Half
+a pixel. The ground is one flat colour and no triangle count changes that. This
+is the "blurry surface" seen in the first GPU look, and it is a data limit, not
+a mesh limit.
+
+`planet_cook.gdshader` already handles it for the globe: past `detail > 0.02` it
+blends a procedural grass / rock / dirt / ice palette driven by height and
+slope. **The tile bypasses that entirely** — `surface_patch._color_at()` samples
+the albedo image and stops. So today the tile is blurrier than the globe at the
+same altitude, which is backwards, and at the tile's outer edge the two disagree
+visibly.
+
+Same rule as A1, applied to colour: one palette, two consumers.
+
+```gdscript
+TerrainSampler.surface_color(dir, height_m, slope) -> Color
+```
+
+It reproduces the shader's close-up palette and blends over the map colour by
+**how far the map has run out**, which is a measurable quantity rather than a
+taste knob:
+
+```
+texels_across = plate_km / km_per_texel
+map_weight    = clamp(texels_across / MAP_FADE_TEXELS, 0, 1)    # MAP_FADE = 4
+```
+
+Above four texels the map still carries real information and leads; below it the
+map degrades to a broad tint and the procedural palette carries the detail. The
+map is never fully discarded — it keeps Mare Imbrium dark and the Sahara pale,
+which is the evidence the recipe exists to preserve.
+
+Verification: `tile_colour_matches_the_globe_palette` — the tile's colour at a
+direction equals the shader's palette inputs at that same direction within
+tolerance, so the seam does not show a step. And
+`map_leads_when_it_has_detail` / `noise_leads_when_it_does_not`, pinned at the
+measured texel counts above.
+
 ## Files
 
 | File | Change |
 |---|---|
 | `scripts/world/terrain_sampler.gd` | new — `TerrainSampler` |
 | `scripts/world/planet_generator.gd` | `terrain_sampler()`, ceiling from max height, retire the plate-derived ceiling |
-| `scripts/world/surface_patch.gd` | single plate -> four rings, skirts, sampler-driven vertices |
+| `scripts/world/surface_patch.gd` | single plate -> four rings, skirts, sampler-driven vertices and colour |
 | `scripts/world/planet_system.gd` | own the sampler, expose it, feed the band cap into `speed_limit` |
 | `scripts/flight/flight_mode.gd` | `band_speed_cap()` |
 | `scripts/core/main.gd` | `_update_skin_kill` -> swept contact test against the sampler |

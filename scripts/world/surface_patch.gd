@@ -19,8 +19,26 @@ extends Node3D
 # give 50 m underfoot AND 205 km of reach for a constant ~32k triangles.
 const RING_COUNT := 4
 const RING_SEGS := 64
-const RING_0_QUAD_KM := 0.05        # 50 m
 const RING_STEP := 4.0              # each ring out is this much coarser
+# RING SIZE FOLLOWS THE HORIZON. This is the fix for the flat plates with hard
+# straight edges seen below 10 km.
+#
+# The rings were a fixed 50 m base reaching 204.8 km. But the horizon is
+# sqrt(2*R*alt): 50 km at 200 m altitude, 277 km at 6 km, 437 km at 15 km. So a
+# fixed set covered 406% of the visible ground down low - triangles thrown away
+# past the horizon - and only 47% up high. The other 53% fell through to the
+# body's own SphereMesh, which is 192x96 segments on a 6371 km ball: facets of
+# 208 x 104 km. At a grazing angle those ARE the giant flat planes with straight
+# edges, and the pale diagonal band in the 15 km screenshot was one of their
+# edges seen nearly end-on.
+#
+# RING_STEP^3 * RING_SEGS = 4096, so ring 3 reaches base_quad * 4096. Setting
+# that to the horizon makes the terrain cover exactly the ground you can see, at
+# every altitude, for the same constant triangle count. Screen-space quad density
+# was already uniform across rings (~49 px each); coverage was the actual fault.
+const RING_SPAN := 4096.0           # RING_STEP^3 * RING_SEGS
+const BASE_QUAD_MIN_KM := 0.01      # 10 m; the DEM has nothing finer
+const BASE_QUAD_MAX_KM := 0.25
 # Rings 1..3 are DONUTS: the footprint the finer ring inside already covers is
 # skipped, so nothing overdraws and the triangle budget stays flat with altitude.
 # Each ring's outer edge drops straight down by one of its own quads. Adjacent
@@ -37,6 +55,16 @@ const REBUILD_FRAC := 0.125
 # 1.2 second freeze seen on arrival; spread over four frames it is four hitches.
 # Ring 0 is checked first, so the ground under the hull always wins the slot.
 const RINGS_PER_UPDATE := 1
+# Rebuild everything once the altitude has moved the ring scale this far.
+const BASE_DRIFT_FRAC := 0.25
+# Start building while still this many ceilings out, so the rings exist by the
+# time the band opens instead of hitching in on arrival. Nothing is SHOWN until
+# it is genuinely in the band.
+const PREBUILD_CEILINGS := 2.5
+# Sea level and the body's own sphere sit at the same radius, so the ocean would
+# z-fight the globe under it. Lift the water MESH INSTANCE - not its vertices -
+# so vertex_error_km() is untouched.
+const WATER_LIFT_KM := 0.001
 const PROP_MAX := 220
 
 var _ring_land: Array[MeshInstance3D] = []
@@ -59,6 +87,7 @@ var _tris := 0
 # StandardMaterial3D each time - eight per full tile, several times a second.
 var _land_mat: ShaderMaterial
 var _water_mat: ShaderMaterial
+var _base_quad := 0.0          # ring 0's quad size for the current altitude
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -95,14 +124,26 @@ func _ready() -> void:
 	visible = false
 
 
+# Distance to the visible horizon from an altitude, km. Pure geometry.
+static func horizon_km(alt_km: float, radius_km: float) -> float:
+	var a := maxf(alt_km, 0.0)
+	return sqrt(maxf(2.0 * radius_km * a + a * a, 0.0))
+
+
+# Ring 0's quad size for an altitude, chosen so ring 3 lands on the horizon.
+static func base_quad_km(alt_km: float, radius_km: float) -> float:
+	return clampf(horizon_km(alt_km, radius_km) / RING_SPAN,
+		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
+
+
 # Quad size of a ring, km. Ring 0 is the fine one under the hull.
-static func ring_quad_km(ring: int) -> float:
-	return RING_0_QUAD_KM * pow(RING_STEP, float(ring))
+static func ring_quad_km(ring: int, base: float) -> float:
+	return base * pow(RING_STEP, float(ring))
 
 
 # How far a ring reaches from the hull, km, edge to edge.
-static func ring_reach_km(ring: int) -> float:
-	return ring_quad_km(ring) * float(RING_SEGS)
+static func ring_reach_km(ring: int, base: float) -> float:
+	return ring_quad_km(ring, base) * float(RING_SEGS)
 
 
 # Point the tile at a world, with the SHARED sampler the contact kill also holds.
@@ -175,25 +216,37 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	if sampler == null:
 		visible = false
 		return
-	if not should_show(body, physical, alt, kill, ceiling, recipe):
+	# PREBUILD: warm the rings while still approaching so they exist by the time
+	# the band opens, rather than hitching in on arrival.
+	var in_band := should_show(body, physical, alt, kill, ceiling, recipe)
+	var warming: bool = physical and not body.is_empty() \
+		and PlanetGenerator.has_surface(recipe) \
+		and alt > kill and alt < ceiling * PREBUILD_CEILINGS
+	if not in_band and not warming:
 		visible = false
 		return
 	if _body != body or _sampler != sampler:
 		bind_body(recipe, sampler)
 		_body = body
-	visible = true
 	var hit: Vector3 = ship_pos.normalized() * radius
-	# Each ring rebuilds only when the hull has crossed one of ITS OWN quads, so
-	# ring 0 follows you closely and cheaply while ring 3 almost never moves.
+	# Ring scale follows the horizon, so a change of altitude invalidates them all.
+	var want_base: float = base_quad_km(alt, radius)
+	if _base_quad <= 0.0 or absf(want_base - _base_quad) > _base_quad * BASE_DRIFT_FRAC:
+		_base_quad = want_base
+		for i in RING_COUNT:
+			_ring_anchor[i] = Vector3.ZERO
+	# Each ring rebuilds only when the hull has crossed a fraction of ITS OWN
+	# reach, so ring 0 follows you closely and cheaply while ring 3 rarely moves.
 	var built := 0
 	for i in RING_COUNT:
 		if built >= RINGS_PER_UPDATE:
 			break
-		var drift := ring_reach_km(i) * REBUILD_FRAC
+		var drift := ring_reach_km(i, _base_quad) * REBUILD_FRAC
 		if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > drift:
 			_build_ring(i, hit, radius)
 			_ring_anchor[i] = hit
 			built += 1
+	visible = in_band
 	_tris = 0
 	for m in _ring_land:
 		_tris += _tri_count(m)
@@ -216,10 +269,10 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 		east = up.cross(Vector3.RIGHT)
 	east = east.normalized()
 	var north := east.cross(up).normalized()
-	var quad := ring_quad_km(ring)
-	var half := ring_reach_km(ring) * 0.5
+	var quad := ring_quad_km(ring, _base_quad)
+	var half := ring_reach_km(ring, _base_quad) * 0.5
 	# A donut: skip the ground the finer ring inside already owns.
-	var hole := 0.0 if ring == 0 else ring_reach_km(ring - 1) * 0.5
+	var hole := 0.0 if ring == 0 else ring_reach_km(ring - 1, _base_quad) * 0.5
 	var land_st := SurfaceTool.new()
 	var wat_st := SurfaceTool.new()
 	var skirt_st := SurfaceTool.new()
@@ -313,6 +366,8 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	_ring_land[ring].material_override = _land_mat
 	_ring_water[ring].mesh = wat_st.commit()
 	_ring_water[ring].material_override = _water_mat
+	# See WATER_LIFT_KM: sea level and the globe's sphere share a radius.
+	_ring_water[ring].position = up * WATER_LIFT_KM
 	_ring_skirt[ring].mesh = skirt_st.commit() if skirted else null
 	_ring_skirt[ring].material_override = _land_mat
 	if ring == 0:
@@ -692,7 +747,9 @@ func report() -> Dictionary:
 		"ring0_water_verts": _verts_of(_ring_water[0]) if _ring_water.size() > 0 else 0,
 		"ring0_aabb": AABB() if _ring_land.size() == 0 or _ring_land[0].mesh == null \
 			else _ring_land[0].mesh.get_aabb(),
-		"ring0_reach_km": ring_reach_km(0),
+		"ring0_reach_km": ring_reach_km(0, _base_quad),
+		"base_quad_km": _base_quad,
+		"ring3_reach_km": ring_reach_km(3, _base_quad),
 		# Per-ring land vertices, so the donut is directly observable: rings 1-3
 		# each drop the footprint of the ring inside them, so they MUST commit
 		# fewer land vertices than ring 0's full grid despite being the same
@@ -746,7 +803,8 @@ func vertex_error_km(radius: float) -> Dictionary:
 # grid, so its edge can sit up to roughly one of ITS quads away vertically.
 func rings_seal() -> bool:
 	for ring in range(RING_COUNT - 1):
-		if ring_quad_km(ring) * SKIRT_QUADS < ring_quad_km(ring + 1) * 0.05:
+		var drop: float = ring_quad_km(ring, _base_quad) * SKIRT_QUADS
+		if drop < ring_quad_km(ring + 1, _base_quad) * 0.05:
 			return false
 	return true
 

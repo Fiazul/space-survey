@@ -216,14 +216,37 @@ func _rings() -> int:
 	patch._ready()
 	patch.bind_body(moon, sampler)
 
-	# Ring geometry: 4 rings, each quad 4x the one inside, reaching past 200 km.
+	# Ring size follows the HORIZON now, so every assertion needs the altitude it
+	# is asked about. This section flies at 1 km over the Moon.
+	var base_q: float = SP.base_quad_km(1.0, MOON_R)
+
+	# THE fix for the flat plates below 10 km: rings must cover the ground you can
+	# actually see. A fixed 204.8 km reach covered 406% of the horizon at 200 m
+	# and only 47% at 15 km, and the missing half fell through to the body's bare
+	# SphereMesh - 208 x 104 km facets, which is what read as giant flat planes.
+	for probe_alt in [0.2, 1.0, 6.0, 15.0]:
+		var b: float = SP.base_quad_km(probe_alt, EARTH_R)
+		var hz: float = SP.horizon_km(probe_alt, EARTH_R)
+		var cover: float = SP.ring_reach_km(3, b) / hz
+		failed += _check("rings_reach_the_horizon_at_%s_km" % probe_alt,
+			cover > 0.95 and cover < 1.5)
+	# ...and the quad size must actually grow with altitude, or nothing changed.
+	failed += _check("ring_scale_grows_with_altitude",
+		SP.base_quad_km(15.0, EARTH_R) > SP.base_quad_km(0.5, EARTH_R) * 3.0)
+	failed += _check("ring_scale_has_a_floor",
+		SP.base_quad_km(0.0, EARTH_R) >= SP.BASE_QUAD_MIN_KM)
+	failed += _check("ring_scale_has_a_ceiling",
+		SP.base_quad_km(500.0, EARTH_R) <= SP.BASE_QUAD_MAX_KM)
+
+	# Ring geometry: 4 rings, each quad 4x the one inside.
 	failed += _check("four_rings", SP.RING_COUNT == 4)
-	failed += _check("ring_0_is_fine", SP.ring_quad_km(0) <= 0.05)
+	failed += _check("ring_0_is_fine", SP.ring_quad_km(0, base_q) <= 0.05)
 	failed += _check("each_ring_is_coarser",
-		SP.ring_quad_km(1) > SP.ring_quad_km(0)
-		and SP.ring_quad_km(2) > SP.ring_quad_km(1)
-		and SP.ring_quad_km(3) > SP.ring_quad_km(2))
-	failed += _check("outer_ring_reaches_the_horizon", SP.ring_reach_km(3) > 200.0)
+		SP.ring_quad_km(1, base_q) > SP.ring_quad_km(0, base_q)
+		and SP.ring_quad_km(2, base_q) > SP.ring_quad_km(1, base_q)
+		and SP.ring_quad_km(3, base_q) > SP.ring_quad_km(2, base_q))
+	failed += _check("outer_ring_reaches_this_horizon",
+		absf(SP.ring_reach_km(3, base_q) - SP.horizon_km(1.0, MOON_R)) < 1.0)
 	failed += _check("rings_have_no_gaps", bool(patch.rings_seal()))
 
 	# Build at 1 km over the Moon.
@@ -284,7 +307,16 @@ func _rings() -> int:
 	for _i in SP.RING_COUNT:
 		patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
 	var tris_high := int(patch.report().tris)
-	failed += _check("triangle_budget_is_constant_with_altitude", tris_low == tris_high)
+	# NEAR-constant, not identical. The budget is 4 rings x 64x64 whatever the
+	# altitude - that is the point of rings, and the old plate had to trade detail
+	# for reach. But ring scale now follows the horizon, so two altitudes sample
+	# different ground and classify a slightly different number of quads as water
+	# (which moves them to the other mesh) and as rim (which adds skirts). A few
+	# percent of drift is that, not a budget that grows with height.
+	failed += _check("triangle_budget_is_constant_with_altitude",
+		absf(tris_high - tris_low) < float(tris_low) * 0.05)
+	failed += _check("triangle_budget_does_not_grow_with_reach",
+		float(tris_high) < float(tris_low) * 1.05)
 	failed += _check("triangle_budget_is_within_range",
 		tris_low > 15000 and tris_low < 60000)
 
@@ -316,19 +348,24 @@ func _rings() -> int:
 	# ...and it must span about its stated reach, so ring_reach_km is not a lie.
 	var span: float = maxf(box.size.x, maxf(box.size.y, box.size.z))
 	failed += _check("ring_0_spans_its_stated_reach",
-		span > SP.ring_reach_km(0) * 0.6 and span < SP.ring_reach_km(0) * 1.6)
+		span > SP.ring_reach_km(0, base_q) * 0.6 and span < SP.ring_reach_km(0, base_q) * 1.6)
 
 	# Props still cover the ring rather than one corner of it.
 	var cover: Vector2 = r.prop_cover
 	failed += _check("props_cover_ring_0",
-		minf(cover.x, cover.y) > SP.ring_reach_km(0) * 0.7)
+		minf(cover.x, cover.y) > SP.ring_reach_km(0, base_q) * 0.7)
 
+	print("earth_terrain: rings  base %.0f m at 1 km alt; coverage of the horizon %.0f%% at 0.2 km / %.0f%% at 6 km / %.0f%% at 15 km"
+		% [base_q * 1000.0,
+		SP.ring_reach_km(3, SP.base_quad_km(0.2, EARTH_R)) / SP.horizon_km(0.2, EARTH_R) * 100.0,
+		SP.ring_reach_km(3, SP.base_quad_km(6.0, EARTH_R)) / SP.horizon_km(6.0, EARTH_R) * 100.0,
+		SP.ring_reach_km(3, SP.base_quad_km(15.0, EARTH_R)) / SP.horizon_km(15.0, EARTH_R) * 100.0])
 	print("earth_terrain: rings  %d rings, %d tris (4 ungapped grids = %d; holes -1.5k, skirts +2k), quads %.3f/%.3f/%.3f/%.3f km, reach %.1f km"
-		% [int(r.rings), tris_low, full_grids, SP.ring_quad_km(0), SP.ring_quad_km(1),
-		SP.ring_quad_km(2), SP.ring_quad_km(3), SP.ring_reach_km(3)])
+		% [int(r.rings), tris_low, full_grids, SP.ring_quad_km(0, base_q), SP.ring_quad_km(1, base_q),
+		SP.ring_quad_km(2, base_q), SP.ring_quad_km(3, base_q), SP.ring_reach_km(3, base_q)])
 	print("earth_terrain: rings  verts per ring %s (ring1 is %.1f%% holed), %d props cover %.2fx%.2f of %.2f km, worst vertex error %.2f m over/under (float32 noise)"
 		% [str(rv), (1.0 - float(rv[1]) / float(rv[0])) * 100.0, int(r.props),
-		cover.x, cover.y, SP.ring_reach_km(0), worst * 1000.0])
+		cover.x, cover.y, SP.ring_reach_km(0, base_q), worst * 1000.0])
 	patch.free()
 	return failed
 
@@ -366,18 +403,22 @@ func _cap() -> int:
 	# (PlanetSystem: `if salt < ceiling`), so sweeping past it would test the
 	# 100 km anchor - which is deliberately looser than the bound and would read as
 	# a cap bug rather than a test-range bug.
-	var quad: float = SP.ring_quad_km(0)
 	var earth := G.recipe_for({"name": "Earth"})
 	var ceiling: float = G.band_ceiling_km(G.terrain_sampler(earth))
 	var worst_alt := 0.0
 	var worst_ratio := 0.0
+	var worst_quad := 0.0
 	for i in 2001:
 		var alt := ceiling * float(i) / 2000.0
+		# Ring 0's quad now SCALES with altitude, so the bound has to be evaluated
+		# against the quad that actually exists at each height - not one constant.
+		var quad: float = SP.ring_quad_km(0, SP.base_quad_km(alt, EARTH_R))
 		var step_km: float = FM.band_speed_cap_units(alt) * FM.WORST_FRAME_S
 		var ratio := step_km / quad
 		if ratio > worst_ratio:
 			worst_ratio = ratio
 			worst_alt = alt
+			worst_quad = quad
 	failed += _check("cap_prevents_tunnelling", worst_ratio < 1.0)
 	# Stated headroom, so raising an anchor cannot quietly eat all of it.
 	failed += _check("tunnelling_bound_has_headroom", worst_ratio < 0.8)
@@ -388,7 +429,7 @@ func _cap() -> int:
 	print("earth_terrain: cap  %.0f/%.0f/%.0f/%.0f/%.0f m/s at 100/15/5/1/0.2 km; worst step %.0f%% of a %.0f m quad at %.1f km (%.0f fps proof)"
 		% [FM.band_speed_cap_ms(100.0), FM.band_speed_cap_ms(15.0),
 		FM.band_speed_cap_ms(5.0), FM.band_speed_cap_ms(1.0), FM.band_speed_cap_ms(0.2),
-		worst_ratio * 100.0, quad * 1000.0, worst_alt, 1.0 / FM.WORST_FRAME_S])
+		worst_ratio * 100.0, worst_quad * 1000.0, worst_alt, 1.0 / FM.WORST_FRAME_S])
 	return failed
 
 

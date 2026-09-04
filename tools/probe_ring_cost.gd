@@ -21,7 +21,7 @@ func _initialize() -> void:
 	print("probe_ring_cost: cold build of 4 rings = %.1f ms" % all_ms)
 
 	# Ring 0 alone, which rebuilds every 50 m of travel.
-	var quad: float = SP.ring_quad_km(0)
+	var quad: float = SP.ring_quad_km(0, SP.base_quad_km(15.0, 6371.0))
 	var t1 := Time.get_ticks_usec()
 	var moves := 5
 	for i in moves:

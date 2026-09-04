@@ -140,7 +140,8 @@ func _haze() -> int:
 	var failed := 0
 	# The haze distance is DERIVED: it must dissolve ring 3's rim so the LOD
 	# boundary stops being a visible edge.
-	var rim: float = SP.ring_reach_km(3)
+	# Ring 3's reach at the band ceiling, where the rings are widest.
+	var rim: float = SP.ring_reach_km(3, SP.base_quad_km(16.16, EARTH_R))
 	var at_rim: float = 1.0 - exp(-rim / G.HAZE_KM)
 	var at_20: float = 1.0 - exp(-20.0 / G.HAZE_KM)
 	var at_2: float = 1.0 - exp(-2.0 / G.HAZE_KM)

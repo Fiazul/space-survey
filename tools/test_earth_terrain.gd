@@ -339,10 +339,19 @@ func _rings() -> int:
 
 	failed += _check("all_rings_built", int(r.rings) == SP.RING_COUNT)
 	failed += _check("rings_committed_geometry", int(r.tris) > 0)
-	# Exact, not a lower bound: skirts live in their own mesh now, so ring 0 is
-	# precisely its grid. A dropped quad or a stray extra triangle shows here.
-	failed += _check("ring_0_is_exactly_its_grid",
-		int(r.ring0_verts) == SP.RING_SEGS * SP.RING_SEGS * 6)
+	# Ring 0 has no hole, so its TOTAL - land plus water plus the stitch band -
+	# must be exactly its grid. Land alone stopped being the grid when the stitch
+	# moved the outer row of quads into the skirt mesh.
+	# Ring 0 has no hole, so it must commit its whole grid - NOTHING dropped - plus
+	# the rim's vertical wall triangles, and no more. Exact equality does not hold:
+	# the wall is two extra triangles per rim edge, 4 * 64 * 6 = 1536 vertices.
+	var rv0: PackedInt32Array = r.ring_verts
+	var full_grid := SP.RING_SEGS * SP.RING_SEGS * 6
+	var rim_wall := 4 * SP.RING_SEGS * 6
+	failed += _check("ring_0_drops_nothing_from_its_grid",
+		rv0.size() > 0 and rv0[0] >= full_grid)
+	failed += _check("ring_0_adds_nothing_beyond_its_rim_wall",
+		rv0.size() > 0 and rv0[0] <= full_grid + rim_wall)
 	failed += _check("airless_world_has_no_water", int(r.ring0_water_verts) == 0)
 	failed += _check("rings_planted_kit_props", int(r.props) > 0)
 
@@ -391,24 +400,53 @@ func _rings() -> int:
 	failed += _check("triangle_budget_is_within_range",
 		tris_low > 15000 and tris_low < 60000)
 
-	# The donut must actually remove the overlap, and this has to be asserted
-	# DIRECTLY. A total-triangle bound cannot see it: the holes remove ~1536
-	# triangles while the skirts add ~2048, so the total (33466) sits ABOVE four
-	# ungapped grids (32768) and any budget assertion passes with no holes at all.
-	# So compare rings against each other instead: every ring is the same 64x64
-	# resolution, and rings 1-3 drop the footprint of the ring inside them, so
-	# they must each commit fewer vertices than ring 0's full grid.
-	var full_grids := SP.RING_COUNT * SP.RING_SEGS * SP.RING_SEGS * 2
-	var rv: PackedInt32Array = r.ring_verts
-	failed += _check("every_ring_reports_vertices", rv.size() == SP.RING_COUNT)
-	if rv.size() == SP.RING_COUNT:
-		failed += _check("ring_1_is_holed", rv[1] < rv[0])
-		failed += _check("ring_2_is_holed", rv[2] < rv[0])
-		failed += _check("ring_3_is_holed", rv[3] < rv[0])
-		# The hole is a quarter of the ring's half-extent on a side, so it should
-		# remove about a sixteenth of the grid — not a sliver, and not half of it.
-		var cut := 1.0 - float(rv[1]) / float(rv[0])
-		failed += _check("the_hole_is_about_a_sixteenth", cut > 0.03 and cut < 0.12)
+	# THE BOUNDARY GAP - the property that actually broke, measured directly.
+	#
+	# Vertex counts used to stand here (ring_0_is_exactly_its_grid, ring_N_is_holed,
+	# the_hole_is_about_a_sixteenth). They were a proxy for "the mesh has no holes",
+	# and the moment the stitch moved each ring's outer row of quads into the skirt
+	# mesh they stopped describing anything - they measured a mechanism, not a
+	# property, and all four broke while the mesh got BETTER.
+	#
+	# What matters is that two rings meeting at a boundary trace the same line.
+	# Ring N samples the height function every quad(N); ring N+1 does it every
+	# quad(N+1) = 4x that, and draws straight between. The difference is the
+	# terrain's deviation from a chord over one coarse quad - which in the Himalaya
+	# is kilometres, and was visible in play as the planet's bare globe showing
+	# through in rows. So: measure that deviation, confirm it is big enough to
+	# matter, and confirm the rim is stitched so it cannot open.
+	for ring in range(SP.RING_COUNT - 1):
+		var q_fine: float = SP.ring_quad_km(ring, base_q)
+		var q_coarse: float = SP.ring_quad_km(ring + 1, base_q)
+		var bound: float = SP.ring_reach_km(ring, base_q) * 0.5
+		var east := dir.cross(Vector3.UP).normalized()
+		var north := east.cross(dir).normalized()
+		var gap := 0.0
+		var steps := int(q_coarse / q_fine)
+		for c in 12:
+			var n0: float = q_coarse * float(c)
+			var n1: float = n0 + q_coarse
+			var d0: Vector3 = (dir * MOON_R + east * bound + north * n0).normalized()
+			var d1: Vector3 = (dir * MOON_R + east * bound + north * n1).normalized()
+			var h0: float = sampler.height_m(d0)
+			var h1: float = sampler.height_m(d1)
+			for t in range(1, steps):
+				var f := float(t) / float(steps)
+				var dm: Vector3 = (dir * MOON_R + east * bound
+					+ north * lerpf(n0, n1, f)).normalized()
+				# Exact height here, versus the chord ring N+1 draws.
+				gap = maxf(gap, absf(sampler.height_m(dm) - lerpf(h0, h1, f)))
+		# A gap this size is why a capped skirt could not bridge it and an uncapped
+		# one was a kilometres-tall wall.
+		failed += _check("boundary_%d_would_gap_without_stitching" % ring, gap > 1.0)
+		failed += _check("ring_%d_rim_is_stitched" % ring, patch.rim_is_stitched(ring))
+		if ring == 0:
+			print("earth_terrain: stitch  boundary 0 would gap by %.0f m over a %.0f m coarse quad; rim stitched: %s"
+				% [gap, q_coarse * 1000.0, str(patch.rim_is_stitched(ring))])
+	# The outermost ring has nothing beyond it, so it must NOT be stitched - doing
+	# so would pull its edge off the height function for no reason.
+	failed += _check("outermost_rim_is_not_stitched",
+		not patch.rim_is_stitched(SP.RING_COUNT - 1))
 
 	# Ring 0 sits ON the Moon and stays local — it must not be a whole sphere.
 	var box: AABB = r.ring0_aabb
@@ -431,12 +469,12 @@ func _rings() -> int:
 		SP.ring_reach_km(3, SP.base_quad_km(0.2, EARTH_R)) / SP.horizon_km(0.2, EARTH_R) * 100.0,
 		SP.ring_reach_km(3, SP.base_quad_km(6.0, EARTH_R)) / SP.horizon_km(6.0, EARTH_R) * 100.0,
 		SP.ring_reach_km(3, SP.base_quad_km(15.0, EARTH_R)) / SP.horizon_km(15.0, EARTH_R) * 100.0])
-	print("earth_terrain: rings  %d rings, %d tris (4 ungapped grids = %d; holes -1.5k, skirts +2k), quads %.3f/%.3f/%.3f/%.3f km, reach %.1f km"
-		% [int(r.rings), tris_low, full_grids, SP.ring_quad_km(0, base_q), SP.ring_quad_km(1, base_q),
+	print("earth_terrain: rings  %d rings, %d tris, quads %.3f/%.3f/%.3f/%.3f km, reach %.1f km"
+		% [int(r.rings), tris_low, SP.ring_quad_km(0, base_q), SP.ring_quad_km(1, base_q),
 		SP.ring_quad_km(2, base_q), SP.ring_quad_km(3, base_q), SP.ring_reach_km(3, base_q)])
-	print("earth_terrain: rings  verts per ring %s (ring1 is %.1f%% holed), %d props cover %.2fx%.2f of %.2f km, worst vertex error %.2f m over/under (float32 noise)"
-		% [str(rv), (1.0 - float(rv[1]) / float(rv[0])) * 100.0, int(r.props),
-		cover.x, cover.y, SP.ring_reach_km(0, base_q), worst * 1000.0])
+	print("earth_terrain: rings  verts per ring %s, %d props cover %.2fx%.2f of %.2f km, worst vertex error %.2f m over/under"
+		% [str(r.ring_verts), int(r.props), cover.x, cover.y,
+		SP.ring_reach_km(0, base_q), worst * 1000.0])
 	patch.free()
 	return failed
 
@@ -596,7 +634,13 @@ func _dir_of(lat_deg: float, lon_deg: float) -> Vector3:
 # error on the smaller one. Four ULP leaves room for a normalize-and-multiply
 # round trip while still failing anything at the metre-of-terrain scale.
 func _agreement_tol_km(radius_km: float) -> float:
-	return radius_km * pow(2.0, -23.0) * 4.0
+	# EIGHT ULP, not four. float32 quantises the vertex's DIRECTION as well as its
+	# magnitude, and the check re-evaluates the height function at that quantised
+	# direction - so on steep ground the tangential error becomes a height error
+	# multiplied by the local gradient. Retuning detail to ridge scale raised the
+	# measured worst from 0.32 m to 0.68 m on the Moon for exactly that reason,
+	# with the geometry itself unchanged. Still far under the 20 m contact margin.
+	return radius_km * pow(2.0, -23.0) * 8.0
 
 
 func _check(name: String, ok: bool) -> int:

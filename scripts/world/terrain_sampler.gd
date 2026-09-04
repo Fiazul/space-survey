@@ -215,9 +215,19 @@ func alt_above_ground_km(pos: Vector3, body_radius_km: float) -> float:
 	return d - ground_radius_km(pos / d, body_radius_km)
 
 
+# Sea level is sea level. A mask texel is 19.5 km across on Earth, so bilinear
+# interpolation of it smears the coastline across whole mountain ranges - and the
+# result was dark water quads lying on the Himalaya at 7626 m, in regular grid
+# rows, which is what was reported as "cubes and boxes" on the ground.
+const SEA_LEVEL_TOL_M := 40.0
+
+
 func is_water(dir: Vector3) -> bool:
 	if _s_w > 0:
-		return _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) > 0.5
+		if _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) <= 0.5:
+			return false
+		# The mask says water; the ELEVATION has to agree. Ocean cannot be 7 km up.
+		return base_height_m(dir) <= SEA_LEVEL_TOL_M
 	if _has_map:
 		return height_m(dir) <= 0.5
 	# No mask and no map: the cook shader's land_amount cut on fbm.

@@ -45,6 +45,13 @@ const BASE_QUAD_MAX_KM := 0.25
 # rings sample the same height function at different rates, so their edges do not
 # meet exactly; the skirt hides that gap and is invisible from above.
 const SKIRT_QUADS := 1.0
+# ...BUT CAPPED. A skirt only has to cover the height DISAGREEMENT between two
+# rings sampling the same function at different rates - tens of metres of terrain
+# variation. One full quad was fine when quads were a fixed 50 m; now that ring
+# scale follows the horizon, ring 3's quad is 4.3 km at 6 km altitude, so each
+# ring grew a KILOMETRES-TALL VERTICAL WALL around itself. Four concentric
+# cliffs, which is what was reported three times as "cubes and boxes".
+const SKIRT_DROP_MAX_KM := 0.25
 # Rebuild a ring after the hull has crossed this fraction of the ring's REACH,
 # not one of its quads. One quad meant ring 0 - which is 3.2 km wide - rebuilt
 # every 50 m: at 230 m/s that is 4.6 full rebuilds a second, and a rebuild
@@ -88,6 +95,7 @@ var _tris := 0
 var _land_mat: ShaderMaterial
 var _water_mat: ShaderMaterial
 var _base_quad := 0.0          # ring 0's quad size for the current altitude
+var _rim_stitched: Array[bool] = []  # per ring: was its rim snapped to the coarser grid
 var _radius := 1.0             # the body's radius, for the colour palette's texel maths
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
@@ -118,6 +126,7 @@ func _ready() -> void:
 		add_child(skirt)
 		_ring_skirt.append(skirt)
 		_ring_anchor.append(Vector3.ZERO)
+		_rim_stitched.append(false)
 	_props = MultiMeshInstance3D.new()
 	_props.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_props.multimesh = _make_prop_multimesh(_kit)
@@ -318,6 +327,40 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			if nrm.dot((c.p as Vector3).normalized()) < 0.0:
 				nrm = -nrm
 			c["n"] = nrm
+	# STITCH THE OUTER RIM to the next ring's grid.
+	#
+	# Every ring samples the same height function, but ring N+1 does it on a 4x
+	# coarser grid, so along their shared boundary ring N traces the terrain with
+	# four vertices per one of ring N+1's. The two edges therefore do not coincide,
+	# and the difference is the terrain's deviation from a straight line over one
+	# COARSE quad - in the Himalaya, where ring 3's quad is 5.3 km, that is
+	# kilometres. A skirt tall enough to bridge it is a kilometres-high wall (the
+	# original "boxes"); a skirt short enough not to be a wall leaves a gap you see
+	# the planet's bare globe through (the slivers that replaced them).
+	#
+	# So the rim is snapped: every rim vertex that is not on the coarse grid is
+	# moved onto the straight line between the two that are, which is exactly the
+	# line ring N+1's edge draws. The edges then coincide and there is no gap to
+	# cover. Those vertices are deliberately NOT on the height function any more,
+	# so the quads that use them are emitted into the SKIRT mesh - which
+	# vertex_error_km() already excludes - keeping the land mesh exactly on the
+	# function. The outermost ring has nothing beyond it and is left alone.
+	var stitch: bool = ring < RING_COUNT - 1
+	_rim_stitched[ring] = stitch
+	if stitch:
+		var step := int(RING_STEP)
+		for k in range(0, side, step):
+			var k2: int = mini(k + step, side - 1)
+			for t in range(1, step):
+				var kk := k + t
+				if kk >= side - 1:
+					break
+				var f := float(t) / float(step)
+				# All four edges of the square rim.
+				_snap(grid, side, kk, 0, k, 0, k2, 0, f)
+				_snap(grid, side, kk, side - 1, k, side - 1, k2, side - 1, f)
+				_snap(grid, side, 0, kk, 0, k, 0, k2, f)
+				_snap(grid, side, side - 1, kk, side - 1, k, side - 1, k2, f)
 	for j in RING_SEGS:
 		for i in RING_SEGS:
 			var e0 := -half + quad * float(i)
@@ -332,12 +375,22 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			var p10: Dictionary = grid[j * side + i + 1]
 			var p01: Dictionary = grid[(j + 1) * side + i]
 			var p11: Dictionary = grid[(j + 1) * side + i + 1]
+			# ALL FOUR corners, not the average. An average over 0.55 made any
+			# quad with two wet corners a full water plate, so every shoreline grew
+			# a fringe of dark quads standing 1 m proud of the land beside them.
+			# A shoreline quad is better drawn as land; slice C gives it a real edge.
 			var wet: float = (float(p00.w) + float(p10.w) + float(p01.w) + float(p11.w)) * 0.25
-			var st: SurfaceTool = wat_st if wet > 0.55 else land_st
+			var st: SurfaceTool = wat_st if wet > 0.99 else land_st
+			# A quad touching the stitched rim goes into the skirt mesh, because its
+			# rim corners were moved off the height function to meet the neighbour.
+			var on_rim: bool = i == 0 or j == 0 or i == RING_SEGS - 1 or j == RING_SEGS - 1
+			if stitch and on_rim:
+				st = skirt_st
+				skirted = true
 			_tri(st, p00, p10, p11)
 			_tri(st, p00, p11, p01)
 			# Skirt the ring's outer rim so the seam to the next ring cannot show.
-			var drop := quad * SKIRT_QUADS
+			var drop: float = minf(quad * SKIRT_QUADS, SKIRT_DROP_MAX_KM)
 			if i == 0:
 				_skirt(skirt_st, p01, p00, up, drop)
 				skirted = true
@@ -374,6 +427,21 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	_ring_skirt[ring].material_override = _land_mat
 	if ring == 0:
 		_place_props(prop_xforms, hit, east, north)
+
+
+# Move one rim vertex onto the straight line between the two coarse-grid vertices
+# that bracket it, so this ring's edge traces the same polyline the next ring out
+# does. Colour and water flag are interpolated too, or the stitch band would
+# change material halfway along.
+func _snap(grid: Array, side: int, x: int, y: int, ax: int, ay: int,
+		bx: int, by: int, f: float) -> void:
+	var v: Dictionary = grid[y * side + x]
+	var a: Dictionary = grid[ay * side + ax]
+	var b: Dictionary = grid[by * side + bx]
+	v["p"] = (a.p as Vector3).lerp(b.p as Vector3, f)
+	v["c"] = (a.c as Color).lerp(b.c as Color, f)
+	v["w"] = lerpf(float(a.w), float(b.w), f)
+	v["n"] = ((a.n as Vector3).lerp(b.n as Vector3, f)).normalized()
 
 
 # Two triangles hanging straight down from a rim edge, hiding the gap where this
@@ -734,6 +802,14 @@ func normal_report(radius: float) -> Dictionary:
 		"mean_neighbour_angle": 0.0 if turn_n == 0 else turn_sum / float(turn_n) }
 
 
+# Was this ring's outer rim snapped onto the next ring's grid? Every ring but
+# the outermost must be, or the boundary opens and you see the body's bare globe
+# through it. Test hook.
+func rim_is_stitched(ring: int) -> bool:
+	return ring >= 0 and ring < RING_COUNT - 1 and _rim_stitched.size() > ring \
+		and _rim_stitched[ring]
+
+
 # Is this tile reading the given height function? Test hook for the invariant
 # that the tile, the contact kill and the ship's ground clamp share ONE instance.
 func uses_sampler(sampler: TerrainSampler) -> bool:
@@ -814,8 +890,9 @@ func vertex_error_km(radius: float) -> Dictionary:
 # grid, so its edge can sit up to roughly one of ITS quads away vertically.
 func rings_seal() -> bool:
 	for ring in range(RING_COUNT - 1):
-		var drop: float = ring_quad_km(ring, _base_quad) * SKIRT_QUADS
-		if drop < ring_quad_km(ring + 1, _base_quad) * 0.05:
+		var drop: float = minf(ring_quad_km(ring, _base_quad) * SKIRT_QUADS,
+			SKIRT_DROP_MAX_KM)
+		if drop < minf(ring_quad_km(ring + 1, _base_quad) * 0.05, SKIRT_DROP_MAX_KM):
 			return false
 	return true
 
@@ -823,7 +900,12 @@ func rings_seal() -> bool:
 func _ring_vert_counts() -> PackedInt32Array:
 	var out := PackedInt32Array()
 	for ring in RING_COUNT:
-		out.append(_verts_of(_ring_land[ring]) + _verts_of(_ring_water[ring]))
+		# Skirt INCLUDED. The stitch moves each ring's outer row of quads into the
+		# skirt mesh, so land-only counts stopped describing "how much of the grid
+		# this ring committed" and two assertions built on them started measuring a
+		# mechanism that no longer existed.
+		out.append(_verts_of(_ring_land[ring]) + _verts_of(_ring_water[ring])
+			+ _verts_of(_ring_skirt[ring]))
 	return out
 
 

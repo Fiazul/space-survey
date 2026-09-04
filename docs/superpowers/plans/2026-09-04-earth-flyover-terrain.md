@@ -1249,16 +1249,25 @@ func _cap() -> int:
 	# frame of travel at the cap is shorter than a ring-0 quad, so a swept contact
 	# test cannot step over a mountain.
 	var quad: float = SP.ring_quad_km(0)
+	var earth := G.recipe_for({"name": "Earth"})
+	var ceiling: float = G.band_ceiling_km(G.terrain_sampler(earth))
 	var worst_alt := 0.0
 	var worst_ratio := 0.0
+	# Sweep only INSIDE the band. The cap is applied where a tile exists (see
+	# PlanetSystem.refresh: `if salt < ceiling`), so sweeping past the ceiling would
+	# test the 100 km anchor, which is deliberately looser than the bound and would
+	# read as a cap bug rather than a test bug. At 15.75 km the cap is 600 m/s:
+	# 600 * 0.05 s = 30 m against a 50 m quad, a ratio of 0.60.
 	for i in 2000:
-		var alt := float(i) * 0.06        # 0..120 km
+		var alt := ceiling * float(i) / 2000.0
 		var step_km: float = FM.band_speed_cap_units(alt) * FM.WORST_FRAME_S
 		var ratio := step_km / quad
 		if ratio > worst_ratio:
 			worst_ratio = ratio
 			worst_alt = alt
 	failed += _check("cap_prevents_tunnelling", worst_ratio < 1.0)
+	# And state the headroom, so raising an anchor cannot quietly eat all of it.
+	failed += _check("tunnelling_bound_has_headroom", worst_ratio < 0.8)
 
 	print("earth_terrain: cap  %.0f/%.0f/%.0f/%.0f/%.0f m/s at 100/15/5/1/0.2 km; worst step %.1f%% of a %.0f m quad at %.1f km"
 		% [FM.band_speed_cap_ms(100.0), FM.band_speed_cap_ms(15.0),
@@ -1344,7 +1353,16 @@ const FlightMode := preload("res://scripts/flight/flight_mode.gd")
 
 Expected: `earth_terrain: OK` and a cap line reading `2000/600/300/150/60 m/s at 100/15/5/1/0.2 km; worst step 60.0% of a 50 m quad at 100.0 km`.
 
-If `cap_prevents_tunnelling` fails, do NOT loosen the assertion — lower the 100 km anchor until the bound holds. The bound is the deliverable.
+If `cap_prevents_tunnelling` fails, do NOT loosen the assertion — lower the offending anchor until the bound holds. The bound is the deliverable.
+
+**Known tension, decided deliberately.** 1 km/s over the Moon already reads as
+"frozen" in play (Moon circumference 10,914 km, so that is a three-hour lap), and
+the in-band cap runs 60-600 m/s — *slower* than that. The bet is that perceived
+speed comes from nearby terrain moving, not from the number: ring 3 puts a horizon
+205 km out and Task 7 gives it enough contrast to track. If the band still feels
+dead after Task 7, the lever is **ring 0's quad size, not the cap**: the bound is
+`cap < quad / WORST_FRAME_S`, so 100 m quads permit 2000 m/s. Raising the cap
+alone breaks contact kill.
 
 - [ ] **Step 6: Mutation-test**
 

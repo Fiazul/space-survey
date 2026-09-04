@@ -1,3 +1,167 @@
+# Astryx — skin band: the bird-eye ground tile (2026-09-04)
+
+The planet generator's bird-view terrain. `surface_patch.gd` rewritten to be
+recipe-driven and body-agnostic, `planet_generator.gd` given the band + kit + crust
+contract, `tools/test_surface_band.gd` new. Airless worlds fly the band first.
+
+## The tile was unreachable code
+
+Not "looked wrong" — it could not run. Two gates, each reasonable alone:
+
+```gdscript
+should_show():     if body != "Earth": return false
+ground_stamp_ok(): return alt_km > kill_km and alt_km < 3.0    # Earth kill = 29
+```
+
+`alt > 29 and alt < 3` is empty at every altitude. So `_rebuild`, the prop
+MultiMesh and the height sampling had **never rendered once** in the project's
+history. The previous commit (`8933730 hide 36 km ground stamp at Earth EZ`) fixed
+a genuine bug — a 36 km plate showing at 100 km — by clamping the window shut on
+the only body allowed through it.
+
+Every existing assertion was about numbers *inside* the window
+(`no_stamp_at_earth_ez`, `no_stamp_in_air`) and none about whether the window
+contained anything, so the suite stayed green over dead code. **The new test's
+first assertion is that a band is non-empty**, and Earth's emptiness is asserted
+explicitly so it reads as a decision instead of an accident.
+
+## The ceiling is derived, not chosen
+
+A local plate reads as ground only while its width dwarfs your altitude. 36 km
+seen from 100 km up is the sticker-on-a-globe bug; the same plate from 1 km up is
+ground to the horizon. So:
+
+```
+ceiling   = TILE_KM_MAX * BAND_ALT_FRACTION = 36 * 0.09 = 3.24 km
+plate(alt) = clamp(alt * 10, 2, 36) km
+```
+
+The plate scaling is what keeps the quads honest on the way down — 48x48 quads is
+208 m each at 1 km altitude, 42 m at 200 m. The old fixed 36 km plate was 750 m
+quads at any height.
+
+## Airless first, and Earth is still shut
+
+| World | Kill | Band |
+|---|---|---|
+| Airless (Moon, Mercury, most moons) | 0.1 km | **0.11 - 3.23 km** (measured) |
+| Mars | 0.1 km | same |
+| Earth | 29 km | **empty** — kill is above the ceiling |
+
+Earth needs its 29 km kill line moved before it sees hills as objects. That is the
+"Honest limits" call in `PLANET_GENERATOR.md`, and it is now a named assertion
+(`earth_band_still_empty_until_the_kill_line_moves`) so whoever moves that line is
+told what else changed.
+
+## `physical` is load-bearing, not a tidy-up
+
+Deleting the `body != "Earth"` filter without adding the truth flag would pop a
+ground plate in deep space. An arcade system runs 1u = 0.01 AU with radii boosted
+by `VISUAL_SCALE`, so `nearest_dist - nearest_radius` = 0.1 there is really a
+million kilometres. `main._update_skin_kill` already guards the kill line this way
+(`planets.is_physical(...)`); `SurfacePatch.should_show` now takes the same flag.
+
+## The tile's hills must agree with the globe's crust
+
+`PlanetGenerator.crust_height()` / `fbm3` / `_noise3` / `_hash3` are a
+line-for-line mirror of `planet_cook.gdshader`'s `hash`/`noise`/`fbm`, and the
+tile runs them at the **same seed the material got**. Touch one, touch both —
+otherwise the ground you fly over stops matching the crust painted overhead.
+`_water_at` mirrors the shader's `sample_water()` fallback chain the same way
+(spec mask -> blue-over-red on the albedo -> the `land_amount` cut on fbm).
+
+The tile also never reaches for a map by name any more. It used to `load()`
+`earth_height.jpg` and `earth_spec_2k.png` unconditionally, which would have
+painted Earth's continents onto lunar regolith the moment another body was let
+through — the same class of bug as the 36 km sticker.
+
+## The kit is picked by physics
+
+`PlanetGenerator.surface_kit(recipe)`:
+
+| Kit | Gate | Gets |
+|---|---|---|
+| `tree` | `air_amount > 0.5` AND `water_shine > 0.3` | Earth |
+| `ice` | `ice_amount > 0.25` | Europa, icy moons |
+| `rock` | anything else with a surface | Moon, Mars, invented rocky |
+| `none` | gas giant, star | no plate at all |
+
+Three separate meshes, not one recoloured. A blue tree is not an ice spire, and
+`docs/specs/2026-08-22-universal-planet-asset-kit-design.md` is explicit that
+colour alone must never turn a hot phenomenon into a cold one. They are still
+project-owned primitives (unshaded — the black-boxes bug): the CC0 pack in that
+spec is **not acquired**, and acquiring it needs downloads plus a license ledger.
+
+## Props cover the plate, and the first assertion for that was too weak
+
+The candidate walk is row-major, so `if prop_xforms.size() < PROP_MAX` filled the
+first rows and left the rest of the ground bare — 220/220 props in one corner.
+Fixed by collecting uncapped and thinning at an even fractional stride, so the cap
+costs density and never coverage.
+
+**The coverage assertion had to be rewritten to catch it.** The first version took
+the largest axis of the props' world-space AABB, and the mutation (truncate
+instead of thin) *passed*: truncation keeps the **east** span at full width and
+only collapses **north**, so the largest axis still looks fine. The assertion now
+measures coverage along the plate's own east/north basis and checks **both**:
+
+```
+thinned:   cover 9.8 x 9.8 of a 10.0 km plate   OK
+truncated: cover 9.8 x 7.1                      FAIL props_cover_the_whole_plate
+```
+
+Props also grow with `sqrt(plate_width)` — 12-40 m at the bottom of the band,
+50-170 m at the top. That is a readability cheat and the only one in the file; a
+real 20 m boulder is one pixel from 3 km up.
+
+## Verified
+
+`tools/test_surface_band.gd`, 5 sections, run as `--script` (the patch holds no
+autoload reference on purpose, so it does not need a `.tscn` wrapper like
+`test_chase_rig`).
+
+Measured on the Moon at 1 km altitude: 13,824 ground verts (a full 48x48 plate),
+0 water verts (airless -> every quad routes to land), 220 of 312 candidate props,
+plate 10 km, geometry sitting on the 1732-1745 km shell.
+
+Five mutations, all caught: truncate-instead-of-thin, allow non-physical systems,
+drop the biosphere gate, bind Earth's height everywhere, reopen the band at EZ.
+
+Suite: `planet_generator`, `sol_cook`, `sol_truth`, `sol_occlude`, `sol_sun_lod`,
+`skin_kill`, `flight_mode`, `newton`, `surface_band` all OK. Boot clean. The two
+standing FAILs are last session's knob guards (`booster_brightness = 20.0`), and
+`test_wh_network` times out at 200 s — pre-existing, it has no preloads and zero
+planet references.
+
+## Still open here
+
+- **The ship mesh looks yaw-rotated, roughly 30 degrees to the right.** Reported
+  from play on 2026-09-04, NOT yet diagnosed or reproduced headlessly. The hull
+  appears turned relative to its direction of travel, so the nose is not pointing
+  where the ship is going. Candidates, in the order worth checking: the authored
+  model's own forward axis (the four hulls are OBJ/GLB from different sources, so
+  one may be +X-forward while the rig assumes -Z), `ShipMesh`'s orientation fix-up
+  when it fits a model into the holder, or the chase rig's aim basis. Do NOT
+  "correct" it by adding a counter-rotation until which layer is wrong is known -
+  a fix at the wrong layer will look right in the chase view and be wrong for
+  targeting, plume sockets and the fill light. Deferred by the user; the Earth
+  flyover work comes first.
+
+- **The plane-band safety speed cap** is the other half of the slice and was NOT
+  built. Cruise already dies at EZ; nothing yet forces m/s inside the band, so you
+  can still cross a 10 km plate in a blink. `FlightMode` has the words (`LOCAL` /
+  `AIR` / `DROP`); the cap does not exist.
+- **Earth's 29 km kill line.** Until it moves, the band is airless-only.
+- **Combat inside the band: there is no note anywhere.** Searched `docs/` — the
+  flight-modes spec/plan, the layers spec, the asset-kit spec and research, and
+  `PLANET_GENERATOR.md` say nothing about fighting at low altitude. Enemy spawning
+  (`enemy_factory.gd`) has no altitude or terrain awareness. That design does not
+  exist yet; do not assume it was decided.
+- The kit is primitives. The CC0 library is specced and unacquired.
+- All of this was verified headless. Nothing here has been seen on a GPU.
+
+---
+
 # Astryx — exposure + glow-radius pass (2026-09-03)
 
 Three complaints across two rounds: the booster was too bright and fought the rest of
@@ -90,6 +254,140 @@ hot core instead of a slab. Torch peak 0.45, propulsion peak 0.9. `cruiser_led.g
 was always fine, because its ALBEDO is black and it puts everything in... EMISSION -
 which means the LED strip is drawn entirely by its ALPHA. Worth a look some day.
 
+### One knob for the whole fleet: `ShipMesh.booster_brightness`
+
+The exhaust came out of that pass very subtle, and the note here said "raising the two
+energy constants is the lever". It is not any more - `static var booster_brightness` at
+the top of `scripts/flight/ship_mesh.gd` is. Change the number, press F5.
+
+It multiplies every booster layer on all four ships through `ShipMesh.booster_gain()`:
+the authored propulsion surfaces, both torch cone layers, snarkrans' nozzle plugs and
+JazOone's engine discs. The per-ship `*_BOOSTER_GAIN` constants stay put - those are
+area compensation (below), not taste, so turning the knob keeps the fleet's relative
+balance. `1.0` is the shipped look. Read at BUILD time, so the loop is F5, not live
+flight.
+
+Guards, in the contract tests, and they come in pairs: a `*_calibration_*` check that
+uses the knob-free base constant (the shipped look must be off the slab, and this stays
+testable whatever the knob is parked at) and a `*_knob_within_safe_window` check on the
+live value. **If only the `knob_within_safe_window` checks fail, the code is fine and the
+number in ship_mesh.gd is too high** - that is the whole point of the split. The windows:
+class_ii's broad propulsion value at 1.5 and its core at 3.0, JazOone's disc centre at
+2.5 (the binding one, ~x1.29).
+
+Every other brightness assertion compares against `booster_gain()`, so the suite follows
+the knob instead of pinning literals the way the old `== 4.0` assertions did. Two of them
+were quietly broken by that: `torch_peak_stays_off_the_slab` multiplied by a literal 3.4
+described as "the hottest brightness any ship hands the core layer" (snarkrans passes
+3.50) and could never fire however far the knob went, and `test_ship_customization`'s
+range ceiling scaled with the knob, so a paint bug writing any value under it would pass.
+Both now read the built material and assert the ship's own base gain.
+
+`tools/test_booster_brightness.gd` (new) is the one that actually pins the knob. At the
+shipped 1.0, `booster_gain(x) == x`, so no other test can tell a wrapped call site from a
+hardcoded number - and `cruiser_propulsion.gdshader` defaults `brightness` to 4.0, so on
+class_ii even a MISSING set passes. It builds all four ships at 0.5 and 2.5 and requires
+every booster material to move by exactly the ratio, plus sockets and positive radii on
+every shaped surface. Verified by mutation: unwrapping one call site fails 3 checks,
+dropping one `_wire_nozzle_shape` call fails 2, zeroing the radii fails 3.
+
+`tools/render_thruster.gd`'s `TORCH_GAIN`/`PROP_GAIN` are still the split sweep (torch
+against propulsion, for picking a value); they apply on top of the knob.
+
+### The emissive was the WHOLE mesh, and that was the real bug
+
+Raising the knob past ~1.16 did not make the engines hotter, it made the white *wider*.
+Cause, found by reading `cruiser_propulsion.gdshader` rather than tuning it: **the shader
+had no spatial term at all**. Across an entire booster patch the only variation was
+`visibility` (view angle, 0.58..1.0) and `shimmer` (a scrolling sine, 0.86..1.12).
+Every pixel sat at the same value, so `brightness` scaled a uniformly-lit plate and the
+whole plate clipped at once. This is the "headlights, not exhaust" reading, and it is why
+three rounds of tuning the energy constants changed nothing - the constants were fine,
+the falloff was missing. The plumes were never the problem: `cruiser_torch.gdshader` has
+real shaping (`radial_n`, `tip_fade`, `growth`, the shock train), so cones get brighter
+*and* keep structure. The surfaces they sit on did not.
+
+`tools/probe_booster_shape.gd` (new) measured what the geometry actually is, in units of
+each socket's own radius:
+
+| ship | sockets | radial extent | depth extent | shape |
+|---|---|---|---|---|
+| class_ii | 6 (one surface) | 0.33-1.82 r | 0.80 r | 4 bells + 2 flat rings |
+| snarkrans | 3 | 0.00-1.49 r | 1.96 r | deep housings |
+| dingo57 | 8 (own surfaces) | 0.70-1.78 r | 0.77 r | short bell walls |
+
+Careful with those spreads: they are measured in a 2x-radius WINDOW around each socket,
+which on class_ii also catches the neighbouring patches (sockets ~14-20 units apart,
+radii 8.6). The number that means something is triangle area against distance from a
+triangle's OWN nearest socket axis:
+
+| ship | within 1.0 r | in the 1.0-1.15 r fade | beyond the border |
+|---|---|---|---|
+| class_ii | 100% | 0% | 0% |
+| snarkrans | 33% | 10% | 57% |
+| dingo57 | 11% | 2% | 87% |
+
+**On dingo57, 87% of the glow was the HOUSING around the engine**, at full intensity, and
+on snarkrans 57%. That is the white that kept spreading past the nozzle rim, and no
+energy constant could have fixed it. class_ii is the exception - its authored patches are
+the nozzle faces themselves, so the border cuts nothing there and only the core gradient
+changes its look, which is why its effective area comes out at 108% rather than down.
+
+**The fix: the sockets that place the plumes are now handed to the shader too.** Each
+fragment finds its nearest socket and grades against it - `rim` fades the emissive out
+between 0.85 and 1.15 r so the glow ends *inside* the housing, `core` boosts the inner
+edge 1.5x so the knob buys contrast instead of width, and `depth_dim` drops the deep
+interior of a housing that its own bell hides. Both coordinates are needed: every socket
+measures MIXED, so a plain radial gradient would have switched snarkrans' 2-radii-deep
+walls off wholesale. `socket_count = 0` restores the old flat plate, which is what any
+unwired material still gets.
+
+Wiring is `ShipMesh._wire_nozzle_shape` + `_model_to_surface_space`. `shape_axis` exists
+because `_add_dense_booster_plug` puts this shader on its own rotated cylinder whose axis
+is +Y, not model Z.
+
+**The socket constants are in MODEL space, and one asset's surfaces are not.** JazOone's
+five Layer_1 chunks sit under a parent chain that scales them 36.968x (uniform, all three
+axes) and rotates them: model +Z comes out as (0.076, -0.046, 0.996) in a chunk's vertex
+space. Centres, radii AND the axis all have to be converted - an unconverted axis was the
+one bug this work shipped and then caught, and an unconverted centre would have put every
+socket ~37x too close to the origin and switched the discs off entirely. The three OBJ
+ships load as a single MeshInstance3D, so for them the conversion is identity and none of
+this is visible; do not "simplify" it away.
+
+**JazOone needed the same treatment, and the obvious fix did not work.** Its disc comes
+from a binary `step(0.25, mask)`, so softening the mask into a gradient looked like the
+answer - but `probe_propulsion_area.gd` measures the mask as saturated: the gradient keeps
+**96.1%** of lit texels and the rim stays hard. It got the socket falloff as well, off the
+sockets `probe_jazoone_sockets.gd` recovered from that same mask. Its gain stays 0.40:
+unlike the other three it never had a housing ring (2.52% of hull raw, 2.63% effective -
+it keeps 104% of its area against dingo57's 12%), so the shaping redistributes the same
+total energy into a hot centre and a 50%-value rim. Peak at full boost: 1.29 broad, 1.94
+at the centre. It is still the ship with the least headroom - about x1.29 of knob.
+
+`tools/render_thruster.gd` gained `KNOB=<f>` (photograph a candidate knob without editing
+ship_mesh.gd), `SHAPE=0` (strip the sockets back off after the build - the A/B against
+the old flat plate) and `SHIP=<label>` (one hull instead of the four-ship sheet, which is
+minutes of wall clock on software Vulkan). Nothing else assigns `booster_brightness`
+except `test_booster_brightness.gd`, which restores it.
+
+**Measured A/B**, dingo57, chase view, knob 1.0, `SHAPE=0` against shaped, comparing only
+the pixels that differ (the whole-frame stats are useless here - the ship is ~40 px wide
+in the chase view and the starfield swamps every metric):
+
+| | total light in the engine band | peak | look |
+|---|---|---|---|
+| flat plate (old) | 100% | 1.000 | eight pale octagonal plates nearly merging into one band |
+| shaped (border) | **72%** at boost, 86% at cruise | 1.000 | eight small bright cores, dark metal between them |
+
+The peak does not move - the core still clips - while 28% of the light in that band goes
+away. That is the housing, and it is the whole point.
+
+**And run it as a SCENE, with a display.** `render_thruster.gd`'s own header says so
+(`xvfb-run -a godot --path . res://tools/render_thruster.tscn`); driving it with
+`--script` hangs forever without ever creating its output directory, because a SceneTree
+script never pumps render frames. Two runs were wasted on this.
+
 ### Per-ship gain, because the emissive AREA differs tenfold
 
 `tools/probe_propulsion_area.gd` measures how much of each hull the additive booster
@@ -99,6 +397,26 @@ while leaving class_ii correct - which is why snarkrans kept a white patch acros
 mid-hull after the ALBEDO fix landed. `DINGO57_BOOSTER_GAIN` and
 `SNARKRANS_BOOSTER_GAIN` in ship_mesh.gd scale by `sqrt(class_ii_area / own_area)`, the
 same reasoning as the per-nozzle light share in ship.gd.
+
+**Re-derived from EFFECTIVE area once the border landed.** Raw area is the wrong input
+now: most of each housing contributes nothing, so `probe_propulsion_area.gd` integrates
+the shader's own falloff over the triangles and prints the table it derives the gains
+from:
+
+| ship | raw % | effective % | kept | gain |
+|---|---|---|---|---|
+| class_ii | 0.64 | 0.68 | 108% | 4.00 (anchor) |
+| dingo57 | 4.30 | 0.50 | 12% | **4.68** (was 1.6) |
+| snarkrans | 6.69 | 1.20 | 18% | **3.02** (was 1.3) |
+| jazoone | 2.52 | 2.63 | 104% | 0.40 (unchanged, different ramp) |
+
+Snarkrans' upper/lower shells now integrate to 0.00% - the old 1.6 and 1.3 were mostly
+compensating for area that is no longer lit at all. Deriving from raw area after the
+border would have over-compensated again in the opposite direction. The cost: dingo57 and
+snarkrans emit ~34% and ~42% of the total light they used to, which is exactly the excess
+that came from lighting their housings; class_ii, the anchor, is unchanged at 106%. The
+probe also stopped reporting JazOone's whole hull as emissive (it read 100%; the discs are
+2.52%) - it integrates per triangle against the mask now.
 
 Side view at full burn, before vs after, on snarkrans (the worst case):
 clipped px **2874 -> 1374**, inner-ring luminance **0.963 -> 0.399**, total light
@@ -188,6 +506,89 @@ so a sweep written the obvious way silently runs every profile at the defaults.
 above ~40 is a flat white plate whose only remaining variable is halo size, and between
 480 and 6528 the rendered frame is bit-identical. If a value is in the hundreds, it is
 not "HDR headroom", it is broken.
+
+## One glow variant, and it is on
+
+Settings had a `Glow` dropdown with **High** and **Low**. That was never two qualities:
+High meant `glow_enabled = true` at the tuned values, Low meant `glow_enabled = false`.
+A toggle wearing the wrong labels. It is now one `CheckButton`, and main.gd ships a
+single glow level that sits between the two old ends:
+
+| | intensity | bloom | levels |
+|---|---|---|---|
+| old High | 0.9 | 0.05 | 1:0.8 2:0.4 3:0.15 5:0.0 |
+| old Low | *off* | — | — |
+| **now** | **0.45** | **0.0** | unchanged |
+
+`glow_intensity` is the amplitude dial on the whole blur chain, so halving it halves the
+halo's brightness *and* the radius at which it is still visible — that is why the level
+weights (the radius tuning above) are left exactly as measured. `glow_bloom` goes to 0
+because bloom bleeds every pixel regardless of `glow_hdr_threshold`: harmless while glow
+was off, a flat lift across the whole frame now that it ships on.
+
+The three quality presets no longer mention glow at all (there is nothing for them to
+pick). Only **Performance** still forces it off.
+
+**This re-arms the glow chain, so `booster_brightness` matters again.** Anything the
+plume pushes above 1.0 now blooms. At the time of writing the knob is 20.0, which puts
+class_ii's propulsion peak at 20.8 and its torch core at 11.15 — the "hot pixel grows a
+ball" config, and `test_class_ii_cruiser` / `test_jazoone_spaceship` say so via their
+`*_knob_within_safe_window` guards. Both clear at a knob of **1.9 or below**
+(propulsion: `0.26 x 4.0 x knob x 1.5 <= 3.0`; torch: `0.20 x 3.40 x knob x 0.82 <= 1.5`).
+
+## The hull was black except for the nozzles
+
+Complaint: "we cant have rest of our ship completely dark". The scene sun in main.gd
+comes from wherever the real Sun is, so on any heading that flies away from it the whole
+camera-facing side of the hull drops to the 0.35 counter-fill plus 0.2 ambient — a
+silhouette with two bright engines.
+
+Fix is one `DirectionalLight3D` named `HullFill`, parented to the chase camera (so it
+inherits the camera's orientation for free and survives every path that rewrites
+`camera.global_transform`), swung off-axis and cull-masked to the ship alone:
+
+- `Ship.HULL_FILL_ENERGY` 0.85, `HULL_FILL_COLOR` cool, `HULL_FILL_SPECULAR` **0.12**
+- `HULL_FILL_YAW_DEG` -32, `HULL_FILL_PITCH_DEG` -24 — dead-on is flat and erases the
+  panel detail the light exists to reveal
+- `light_cull_mask = ShipMesh.SHIP_FILL_LAYER` (bit 2). `ShipMesh.tag_fill_layer()` ORs
+  that bit onto every `VisualInstance3D` under the hull at build time. Everything else
+  in the game sits on layer 1 alone, so this light cannot reach the planets, the
+  station, the props or the starfield. Layer 1 stays set on the hull so the scene sun
+  and counter-fill still light it.
+
+**Directional, not point, on purpose.** The three key/fill/core `OmniLight3D`s that used
+to sit a few metres off the hull clipped their own specular on low-roughness metal and
+blew the engine bay to white in-game while an offscreen render of the same ship looked
+fine (see the note in `Ship._build_ship_model`). A directional light has no distance
+falloff to blow out, and `light_specular 0.12` keeps the highlight contribution near
+zero, so only diffuse lifts.
+
+## The chase camera aimed dead level
+
+`Ship.CAM_VIEW_PITCH_DEG` was 0.0, so all you saw was the tail plate and the nozzles —
+the hull's whole top surface was edge-on. `CAM_OFFSET` (0.5 up over 2.6 back) does raise
+the eye ~11 deg, but the *aim* did not follow it.
+
+Now **-14.0** (negative = look down). The rig rotates position and aim together, so the
+eye ends up 1.11 hull-lengths up and 2.40 back — 24.9 deg of elevation — looking down
+the spine. You read the dorsal hull and still see both plumes. Toward 0 for a flatter
+tail-chase, toward -25 for a map-like overhead.
+
+`tools/test_chase_rig.tscn` pins the signs on both of these, because each is one flip
+away from being useless and nothing else covers them: the eye must be above *and* the
+aim must tip down; the fill's cull mask must exclude layer 1; the fill must come from
+above; and every mesh on all four hulls must be tagged while keeping layer 1.
+
+It is a **scene**, not a `--script` test, unlike the rest of `tools/`. It preloads
+ship.gd for the rig constants and ship.gd touches the `Ephemeris` autoload at parse
+time, which a `--script` run does not register — the whole file then fails to compile.
+
+## `booster_brightness` must keep its decimal point
+
+The knob was found as `static var booster_brightness := 20`. `:=` infers **int** from
+that, so every fractional value assigned to it truncates — `= 0.8` becomes `0` and the
+boosters go out entirely. `test_booster_brightness.gd` sweeps 0.8 and caught it as four
+`scales_by_exactly_the_knob_ratio` failures. It is `20.0` now. Keep the point.
 
 ## Making the ship feel big
 

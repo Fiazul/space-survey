@@ -555,30 +555,28 @@ static func close_enough(dist: float, radius: float) -> bool:
 	return dist < maxf(radius * 22.0, 400.0)
 
 
-# --- Skin band: the bird-eye ground tile ---
-# The tile is a LOCAL plate of ground, so it only reads while its own width dwarfs
-# your altitude. 36 km of ground seen from 100 km up is a sticker floating on a
-# globe (the bug commit 8933730 closed); the same plate from 1 km up is ground out
-# to the horizon. So the ceiling is not a magic number — it is the tile's own size:
-#     ceiling = TILE_KM_MAX * BAND_ALT_FRACTION = 36 * 0.09 = 3.24 km
-# EZ (Earth 100 km, airless radius + 10 km) stays the cook globe: continents, not
-# grass. Hills only near the skin.
-const TILE_KM_MAX := 36.0            # widest plate; from ~3 km up it fills the view
-const TILE_KM_MIN := 2.0             # narrowest; keeps quads fine at 100 m altitude
-const BAND_ALT_FRACTION := 0.09      # alt / plate-width at the top of the band
-const TILE_ALT_MULT := 10.0          # plate width = alt x this, so quads scale with height
-const STAMP_BELOW_KM := TILE_KM_MAX * BAND_ALT_FRACTION
+# --- Skin band ceiling ---
+# This rule REPLACED a plate-width one, and the reason matters more than the
+# numbers. The old ceiling (3.24 km) came from TILE_KM_MAX * 0.09, because a
+# single local plate only reads as ground while its width dwarfs your altitude -
+# a 36 km plate seen from 100 km up is a sticker on a globe. Four nested rings
+# reach 205 km, so that constraint no longer exists.
+#
+# The ceiling's job is now the OPPOSITE one: open the band ABOVE the tallest
+# terrain, or you enter the band already inside a mountain. Do not reintroduce a
+# plate-ratio rule here - it no longer describes anything real.
+const BAND_CEILING_MULT := 1.7      # headroom above the highest ground
+const BAND_CEILING_MIN_KM := 3.0    # floor for a world so flat that 1.7x its own
+                                    # relief would open the band underground
 
 
-# Ceiling of the band, km above the skin. Below it a local tile reads as ground.
-static func band_top_km() -> float:
-	return STAMP_BELOW_KM
-
-
-# Plate width for an altitude. Quad size is width / SEGS, so tying the width to
-# altitude stops the ground going chunky on the way down: 1 km up -> a 10 km plate.
-static func tile_km_for(alt_km: float) -> float:
-	return clampf(alt_km * TILE_ALT_MULT, TILE_KM_MIN, TILE_KM_MAX)
+# Ceiling of the band for this world, km above sea level.
+# Earth: the DEM's highest sample plus detail headroom is 9.51 km, x 1.7 = 16.2.
+# A world with no map: 3.2 km of noise relief x 0.96875 x 1.7 = 5.27.
+static func band_ceiling_km(sampler: TerrainSampler) -> float:
+	if sampler == null:
+		return BAND_CEILING_MIN_KM
+	return maxf(sampler.max_height_km() * BAND_CEILING_MULT, BAND_CEILING_MIN_KM)
 
 
 static func close_detail(alt_km: float) -> float:
@@ -592,14 +590,15 @@ static func close_detail(alt_km: float) -> float:
 
 
 # Is a ground tile allowed at this altitude? Above the kill line (you are alive)
-# and inside the band.
-# NOTE this window is EMPTY on Earth: its kill line is 29 km, well above the
-# 3.24 km ceiling, so Earth shows no hills-as-objects until that line moves. That
-# is the documented state, not an oversight — see PLANET_GENERATOR.md "Honest
-# limits". Airless worlds kill at 100 m, so their band is 0.1 -> 3.24 km and they
-# get the flyover first.
-static func ground_stamp_ok(alt_km: float, kill_km: float) -> bool:
-	return alt_km > kill_km and alt_km < band_top_km()
+# and below this world's own ceiling. The ceiling is PER-WORLD now, so it arrives
+# as an argument instead of being read off a global constant - see band_ceiling_km.
+#
+# Earth's window is still empty at this point in the work, but for a different
+# reason than before: its ceiling now clears Everest (16.2 km) and what keeps the
+# band shut is the 29 km kill bubble sitting above it. Moving that bubble to
+# contact is what opens Earth.
+static func ground_stamp_ok(alt_km: float, kill_km: float, ceiling_km: float) -> bool:
+	return alt_km > kill_km and alt_km < ceiling_km
 
 
 # Does a body get a ground tile at all? A gas giant and a star have no surface to

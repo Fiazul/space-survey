@@ -143,8 +143,11 @@ func _initialize() -> void:
 	failed += _check("trees_unshaded", patch_src.find("SHADING_MODE_UNSHADED") >= 0)
 
 	# 100 km AIR is EZ bird-eye: the cook globe, not a 36 km black stamp.
-	failed += _check("no_stamp_at_earth_ez", not G.ground_stamp_ok(100.0, 29.0))
-	failed += _check("no_stamp_in_air", not G.ground_stamp_ok(50.0, 29.0))
+	# The ceiling is per-world now (band_ceiling_km), so it arrives as an argument.
+	# Earth's is 16.16 km; the EZ at 100 km and the air at 50 km stay outside it.
+	var e_ceil: float = G.band_ceiling_km(G.terrain_sampler(G.recipe_for({"name": "Earth"})))
+	failed += _check("no_stamp_at_earth_ez", not G.ground_stamp_ok(100.0, 0.02, e_ceil))
+	failed += _check("no_stamp_in_air", not G.ground_stamp_ok(50.0, 0.02, e_ceil))
 	failed += _check("ez_globe_no_hills", G.close_detail(100.0) < 0.05)
 	failed += _check("skin_hills", G.close_detail(1.5) > 0.9)
 

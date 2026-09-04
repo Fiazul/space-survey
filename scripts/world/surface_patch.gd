@@ -133,17 +133,18 @@ func hush() -> void:
 # radii boosted by VISUAL_SCALE) hands us an "altitude" of 0.1 that is really a
 # million kilometres, and a ground tile pops in deep space. main._update_skin_kill
 # guards the kill line the same way.
-static func should_show(body: String, physical: bool, alt: float, kill: float, recipe: Dictionary) -> bool:
+static func should_show(body: String, physical: bool, alt: float, kill: float,
+		ceiling: float, recipe: Dictionary) -> bool:
 	if body.is_empty() or not physical:
 		return false
 	if not PlanetGenerator.has_surface(recipe):
 		return false
-	return PlanetGenerator.ground_stamp_ok(alt, kill)
+	return PlanetGenerator.ground_stamp_ok(alt, kill, ceiling)
 
 
 func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
-		alt: float, kill: float, recipe: Dictionary) -> void:
-	if not should_show(body, physical, alt, kill, recipe):
+		alt: float, kill: float, ceiling: float, recipe: Dictionary) -> void:
+	if not should_show(body, physical, alt, kill, ceiling, recipe):
 		visible = false
 		return
 	if _body != body or _sampler == null:

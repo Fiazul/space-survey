@@ -49,18 +49,23 @@ func _band() -> int:
 	failed += _check("airless_band_starts_above_the_kill_line",
 		moon_alts.size() > 0 and float(moon_alts[0]) > AIRLESS_KILL)
 	failed += _check("airless_band_ends_below_the_ceiling",
-		moon_alts.size() > 0 and float(moon_alts[-1]) < G.band_top_km())
+		moon_alts.size() > 0 and float(moon_alts[-1]) < _ceiling_of(moon))
 	# The whole point of going airless-first: a band you can actually fly in.
 	failed += _check("airless_band_is_at_least_2km_thick",
 		moon_alts.size() > 0 and float(moon_alts[-1]) - float(moon_alts[0]) > 2.0)
 
-	# Earth stays empty BY DESIGN this slice (kill 29 km > the 3.24 km ceiling).
-	# PLANET_GENERATOR.md "Honest limits" says so. Asserted, not assumed, so the
-	# day someone moves the kill line this test tells them what changed.
-	failed += _check("earth_band_still_empty_until_the_kill_line_moves", earth_alts.is_empty())
+	# Earth's band is STILL empty, but the reason has changed. Its ceiling now
+	# clears Everest (16.16 km); what keeps the band shut is the 29 km kill bubble
+	# sitting above that ceiling. Moving the kill to contact is what opens Earth,
+	# and this assertion inverts when it does.
+	failed += _check("earth_band_waits_on_the_kill_line", earth_alts.is_empty())
+	failed += _check("earths_ceiling_is_no_longer_what_shuts_it",
+		_ceiling_of(earth) > 8.848)
 	# ...and the regression that closed it stays closed.
-	failed += _check("no_tile_at_earth_ez", not G.ground_stamp_ok(100.0, EARTH_KILL))
-	failed += _check("no_tile_in_earth_air", not G.ground_stamp_ok(50.0, EARTH_KILL))
+	failed += _check("no_tile_at_earth_ez",
+		not G.ground_stamp_ok(100.0, EARTH_KILL, _ceiling_of(earth)))
+	failed += _check("no_tile_in_earth_air",
+		not G.ground_stamp_ok(50.0, EARTH_KILL, _ceiling_of(earth)))
 
 	# A gas giant / a star has no surface to stand a plate on, at any altitude.
 	var jup := G.recipe_for({"name": "Jupiter"})
@@ -71,34 +76,38 @@ func _band() -> int:
 	# An arcade system reports "altitude" in 0.01-AU units. A tile there would be a
 	# ground plate floating in deep space.
 	failed += _check("arcade_system_gets_no_tile",
-		not SP.should_show("Kepler-22b", false, 1.0, AIRLESS_KILL, moon))
+		not SP.should_show("Kepler-22b", false, 1.0, AIRLESS_KILL, _ceiling_of(moon), moon))
 	failed += _check("nameless_body_gets_no_tile",
-		not SP.should_show("", true, 1.0, AIRLESS_KILL, moon))
+		not SP.should_show("", true, 1.0, AIRLESS_KILL, _ceiling_of(moon), moon))
 
-	# The plate must grow with altitude, or quads go chunky on the way down.
-	var lo := G.tile_km_for(0.2)
-	var hi := G.tile_km_for(3.0)
-	failed += _check("plate_grows_with_altitude", hi > lo)
-	failed += _check("plate_never_below_min", G.tile_km_for(0.0) >= G.TILE_KM_MIN)
-	failed += _check("plate_never_above_max", G.tile_km_for(1000.0) <= G.TILE_KM_MAX)
-	# A plate must always be much wider than the height you see it from, else it
-	# reads as the sticker-on-a-globe bug again.
-	failed += _check("plate_always_dwarfs_the_altitude",
-		G.tile_km_for(G.band_top_km()) / G.band_top_km() > 5.0)
+	# The five plate assertions that stood here (plate_grows_with_altitude,
+	# plate_never_below_min / above_max, plate_always_dwarfs_the_altitude,
+	# tile_plate_scales_to_the_altitude) described tile_km_for(), which four nested
+	# rings retired: rings are a fixed size and reach 205 km, so a plate-to-altitude
+	# ratio no longer describes anything. Ring geometry is asserted in
+	# tools/test_earth_terrain.gd _rings(); the ceiling rule that replaced the ratio
+	# is asserted in its _band().
 
-	print("surface_band: airless band %.2f..%.2f km (ceiling %.2f), plate %.1f..%.1f km"
-		% [float(moon_alts[0]), float(moon_alts[-1]), G.band_top_km(), lo, hi])
+	print("surface_band: airless band %.2f..%.2f km (ceiling %.2f from %.2f km of relief)"
+		% [float(moon_alts[0]), float(moon_alts[-1]), _ceiling_of(moon),
+		G.terrain_sampler(moon).max_height_km()])
 	return failed
 
 
 # Every altitude in 0..120 km at which this world would show a ground tile.
 func _open_window(recipe: Dictionary, kill: float) -> Array:
 	var out := []
+	var ceiling := _ceiling_of(recipe)
 	for i in 12000:
 		var alt := float(i) * 0.01
-		if SP.should_show("Probe", true, alt, kill, recipe):
+		if SP.should_show("Probe", true, alt, kill, ceiling, recipe):
 			out.append(alt)
 	return out
+
+
+# This world's own band ceiling, from its terrain's height.
+func _ceiling_of(recipe: Dictionary) -> float:
+	return G.band_ceiling_km(G.terrain_sampler(recipe))
 
 
 # --- The kit is chosen by physics, not by colour -----------------------------
@@ -226,7 +235,8 @@ func _tile() -> int:
 
 	var dir := Vector3(0.42, 0.31, 0.85).normalized()
 	var pos: Vector3 = dir * (MOON_R + 1.0)      # 1 km over the surface
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, moon)
+	var m_ceiling := _ceiling_of(moon)
+	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon)
 	var r: Dictionary = patch.report()
 
 	failed += _check("tile_is_visible_1km_over_the_moon", bool(r.visible))
@@ -238,18 +248,19 @@ func _tile() -> int:
 
 	# Standing still must not throw the rings away and rebuild them.
 	var tris0 := int(r.tris)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, moon)
+	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon)
 	failed += _check("standing_still_keeps_the_same_rings",
 		int(patch.report().tris) == tris0)
 
 	# Climbing out of the band puts it away again.
-	patch.update_for(dir * (MOON_R + 40.0), "Moon", true, MOON_R, 40.0, AIRLESS_KILL, moon)
+	patch.update_for(dir * (MOON_R + 40.0), "Moon", true, MOON_R, 40.0, AIRLESS_KILL, m_ceiling, moon)
 	failed += _check("tile_hides_above_the_band", not bool(patch.report().visible))
 
 	# Earth at EZ: the regression commit 8933730 fixed, checked on the live object
 	# and not only on the arithmetic.
+	var earth_recipe := G.recipe_for({"name": "Earth"})
 	patch.update_for(Vector3(0.0, 6471.0, 0.0), "Earth", true, 6371.0, 100.0,
-		EARTH_KILL, G.recipe_for({"name": "Earth"}))
+		EARTH_KILL, _ceiling_of(earth_recipe), earth_recipe)
 	failed += _check("no_ground_tile_at_earth_ez", not bool(patch.report().visible))
 
 	print("surface_band: tile  %d tris across %d rings, %d/%d props, body %s"

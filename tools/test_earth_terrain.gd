@@ -24,6 +24,7 @@ func _initialize() -> void:
 	var failed := 0
 	failed += _encoding()
 	failed += _sampler()
+	failed += _band()
 	failed += _rings()
 	failed += _kill()
 	if failed == 0:
@@ -159,6 +160,51 @@ func _sampler() -> int:
 	return failed
 
 
+# --- The band ceiling, derived from the terrain ------------------------------
+func _band() -> int:
+	var failed := 0
+	var earth := G.recipe_for({"name": "Earth"})
+	var moon := G.recipe_for({"name": "Moon"})
+	var es: TerrainSampler = G.terrain_sampler(earth)
+	var ms: TerrainSampler = G.terrain_sampler(moon)
+	var e_ceil: float = G.band_ceiling_km(es)
+	var m_ceil: float = G.band_ceiling_km(ms)
+
+	# The ceiling's JOB changed with the rings. It used to stop a small plate
+	# reading as a sticker on a globe; rings reach 205 km, so now it must open the
+	# band ABOVE the tallest terrain or you arrive inside a mountain.
+	failed += _check("earth_ceiling_clears_the_highest_ground",
+		e_ceil > es.max_height_km())
+	failed += _check("earth_ceiling_clears_everest", e_ceil > 8.848)
+	failed += _check("airless_ceiling_clears_its_own_relief",
+		m_ceil > ms.max_height_km())
+	# Derived, not authored: two worlds with different relief get different
+	# ceilings without a table entry for either.
+	failed += _check("ceiling_is_derived_not_authored",
+		not is_equal_approx(e_ceil, m_ceil))
+	failed += _check("earth_ceiling_is_the_taller_one", e_ceil > m_ceil)
+	failed += _check("a_flat_world_still_gets_a_floor",
+		G.band_ceiling_km(null) >= G.BAND_CEILING_MIN_KM)
+
+	# Every altitude between contact and the ceiling is in the band.
+	failed += _check("band_opens_just_above_the_ground",
+		G.ground_stamp_ok(0.5, 0.02, e_ceil))
+	failed += _check("band_covers_everest_height",
+		G.ground_stamp_ok(9.0, 0.02, e_ceil))
+	failed += _check("band_shuts_above_the_ceiling",
+		not G.ground_stamp_ok(e_ceil + 1.0, 0.02, e_ceil))
+	failed += _check("band_shuts_below_the_kill_line",
+		not G.ground_stamp_ok(0.01, 0.02, e_ceil))
+	# Earth's EZ is 100 km (Karman). The band must never reach it — that is the
+	# regression commit 8933730 closed.
+	failed += _check("no_tile_at_earth_ez", not G.ground_stamp_ok(100.0, 0.02, e_ceil))
+	failed += _check("no_tile_in_earth_air", not G.ground_stamp_ok(50.0, 0.02, e_ceil))
+
+	print("earth_terrain: band  Earth ceiling %.2f km (terrain max %.2f), Moon %.2f km (max %.2f), floor %.1f"
+		% [e_ceil, es.max_height_km(), m_ceil, ms.max_height_km(), G.BAND_CEILING_MIN_KM])
+	return failed
+
+
 # --- Four nested rings --------------------------------------------------------
 func _rings() -> int:
 	var failed := 0
@@ -180,7 +226,8 @@ func _rings() -> int:
 
 	# Build at 1 km over the Moon.
 	var dir := Vector3(0.42, 0.31, 0.85).normalized()
-	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, moon)
+	var m_ceiling: float = G.band_ceiling_km(sampler)
+	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon)
 	var r: Dictionary = patch.report()
 
 	failed += _check("all_rings_built", int(r.rings) == SP.RING_COUNT)
@@ -213,7 +260,7 @@ func _rings() -> int:
 	# Constant budget with altitude is the whole point of rings: detail and reach
 	# stop competing. A single plate had to trade one for the other.
 	var tris_low := int(r.tris)
-	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, moon)
+	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon)
 	var tris_high := int(patch.report().tris)
 	failed += _check("triangle_budget_is_constant_with_altitude", tris_low == tris_high)
 	failed += _check("triangle_budget_is_within_range",

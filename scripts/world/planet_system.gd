@@ -107,7 +107,8 @@ void fragment() {
 	ALBEDO = vec3(1.0, 0.92, 0.55) * core * 3.2 + vec3(1.0, 0.55, 0.12) * halo * 0.65;
 }
 """
-var _surface: Node3D           # 101 m bird-view ground (hills / water / trees)
+var _surface: Node3D           # skin-band bird-view ground (rings / water / kit)
+var _samplers := {}            # body name -> TerrainSampler, built on first need
 
 const STAR_RADIUS := 22.0     # visual size when you arrive
 const STAR_SKY := 28000.0    # far dots clamp here so they read as sky points
@@ -199,6 +200,9 @@ func load_system(specs: Array) -> void:
 		if b.get("sky") != null:
 			b.sky.queue_free()
 	_bodies.clear()
+	# Samplers are keyed by BODY NAME, so a new system containing a same-named
+	# body would otherwise be handed the previous world's terrain.
+	_samplers.clear()
 	for spec in specs:
 		_build_planet(spec)
 	var nphys := 0
@@ -684,19 +688,54 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 	# speed_limit was accumulated above from each body's force-slow zone (min cap).
 	# Direction toward the nearest body (for the warp arrival ease-out).
 	nearest_dir = _rel.get(nearest_name, Vector3.ZERO).normalized()
+	# The nearest body's recipe and truth flag, picked up here so the skin band
+	# below can be driven by the same row the tape reports.
+	var near_recipe := {}
+	var near_physical := false
 	for b in _bodies:
 		if str(b.name) != nearest_name:
 			continue
 		var rec: Dictionary = b.get("recipe", {})
+		near_recipe = rec
+		near_physical = b.get("physical", false)
 		var path := "sky" if (b.get("physical", false) and eph.physical_too_far(nearest_dist, float(b.radius))) else "mesh"
 		cook_look = "%s  %s  %s  %s" % [
 			str(b.name), path, str(rec.get("source", "?")), str(rec.get("kind", "?"))]
 		break
 	_place_sun_sky(ship_pos)
+	# Skin band: ONE local ground tile, nearest body only, alive between that body's
+	# kill line and its own terrain-derived ceiling. Everything it paints comes from
+	# `near_recipe`, so the Moon gets lunar crust and not Earth's continents.
+	# `near_physical` is load-bearing: an arcade system's "altitude" is in 0.01-AU
+	# units, and a tile must never pop out there (see SurfacePatch.should_show).
 	if _surface != null:
+		var sampler := terrain_sampler_for(nearest_name)
+		var ceiling: float = PlanetGenerator.band_ceiling_km(sampler)
+		# Altitude above LOCAL GROUND, not above the sphere. Over Everest the two
+		# differ by ~8.9 km, which is the whole point of this slice. `_rel` holds
+		# the render-space vector ship->body, so the ship's offset from the body's
+		# centre - the frame the sampler works in - is its negation.
 		var salt: float = nearest_dist - nearest_radius
+		var from_centre: Vector3 = -_rel.get(nearest_name, Vector3.ZERO)
+		if sampler != null and near_physical and from_centre.length() > 0.001:
+			salt = sampler.alt_above_ground_km(from_centre, nearest_radius)
 		_surface.position = -ship_pos
-		_surface.update_for(ship_pos, nearest_name, nearest_radius, salt)
+		_surface.update_for(ship_pos, nearest_name, near_physical, nearest_radius,
+			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe)
+
+
+# The shared TerrainSampler for a body, built once. main's contact kill and the
+# ground tile MUST receive the same instance: two samplers would be two height
+# functions, and the mesh and the lethality would drift apart.
+func terrain_sampler_for(body: String) -> TerrainSampler:
+	if body.is_empty():
+		return null
+	if not _samplers.has(body):
+		for b in _bodies:
+			if str(b.name) == body:
+				_samplers[body] = PlanetGenerator.terrain_sampler(b.get("recipe", {}))
+				break
+	return _samplers.get(body, null)
 
 
 func hush_surface() -> void:

@@ -20,6 +20,12 @@ uniform vec3 color_air : source_color = vec3(0.30, 0.56, 1.0);
 uniform float band_count = 8.0;
 uniform float detail = 0.0;
 uniform vec3 sun_dir = vec3(0.72, 0.28, 0.63);
+// The day/night terminator, bound from PlanetGenerator.TERMINATOR_* and shared
+// with shaders/terrain_tile.gdshader. Was hardcoded as smoothstep(-0.04, 0.28)
+// in three places here; the ground tile meets this globe at the tile's own edge,
+// so the two must run ONE curve or that seam shows a step in the light.
+uniform float term_lo = -0.04;
+uniform float term_hi = 0.28;
 
 uniform sampler2D albedo_tex : source_color, hint_default_black, filter_linear_mipmap;
 uniform sampler2D cloud_tex : source_color, hint_default_black, filter_linear_mipmap;
@@ -115,7 +121,7 @@ void fragment() {
 	vec3 n_world = normalize((MODEL_MATRIX * vec4(n, 0.0)).xyz);
 	vec3 light = normalize(sun_dir);
 	float ndotl = dot(n_world, light);
-	float day = smoothstep(-0.04, 0.28, ndotl);
+	float day = smoothstep(term_lo, term_hi, ndotl);
 	float lat = n.y;
 	vec3 alb = (has_albedo > 0.5) ? texture(albedo_tex, UV).rgb : color_a;
 	// Incomplete mosaics (Voyager moons) store unmapped limbs as black.
@@ -219,7 +225,7 @@ void fragment() {
 		col = mix(col, hill, detail * land * 0.72);
 		col *= 1.0 + (micro - 0.5) * detail * 0.45;
 		ndotl = dot(n_world, light);
-		day = smoothstep(-0.04, 0.28, ndotl);
+		day = smoothstep(term_lo, term_hi, ndotl);
 	}
 
 	// Close-up water: waves, depth colour, moving glint.
@@ -239,7 +245,7 @@ void fragment() {
 		float dwz = fbm(wp + vec3(0.0, 0.0, we)) - fbm(wp - vec3(0.0, 0.0, we));
 		n_world = normalize(n_world + detail * water * vec3(dwx, 0.35, dwz) * 1.6);
 		ndotl = dot(n_world, light);
-		day = smoothstep(-0.04, 0.28, ndotl);
+		day = smoothstep(term_lo, term_hi, ndotl);
 	}
 
 	float cloud = 0.0;

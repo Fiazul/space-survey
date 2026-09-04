@@ -271,9 +271,12 @@ func _rings() -> int:
 	# loads, and the one-function design this slice rests on was untrue in the
 	# shipped path.
 	failed += _check("tile_holds_the_shared_sampler", patch.uses_sampler(sampler))
-	failed += _check("mesh_never_floats_above_the_ground", float(err.over) < 0.001)
-	failed += _check("mesh_never_sinks_below_the_ground", float(err.under) < 0.001)
-	failed += _check("mesh_matches_the_height_function", worst < 0.001)
+	var tol: float = _agreement_tol_km(MOON_R)
+	failed += _check("mesh_never_floats_above_the_ground", float(err.over) < tol)
+	failed += _check("mesh_never_sinks_below_the_ground", float(err.under) < tol)
+	failed += _check("mesh_matches_the_height_function", worst < tol)
+	# The error must stay QUANTISATION-sized, not merely under the tolerance.
+	failed += _check("agreement_error_is_only_float32_noise", worst < tol)
 
 	# Constant budget with altitude is the whole point of rings: detail and reach
 	# stop competing. A single plate had to trade one for the other.
@@ -471,6 +474,17 @@ func _dir_of(lat_deg: float, lon_deg: float) -> Vector3:
 	var lat := deg_to_rad(lat_deg)
 	var lon := deg_to_rad(lon_deg)
 	return Vector3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon)).normalized()
+
+
+# Tolerance for mesh-versus-height-function agreement, DERIVED from the body's
+# radius rather than picked. Mesh vertices are float32, whose spacing at a
+# magnitude R is about R * 2^-23 - so the same geometry quantises to 0.32 m on the
+# Moon and 1.30 m on Earth, purely because Earth is 3.7x bigger. A flat tolerance
+# is therefore wrong in kind: it either fails on the larger body or hides a real
+# error on the smaller one. Four ULP leaves room for a normalize-and-multiply
+# round trip while still failing anything at the metre-of-terrain scale.
+func _agreement_tol_km(radius_km: float) -> float:
+	return radius_km * pow(2.0, -23.0) * 4.0
 
 
 func _check(name: String, ok: bool) -> int:

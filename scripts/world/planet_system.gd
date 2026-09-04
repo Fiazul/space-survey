@@ -110,6 +110,12 @@ void fragment() {
 """
 var _surface: Node3D           # skin-band bird-view ground (rings / water / kit)
 var _samplers := {}            # body name -> TerrainSampler, built on first need
+# Inside-the-atmosphere sky. An inward-facing sphere centred on the ship, drawn
+# only while there is air around you. Radius is large so terrain and the body's
+# own globe occlude it by depth test and it paints only where sky is visible.
+var _air_shell: MeshInstance3D
+var _air_mat: ShaderMaterial
+const AIR_SHELL_KM := 200000.0
 
 const STAR_RADIUS := 22.0     # visual size when you arrive
 const STAR_SKY := 28000.0    # far dots clamp here so they read as sky points
@@ -182,6 +188,7 @@ func _ready() -> void:
 	_build_sun_sky()
 	_surface = SurfacePatchScript.new()
 	add_child(_surface)
+	_build_air_shell()
 	load_system(SystemDB.bodies(SystemDB.SOL))
 	_build_star_shell()
 
@@ -730,6 +737,54 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 		_surface.position = -ship_pos
 		_surface.update_for(ship_pos, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler)
+		# Light and air. The sun vector is body -> star, exactly what
+		# PlanetGenerator.apply_view() hands the globe's material.
+		var to_star: Vector3 = star_true - (ship_pos + _rel.get(nearest_name, Vector3.ZERO))
+		_update_air(to_star, salt, ceiling, near_recipe, nearest_name, near_physical)
+
+
+func _build_air_shell() -> void:
+	var mesh := SphereMesh.new()
+	mesh.radius = AIR_SHELL_KM
+	mesh.height = AIR_SHELL_KM * 2.0
+	mesh.radial_segments = 32
+	mesh.rings = 16
+	_air_shell = MeshInstance3D.new()
+	_air_shell.name = "AirShell"
+	_air_shell.mesh = mesh
+	_air_shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	_air_shell.visible = false
+	add_child(_air_shell)
+
+
+# Sky, light and haze for the nearest body, every frame. `sun_dir` is the SAME
+# vector the globe's own material gets, so the tile's terminator and the globe's
+# cannot drift apart at the tile's edge.
+func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
+		recipe: Dictionary, body: String, physical: bool) -> void:
+	if _surface != null and _surface.has_method("set_view"):
+		_surface.set_view(sun_dir, alt_km, ceiling_km)
+	if _air_shell == null:
+		return
+	var air_top: float = eph.atmo_top_km(body)
+	var opacity := 0.0
+	if physical:
+		opacity = PlanetGenerator.air_shell_opacity(
+			alt_km, air_top, float(recipe.get("air_amount", 0.0)))
+	if opacity <= 0.001:
+		_air_shell.visible = false
+		return
+	if _air_mat == null or _air_mat.shader != PlanetGenerator.AIR_SHELL_SHADER:
+		_air_mat = PlanetGenerator.air_shell_material(recipe, {"spectral": "G"})
+		_air_shell.material_override = _air_mat
+	_air_shell.visible = true
+	# The shell is centred on the ship, which is the render-space origin.
+	_air_shell.position = Vector3.ZERO
+	var up: Vector3 = -_rel.get(body, Vector3.ZERO)
+	_air_mat.set_shader_parameter("opacity", opacity)
+	_air_mat.set_shader_parameter("sun_dir", sun_dir.normalized())
+	if up.length_squared() > 0.0001:
+		_air_mat.set_shader_parameter("up_dir", up.normalized())
 
 
 # The shared TerrainSampler for a body, built once. main's contact kill and the

@@ -54,6 +54,11 @@ var _props: MultiMeshInstance3D
 # is the only reason mesh and lethality cannot drift apart.
 var _sampler: TerrainSampler
 var _tris := 0
+# ONE material per surface kind, built on bind and reused by every ring. The old
+# code called _mat() on every ring rebuild, which minted a fresh
+# StandardMaterial3D each time - eight per full tile, several times a second.
+var _land_mat: ShaderMaterial
+var _water_mat: ShaderMaterial
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -115,6 +120,13 @@ func bind_recipe(recipe: Dictionary) -> void:
 	_land = float(recipe.get("land_amount", 1.0))
 	_crust_a = recipe.get("color_a", Color(0.45, 0.40, 0.35))
 	_crust_b = recipe.get("color_b", _crust_a.lightened(0.18))
+	# Lit, hazed materials running the globe's own terminator. These replaced two
+	# SHADING_MODE_UNSHADED StandardMaterial3Ds, which is why the ground used to
+	# read as a flat sheet with no sun angle at all.
+	var spec := { "spectral": str(recipe.get("spectral", "G")) }
+	_land_mat = PlanetGenerator.terrain_material(recipe, spec)
+	_water_mat = PlanetGenerator.terrain_material(recipe, spec)
+	_water_mat.set_shader_parameter("night_fill", PlanetGenerator.NIGHT_FILL * 0.5)
 	var kit: String = PlanetGenerator.surface_kit(recipe)
 	if kit != _kit or _props.multimesh == null:
 		_kit = kit
@@ -227,6 +239,30 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 		for i in side:
 			grid[j * side + i] = _vert(hit, up, east, north, radius,
 				-half + quad * float(i), -half + quad * float(j))
+	# SMOOTH VERTEX NORMALS, from the grid's own neighbours. Free: the perf pass
+	# already samples every unique point once, so the cross-products cost no extra
+	# height calls. Face normals made every 50 m quad a visible facet, which was
+	# tolerable while the terrain was unlit and is not once light lands.
+	# Positions are NOT touched here - vertex_error_km() is what proves shading
+	# data did not leak into geometry.
+	for j in side:
+		for i in side:
+			var c: Dictionary = grid[j * side + i]
+			var pe: Vector3 = (grid[j * side + mini(i + 1, side - 1)] as Dictionary).p \
+				- (grid[j * side + maxi(i - 1, 0)] as Dictionary).p
+			var pn: Vector3 = (grid[mini(j + 1, side - 1) * side + i] as Dictionary).p \
+				- (grid[maxi(j - 1, 0) * side + i] as Dictionary).p
+			var nrm: Vector3 = pn.cross(pe)
+			# Degenerate at a pole or a flat duplicate: fall back to the radial.
+			if nrm.length_squared() < 1.0e-12:
+				nrm = (c.p as Vector3).normalized()
+			else:
+				nrm = nrm.normalized()
+			# A normal must never point into the ground: an inverted one lights the
+			# terrain from underneath and the whole tile reads inside-out.
+			if nrm.dot((c.p as Vector3).normalized()) < 0.0:
+				nrm = -nrm
+			c["n"] = nrm
 	for j in RING_SEGS:
 		for i in RING_SEGS:
 			var e0 := -half + quad * float(i)
@@ -243,13 +279,8 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			var p11: Dictionary = grid[(j + 1) * side + i + 1]
 			var wet: float = (float(p00.w) + float(p10.w) + float(p01.w) + float(p11.w)) * 0.25
 			var st: SurfaceTool = wat_st if wet > 0.55 else land_st
-			var nrm: Vector3 = (p10.p - p00.p).cross(p01.p - p00.p)
-			if nrm.length_squared() < 1e-10:
-				nrm = up
-			else:
-				nrm = nrm.normalized()
-			_tri(st, p00, p10, p11, nrm)
-			_tri(st, p00, p11, p01, nrm)
+			_tri(st, p00, p10, p11)
+			_tri(st, p00, p11, p01)
 			# Skirt the ring's outer rim so the seam to the next ring cannot show.
 			var drop := quad * SKIRT_QUADS
 			if i == 0:
@@ -270,16 +301,20 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 				if _prop_here(wet, float(p00.h), seedn):
 					var t := Transform3D()
 					var sc: float = 0.012 + seedn * 0.028
-					t.basis = Basis(east, nrm, north).orthonormalized().scaled(
+					# Stand the prop on the vertex's own SMOOTH normal, so a
+					# boulder on a slope leans with the slope instead of with the
+					# quad it happened to land in.
+					var stand: Vector3 = p00.n
+					t.basis = Basis(east, stand, north).orthonormalized().scaled(
 						Vector3(sc, sc * _prop_aspect(seedn), sc))
-					t.origin = p00.p + nrm * sc * 0.9
+					t.origin = p00.p + stand * sc * 0.9
 					prop_xforms.append(t)
 	_ring_land[ring].mesh = land_st.commit()
-	_ring_land[ring].material_override = _mat(false)
+	_ring_land[ring].material_override = _land_mat
 	_ring_water[ring].mesh = wat_st.commit()
-	_ring_water[ring].material_override = _mat(true)
+	_ring_water[ring].material_override = _water_mat
 	_ring_skirt[ring].mesh = skirt_st.commit() if skirted else null
-	_ring_skirt[ring].material_override = _mat(false)
+	_ring_skirt[ring].material_override = _land_mat
 	if ring == 0:
 		_place_props(prop_xforms, hit, east, north)
 
@@ -296,8 +331,16 @@ func _skirt(st: SurfaceTool, a: Dictionary, b: Dictionary, up: Vector3, drop: fl
 		nrm = up
 	else:
 		nrm = nrm.normalized()
-	_tri(st, a, b, b_lo, nrm)
-	_tri(st, a, b_lo, a_lo, nrm)
+	# A skirt is a vertical wall, so all four corners share its face normal - it
+	# must NOT inherit the smooth ground normals or it lights as if it were ground.
+	var a_w: Dictionary = a.duplicate()
+	var b_w: Dictionary = b.duplicate()
+	a_w["n"] = nrm
+	b_w["n"] = nrm
+	a_lo["n"] = nrm
+	b_lo["n"] = nrm
+	_tri(st, a_w, b_w, b_lo)
+	_tri(st, a_w, b_lo, a_lo)
 
 
 # Where a kit prop is allowed to stand. Placement rules, not just a recolour:
@@ -339,7 +382,10 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 	var wet: float = 1.0 if _sampler.is_water(dir) else 0.0
 	# 0..1 of this world's own relief, for prop placement and colour banding.
 	var h: float = clampf((gr - radius) / maxf(_sampler.max_height_km(), 0.001), 0.0, 1.0)
-	return { "p": dir * gr, "h": h, "w": wet, "c": _color_at(dir, uv, h), "uv": uv }
+	# "n" starts radial and is replaced by the grid's smooth normal in _build_ring.
+	# Skirt vertices keep this radial one, which is correct for a vertical wall.
+	return { "p": dir * gr, "h": h, "w": wet, "n": dir,
+		"c": _color_at(dir, uv, h), "uv": uv }
 
 
 # Ground colour. Albedo map where the world has one, else the recipe's crust
@@ -353,19 +399,13 @@ func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
 	return _crust_a.lerp(_crust_b, clampf(mixf, 0.0, 1.0)).lightened(clampf(h - 0.5, 0.0, 0.3))
 
 
-func _tri(st: SurfaceTool, a: Dictionary, b: Dictionary, c: Dictionary, n: Vector3) -> void:
-	st.set_normal(n)
-	st.set_color(a.c)
-	st.set_uv(a.uv)
-	st.add_vertex(a.p)
-	st.set_normal(n)
-	st.set_color(b.c)
-	st.set_uv(b.uv)
-	st.add_vertex(b.p)
-	st.set_normal(n)
-	st.set_color(c.c)
-	st.set_uv(c.uv)
-	st.add_vertex(c.p)
+# Per-VERTEX normals, so a ridge shades as a curve instead of as 50 m facets.
+func _tri(st: SurfaceTool, a: Dictionary, b: Dictionary, c: Dictionary) -> void:
+	for v in [a, b, c]:
+		st.set_normal(v.n)
+		st.set_color(v.c)
+		st.set_uv(v.uv)
+		st.add_vertex(v.p)
 
 
 func _dir_uv(dir: Vector3) -> Vector2:
@@ -576,6 +616,58 @@ func _place_props(xforms: Array[Transform3D], hit: Vector3, east: Vector3, north
 # What the tile is actually made of right now — read by tools/test_surface_band.gd
 # and the cook tape, so "it showed something" can be told apart from "it showed
 # the right world's ground".
+# Feed the light and air state the shader needs. Called every frame by
+# PlanetSystem, with the SAME sun vector the globe's material receives.
+func set_view(sun_dir: Vector3, alt_km: float, ceiling_km: float) -> void:
+	if _land_mat == null:
+		return
+	var d: Vector3 = sun_dir.normalized() if sun_dir.length_squared() > 0.0001 \
+		else Vector3(0.72, 0.28, 0.63)
+	var density: float = PlanetGenerator.haze_density_at(alt_km, ceiling_km)
+	for m in [_land_mat, _water_mat]:
+		m.set_shader_parameter("sun_dir", d)
+		m.set_shader_parameter("haze_density", density)
+
+
+# What the committed normals look like. Test hook: flat shading gives every
+# vertex of a triangle the same normal, so real neighbour-to-neighbour variation
+# is what distinguishes smooth from faceted. `inward` counts normals pointing
+# into the ground, which light the terrain from underneath.
+func normal_report(radius: float) -> Dictionary:
+	var counted := 0
+	var inward := 0
+	var unit := true
+	var max_turn := 0.0
+	var max_tilt := 0.0
+	for ring in RING_COUNT:
+		var mi: MeshInstance3D = _ring_land[ring]
+		if mi == null or mi.mesh == null or mi.mesh.get_surface_count() == 0:
+			continue
+		var arrays: Array = mi.mesh.surface_get_arrays(0)
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		var norms: PackedVector3Array = arrays[Mesh.ARRAY_NORMAL]
+		var prev := Vector3.ZERO
+		for i in norms.size():
+			var nv: Vector3 = norms[i]
+			counted += 1
+			if absf(nv.length() - 1.0) > 0.01:
+				unit = false
+			if verts[i].length() > 0.0001 and nv.dot(verts[i].normalized()) < 0.0:
+				inward += 1
+			if i > 0:
+				max_turn = maxf(max_turn, prev.angle_to(nv))
+			prev = nv
+			# How far the normal leans off the plain RADIAL direction. This is the
+			# number that distinguishes "follows the terrain" from "smooth sphere":
+			# a radial normal varies per vertex too, so neighbour-to-neighbour
+			# variation alone cannot tell the two apart - and a mutation swapping
+			# smooth normals for radial ones passed that check.
+			if verts[i].length() > 0.0001:
+				max_tilt = maxf(max_tilt, nv.angle_to(verts[i].normalized()))
+	return { "counted": counted, "inward": inward, "unit": unit,
+		"max_neighbour_angle": max_turn, "max_radial_tilt": max_tilt }
+
+
 # Is this tile reading the given height function? Test hook for the invariant
 # that the tile, the contact kill and the ship's ground clamp share ONE instance.
 func uses_sampler(sampler: TerrainSampler) -> bool:

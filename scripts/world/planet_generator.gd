@@ -5,6 +5,24 @@ extends RefCounted
 # Close-up extras (clouds, night, height) bind when the player goes near.
 
 const COOK_SHADER := preload("res://shaders/planet_cook.gdshader")
+const TERRAIN_SHADER := preload("res://shaders/terrain_tile.gdshader")
+const AIR_SHELL_SHADER := preload("res://shaders/air_shell.gdshader")
+
+# --- The day/night terminator, shared ---
+# planet_cook.gdshader hardcoded smoothstep(-0.04, 0.28, ndotl) in three places.
+# The ground tile meets that globe at the tile's own outer edge, so if the tile
+# lit itself any other way - Godot's lambert, say - the seam would show a step in
+# the light that no parameter twiddling could remove. Both shaders take these as
+# uniforms and tools/test_terrain_light.gd asserts they receive the same pair.
+const TERMINATOR_LO := -0.04
+const TERMINATOR_HI := 0.28
+# Starlight / body-shine on the side facing away from the star. Never zero: a
+# night side at pure black loses its horizon and reads as a hole in the world.
+const NIGHT_FILL := 0.06
+# Distance at which haze reaches 63%. Derived, not tasted: it dissolves ring 3's
+# 204.8 km rim to 95% (hiding the LOD boundary) while leaving the first 20 km at
+# 25%. See the swept table in the light-and-air spec.
+const HAZE_KM := 70.0
 
 # Named Sol recipes. albedo is the evidence slot. Missing files fall through
 # to colour so a world still cooks. extras bind on approach (ensure_close_maps).
@@ -690,6 +708,62 @@ static func terrain_sampler(recipe: Dictionary) -> TerrainSampler:
 	return TerrainSampler.new(recipe)
 
 
+# Material for the skin-band ground rings. Lit and hazed, running the SAME
+# terminator as the globe above it.
+static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = TERRAIN_SHADER
+	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
+	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
+	mat.set_shader_parameter("night_fill", NIGHT_FILL)
+	mat.set_shader_parameter("haze_km", HAZE_KM)
+	mat.set_shader_parameter("air_amount", float(recipe.get("air_amount", 0.0)))
+	var air: Color = recipe.get("color_air", Color(0.30, 0.56, 1.0))
+	mat.set_shader_parameter("color_air", Vector3(air.r, air.g, air.b))
+	var warm := sun_warm_for(spec)
+	mat.set_shader_parameter("sun_warm", Vector3(warm.r, warm.g, warm.b))
+	return mat
+
+
+# Material for the inside-the-atmosphere sky shell.
+static func air_shell_material(recipe: Dictionary, spec: Dictionary) -> ShaderMaterial:
+	var mat := ShaderMaterial.new()
+	mat.shader = AIR_SHELL_SHADER
+	var air: Color = recipe.get("color_air", Color(0.30, 0.56, 1.0))
+	mat.set_shader_parameter("color_air", Vector3(air.r, air.g, air.b))
+	var warm := sun_warm_for(spec)
+	mat.set_shader_parameter("sun_warm", Vector3(warm.r, warm.g, warm.b))
+	mat.set_shader_parameter("opacity", 0.0)
+	return mat
+
+
+# The warm colour haze takes when you look toward the star. Derived from the
+# star's own spectral colour, so a red dwarf's horizon is red without any per-
+# system table entry. Lifted toward white because scattered light is paler than
+# the source.
+static func sun_warm_for(spec: Dictionary) -> Color:
+	var c: Color = color_from_spectral(str(spec.get("spectral", "G")))
+	return c.lerp(Color(1.0, 1.0, 1.0), 0.35)
+
+
+# How much sky there is at this altitude. depth^1.5 so it fades out well before
+# the air does: 0.78 at 15 km of Earth's 100 km column, 0.09 at 80 km. Orbit
+# keeps its black sky, and the band gets a real one.
+static func air_shell_opacity(alt_km: float, atmo_top_km: float, air_amount: float) -> float:
+	if atmo_top_km <= 0.0 or air_amount <= 0.0:
+		return 0.0
+	var depth := clampf(1.0 - alt_km / atmo_top_km, 0.0, 1.0)
+	return pow(depth, 1.5) * clampf(air_amount, 0.0, 1.0)
+
+
+# How much thicker the haze is down low. Flying the deck you look through far
+# more air than you do from the ceiling.
+static func haze_density_at(alt_km: float, ceiling_km: float) -> float:
+	if ceiling_km <= 0.0:
+		return 1.0
+	return lerpf(1.35, 0.7, clampf(alt_km / ceiling_km, 0.0, 1.0))
+
+
 static func make_ring_material(recipe: Dictionary) -> StandardMaterial3D:
 	var rmat := StandardMaterial3D.new()
 	rmat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
@@ -720,6 +794,8 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	mat.set_shader_parameter("color_ice", Vector3(ice_c.r, ice_c.g, ice_c.b))
 	var kind := str(recipe.get("kind", "rocky"))
 	mat.set_shader_parameter("kind", _kind_id(kind))
+	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
+	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
 	mat.set_shader_parameter("seed", float(recipe.get("seed", 0.0)))
 	mat.set_shader_parameter("ice_amount", float(recipe.get("ice_amount", 0.12)))
 	mat.set_shader_parameter("land_amount", float(recipe.get("land_amount", 0.32)))

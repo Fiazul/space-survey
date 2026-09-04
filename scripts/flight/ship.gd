@@ -154,7 +154,13 @@ const CAM_OFFSET := Vector3(0.0, 0.5, 2.6)
 # Orbit the whole camera rig this many degrees so you view the ship from slightly BELOW (a low,
 # heroic angle that shows a bit of the belly). + = bottom view (look up), - = top view (look down).
 # Rig position + aim rotate together, so the ship stays framed where it is — only the angle shifts.
-const CAM_VIEW_PITCH_DEG := 0.0
+# NEGATIVE = look DOWN at the ship. At 0 the rig aims dead level, so all you see is the
+# tail plate and the nozzles; the hull's whole top surface is edge-on and invisible. The
+# CAM_OFFSET rise alone (0.5 up over 2.6 back) is only ~11 deg of elevation and the aim
+# does not follow it. -14 puts the eye ~1.16 hull-lengths up, 2.38 back, looking down the
+# spine, so you read the dorsal hull AND still see both plumes. Dial toward 0 for a flatter
+# tail-chase, toward -25 for a map-like overhead.
+const CAM_VIEW_PITCH_DEG := -14.0
 const CAM_LAG := 6.0
 # There is deliberately NO positional lag on the chase rig. One was added (the camera
 # easing toward its ideal spot on its own clock, so the hull swings in frame during a
@@ -167,6 +173,24 @@ const LOOK_PITCH_LIMIT := 1.2   # how far up/down (rad)
 const LOOK_RETURN := 8.0        # how fast the view snaps to target / eases back home
 const FOV_BASE := 70.0
 const FOV_KICK := 14.0        # extra FOV at full speed (sense of speed) — gentle
+
+# --- Chase fill light ---
+# The scene sun (main.gd, energy 1.05) comes from wherever the real Sun is, so on any
+# heading that flies away from it the whole visible side of the hull falls to the 0.35
+# counter-fill and 0.2 ambient — a black silhouette with two bright nozzles. This is ONE
+# DirectionalLight3D parented to the chase camera, cull-masked to ShipMesh.SHIP_FILL_LAYER,
+# so it lifts the hull and touches nothing else in the scene.
+# It is DIRECTIONAL on purpose. The three OmniLight3Ds that used to sit a few metres off
+# the hull (see _build_ship_model) clipped their own specular on polished metal and blew
+# the engine bay to white; a directional light has no distance falloff to blow out, and
+# HULL_FILL_SPECULAR keeps the highlight contribution near zero so only diffuse lifts.
+const HULL_FILL_ENERGY := 0.85           # >0 lifts the shadow side; 0.0 disables the light
+const HULL_FILL_COLOR := Color(0.72, 0.80, 0.95)   # cool starlight, not a warm second sun
+const HULL_FILL_SPECULAR := 0.12         # near-zero: diffuse lift without a hotspot
+# Where it sits relative to the CAMERA (not the ship): swung off-axis so the hull gets a
+# lit side and a darker side. Dead-on (0, 0) is flat and kills the panel detail.
+const HULL_FILL_YAW_DEG := -32.0         # - = from the camera's left
+const HULL_FILL_PITCH_DEG := -24.0       # - = from above, shining down onto the top surface
 
 # --- State ---
 var velocity := Vector3.ZERO
@@ -270,7 +294,7 @@ const NEWTON_BALLISTIC := 0.005
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g
-const DEV_THRUST_MULT := 10000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 1000000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 
 # True when a warp ship is blazing fast — combat + crosshair are disabled.
 func is_hypersonic() -> bool:
@@ -474,8 +498,17 @@ func _newton_advance(sim: float) -> void:
 			_time_idx = 0
 			time_rate = 1.0
 		var dt := minf(left, 0.05 if in_air else 0.25)
+		# Dump to the band cap for the shell's own altitude rather than to a dead
+		# stop, so crossing an exclusion shell reads as entering atmosphere instead
+		# of hitting a wall. See FlightMode.break_at_exclusion.
+		var ez_km: float = _exclusion_km()
+		var ez_who := _exclusion_who()
+		var ez_rad: float = nearest_radius if nearest_radius > 1.0 \
+			else Ephemeris.body_radius_km(ez_who)
+		var shell_alt: float = maxf(ez_km - ez_rad, 0.2)
 		var hit: Dictionary = _FM.break_at_exclusion(
-			true_pos, velocity, dt, _exclusion_center(), _exclusion_km())
+			true_pos, velocity, dt, _exclusion_center(), ez_km,
+			_FM.band_speed_cap_units(shell_alt))
 		if bool(hit.dropped):
 			true_pos = hit.pos
 			velocity = hit.vel
@@ -572,6 +605,7 @@ var _propulsion_surge := 0.0           # decaying kick applied when throttle is 
 var _authored_propulsion: Array[ShaderMaterial] = [] # Authored rear meshes; speed-reactive
 var _torch_materials: Array[ShaderMaterial] = []     # Torch cones only; these reshape
 var _nozzle_lights: Array[OmniLight3D] = []          # Real light the plume cannot emit
+var _hull_fill: DirectionalLight3D                   # Chase fill; parented to the camera
 var _engine_accent := Color(0.35, 0.70, 1.0)         # Hot-end exhaust colour for lights
 var _streaks: GPUParticles3D          # motion streaks at high speed
 var _streak_mat: StandardMaterial3D
@@ -1090,9 +1124,36 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 			light.light_energy = lenergy
 
 
+# Parent the chase fill light under the camera once it exists, so it inherits the
+# camera's orientation for free — no per-frame aiming, and it survives every path
+# that rewrites camera.global_transform (transit buffet, teleport, aim snap).
+func _ensure_hull_fill() -> void:
+	if HULL_FILL_ENERGY <= 0.0:
+		return
+	if _hull_fill != null and _hull_fill.get_parent() == camera:
+		return
+	if _hull_fill == null:
+		_hull_fill = DirectionalLight3D.new()
+		_hull_fill.name = "HullFill"
+		_hull_fill.light_color = HULL_FILL_COLOR
+		_hull_fill.light_energy = HULL_FILL_ENERGY
+		_hull_fill.light_specular = HULL_FILL_SPECULAR
+		_hull_fill.shadow_enabled = false
+		# Only the hull. Everything else in the game is on layer 1 alone, so this
+		# light cannot reach the planets, the station, the props or the starfield.
+		_hull_fill.light_cull_mask = ShipMesh.SHIP_FILL_LAYER
+		# Rotation is relative to the camera: yaw first, then pitch down onto the hull.
+		_hull_fill.rotation = Vector3(
+			deg_to_rad(HULL_FILL_PITCH_DEG), deg_to_rad(HULL_FILL_YAW_DEG), 0.0)
+	elif _hull_fill.get_parent() != null:
+		_hull_fill.get_parent().remove_child(_hull_fill)
+	camera.add_child(_hull_fill)
+
+
 func _update_camera(delta: float) -> void:
 	if camera == null:
 		return
+	_ensure_hull_fill()
 	# Camera basis lags the ship's a touch -> gentle sway / sense of speed.
 	_cam_basis = _cam_basis.slerp(transform.basis, clampf(CAM_LAG * delta, 0.0, 1.0))
 	_cam_zoom_smooth = lerpf(_cam_zoom_smooth, _cam_zoom, clampf(10.0 * delta, 0.0, 1.0))
@@ -1324,6 +1385,10 @@ func _build_ship_model(idx: int) -> void:
 	muzzle = box.size.z * 0.42
 	muzzle_drop = box.size.y * 0.18   # emerge a little below centre (lowered to match the
 									  # hull's new lower framing), where the guns sit
+	# Tag every mesh under the hull with the ship-only fill layer, so the chase fill
+	# light (HULL_FILL_*, parented to the camera) can light us and nothing else. Done
+	# LAST, after the plume/nozzle rigs are attached, so the walk catches all of it.
+	ShipMesh.tag_fill_layer(_mesh_root)
 	# NO ship-attached lights. The three key/fill/core omnis that used to go here are
 	# gone along with the per-nozzle lights: point lights sitting a few metres off a
 	# polished metallic hull clip their own specular and diffuse long before the

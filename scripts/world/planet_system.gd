@@ -2,6 +2,7 @@ class_name PlanetSystem
 extends Node3D
 
 const SurfacePatchScript := preload("res://scripts/world/surface_patch.gd")
+const FlightModeScript := preload("res://scripts/flight/flight_mode.gd")
 # Real bodies with floating-origin LOD. Positions come from Ephemeris (live JPL
 # Horizons for the Sun + planets, real catalog for the stars) — nothing here is
 # hand-placed. See ephemeris.gd for the data, frame and scale.
@@ -719,6 +720,13 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 		var from_centre: Vector3 = -_rel.get(nearest_name, Vector3.ZERO)
 		if sampler != null and near_physical and from_centre.length() > 0.001:
 			salt = sampler.alt_above_ground_km(from_centre, nearest_radius)
+			# Fold the band cap into speed_limit, which the ship already reads.
+			# Deliberately NOT gated on `speed_zones`: that flag defers the
+			# approach-zone pass, while this cap is what makes the contact kill
+			# sound - one frame at the cap must be shorter than a ring-0 quad.
+			if salt < ceiling:
+				speed_limit = minf(speed_limit,
+					FlightModeScript.band_speed_cap_units(salt))
 		_surface.position = -ship_pos
 		_surface.update_for(ship_pos, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe)

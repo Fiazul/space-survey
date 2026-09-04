@@ -15,6 +15,7 @@ extends SceneTree
 const G := preload("res://scripts/world/planet_generator.gd")
 const TS := preload("res://scripts/world/terrain_sampler.gd")
 const SP := preload("res://scripts/world/surface_patch.gd")
+const FM := preload("res://scripts/flight/flight_mode.gd")
 
 const EARTH_R := 6371.0
 const MOON_R := 1737.4
@@ -26,6 +27,7 @@ func _initialize() -> void:
 	failed += _sampler()
 	failed += _band()
 	failed += _rings()
+	failed += _cap()
 	failed += _kill()
 	if failed == 0:
 		print("earth_terrain: OK")
@@ -308,6 +310,65 @@ func _rings() -> int:
 		% [str(rv), (1.0 - float(rv[1]) / float(rv[0])) * 100.0, int(r.props),
 		cover.x, cover.y, SP.ring_reach_km(0), worst * 1000.0])
 	patch.free()
+	return failed
+
+
+# --- The speed cap, and the bound it exists to provide -----------------------
+func _cap() -> int:
+	var failed := 0
+
+	# The anchors, m/s.
+	failed += _check("cap_high_up_is_generous", FM.band_speed_cap_ms(100.0) > 1500.0)
+	failed += _check("cap_at_15km", absf(FM.band_speed_cap_ms(15.0) - 600.0) < 60.0)
+	failed += _check("cap_at_5km", absf(FM.band_speed_cap_ms(5.0) - 300.0) < 40.0)
+	failed += _check("cap_at_1km", absf(FM.band_speed_cap_ms(1.0) - 150.0) < 25.0)
+	failed += _check("cap_on_the_deck", absf(FM.band_speed_cap_ms(0.2) - 60.0) < 12.0)
+	failed += _check("cap_holds_below_the_lowest_anchor",
+		is_equal_approx(FM.band_speed_cap_ms(0.01), FM.band_speed_cap_ms(0.2)))
+	failed += _check("cap_tightens_as_you_descend",
+		FM.band_speed_cap_ms(1.0) < FM.band_speed_cap_ms(5.0)
+		and FM.band_speed_cap_ms(5.0) < FM.band_speed_cap_ms(15.0)
+		and FM.band_speed_cap_ms(15.0) < FM.band_speed_cap_ms(100.0))
+
+	# THE UNIT TRAP. speed_limit is units/s and 1 unit = 1 km in Sol, so a 600 m/s
+	# cap is 0.6. Writing 600.0 there gives 600 km/s: every "the cap is applied"
+	# assertion still passes and the bound below is silently void.
+	failed += _check("units_conversion_is_per_kilometre",
+		is_equal_approx(FM.band_speed_cap_units(15.0), FM.band_speed_cap_ms(15.0) / 1000.0))
+	failed += _check("cap_in_units_is_not_kilometres_per_second",
+		FM.band_speed_cap_units(15.0) < 1.0)
+
+	# The guarantee this task exists for: at every altitude INSIDE the band, one
+	# frame of travel at the cap is shorter than a ring-0 quad, so a swept contact
+	# test cannot step over a mountain.
+	#
+	# Swept only to the ceiling on purpose. The cap is applied where a tile exists
+	# (PlanetSystem: `if salt < ceiling`), so sweeping past it would test the
+	# 100 km anchor - which is deliberately looser than the bound and would read as
+	# a cap bug rather than a test-range bug.
+	var quad: float = SP.ring_quad_km(0)
+	var earth := G.recipe_for({"name": "Earth"})
+	var ceiling: float = G.band_ceiling_km(G.terrain_sampler(earth))
+	var worst_alt := 0.0
+	var worst_ratio := 0.0
+	for i in 2001:
+		var alt := ceiling * float(i) / 2000.0
+		var step_km: float = FM.band_speed_cap_units(alt) * FM.WORST_FRAME_S
+		var ratio := step_km / quad
+		if ratio > worst_ratio:
+			worst_ratio = ratio
+			worst_alt = alt
+	failed += _check("cap_prevents_tunnelling", worst_ratio < 1.0)
+	# Stated headroom, so raising an anchor cannot quietly eat all of it.
+	failed += _check("tunnelling_bound_has_headroom", worst_ratio < 0.8)
+	# And the bound must be proven at a DIPPED frame rate, not a healthy one -
+	# a 60 fps proof is worthless precisely when it matters.
+	failed += _check("bound_is_proven_at_a_dipped_frame_rate", FM.WORST_FRAME_S >= 0.04)
+
+	print("earth_terrain: cap  %.0f/%.0f/%.0f/%.0f/%.0f m/s at 100/15/5/1/0.2 km; worst step %.0f%% of a %.0f m quad at %.1f km (%.0f fps proof)"
+		% [FM.band_speed_cap_ms(100.0), FM.band_speed_cap_ms(15.0),
+		FM.band_speed_cap_ms(5.0), FM.band_speed_cap_ms(1.0), FM.band_speed_cap_ms(0.2),
+		worst_ratio * 100.0, quad * 1000.0, worst_alt, 1.0 / FM.WORST_FRAME_S])
 	return failed
 
 

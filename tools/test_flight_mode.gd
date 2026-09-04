@@ -45,23 +45,55 @@ func _initialize() -> void:
 	var geo := Vector3(E.GEO_RADIUS_KM, 0.0, 0.0)
 	var inward := Vector3(-1.0, 0.0, 0.0)
 	var f9_v := inward * 3.27e7
-	var punch: Dictionary = M.break_at_exclusion(geo, f9_v, 0.25, Vector3.ZERO, earth_ez)
+	var punch: Dictionary = M.break_at_exclusion(geo, f9_v, 0.25, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("f9_drops", bool(punch.dropped))
 	failed += _check("f9_stops_on_shell", absf(punch.pos.length() - earth_ez) < 1.0)
 	failed += _check("f9_speed_dumped", punch.vel.length() < 0.001)
+
+	# The SHIPPED path dumps to the band cap for the shell's altitude, not to zero.
+	# A dead stop on every approach read as hitting a wall, and it got worse once
+	# the band became somewhere to fly: the Moon's shell sits at 10 km with a
+	# 5.27 km band ceiling below it, so you stopped dead and then re-accelerated
+	# into a capped band. Heading is kept, magnitude is clamped.
+	var cap10: float = M.band_speed_cap_units(10.0)
+	var soft: Dictionary = M.break_at_exclusion(geo, f9_v, 0.25, Vector3.ZERO, earth_ez, cap10)
+	failed += _check("shell_still_drops", bool(soft.dropped))
+	failed += _check("shell_keeps_you_moving", soft.vel.length() > 0.0)
+	failed += _check("shell_clamps_to_the_cap", soft.vel.length() <= cap10 + 1.0e-6)
+	failed += _check("shell_keeps_your_heading",
+		soft.vel.normalized().dot(f9_v.normalized()) > 0.999)
+	# ...and it must never speed anyone UP. A ship already slower than the cap
+	# keeps its own speed.
+	#
+	# The first version of this started from GEO with a crawl speed, so it never
+	# reached the shell in the time given, `dropped` came back false, and the
+	# `not dropped or ...` guard passed it for free - the mutation that makes the
+	# shell accelerate a slow ship survived. Start 1 km outside the shell instead,
+	# and ASSERT it dropped so the case can never go vacuous again.
+	var crawl_speed: float = cap10 * 0.25
+	var just_out: Vector3 = inward * -(earth_ez + 1.0)
+	var crawl: Vector3 = inward * crawl_speed
+	var slow: Dictionary = M.break_at_exclusion(just_out, crawl, 20.0, Vector3.ZERO, earth_ez, cap10)
+	failed += _check("the_slow_case_actually_drops", bool(slow.dropped))
+	failed += _check("shell_never_accelerates_you",
+		slow.vel.length() <= crawl_speed + 1.0e-6)
 	failed += _check("f9_not_on_kill", punch.pos.length() > E.EARTH_MIN_R_KM + 1.0)
-	var far_side: Dictionary = M.break_at_exclusion(geo, inward * 1.0e8, 1.0, Vector3.ZERO, earth_ez)
+	var far_side: Dictionary = M.break_at_exclusion(geo, inward * 1.0e8, 1.0, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("punch_not_far_side", far_side.pos.x > 0.0)
-	var coast: Dictionary = M.break_at_exclusion(geo, inward * 0.001, 0.25, Vector3.ZERO, earth_ez)
+	var coast: Dictionary = M.break_at_exclusion(geo, inward * 0.001, 0.25, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("slow_fall_no_drop", not bool(coast.dropped))
 	var in_air := Vector3(E.EARTH_RADIUS_KM + 50.0, 0.0, 0.0)
-	var already: Dictionary = M.break_at_exclusion(in_air, inward * 10.0, 0.05, Vector3.ZERO, earth_ez)
+	var already: Dictionary = M.break_at_exclusion(in_air, inward * 10.0, 0.05, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("already_inside_no_snap", not bool(already.dropped))
-	var out: Dictionary = M.break_at_exclusion(geo, -inward * 10.0, 0.25, Vector3.ZERO, earth_ez)
+	var out: Dictionary = M.break_at_exclusion(geo, -inward * 10.0, 0.25, Vector3.ZERO, earth_ez, 0.0)
 	failed += _check("outbound_no_drop", not bool(out.dropped))
 
 	var ship_src := FileAccess.get_file_as_string("res://scripts/flight/ship.gd")
 	failed += _check("ship_clips_ez", ship_src.find("break_at_exclusion") >= 0)
+	# The ship must pass a real cap, not a zero. Source check because the shipped
+	# call runs inside _newton_advance and is not reachable from a pure test.
+	failed += _check("ship_dumps_to_the_band_cap",
+		ship_src.find("band_speed_cap_units(shell_alt)") >= 0)
 
 	var hud_src := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	failed += _check("hud_mode_line", hud_src.find("Mode    ") >= 0)

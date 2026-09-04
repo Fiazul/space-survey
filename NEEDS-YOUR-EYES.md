@@ -31,6 +31,36 @@ OBSERVER along the view ray, and it needs sunlight on that air.** Vacuum is blac
 regardless of what is nearby and how brightly it is lit.
 
 
+## STANDING DESIGN BUG from the user (2026-09-05) — keep this
+
+> When we move away from a star — going *towards* space from Earth or the Moon,
+> not going in — we should get acceleration. It's a must-fix; currently this is a
+> very bad design bug.
+
+**Diagnosed, not yet fixed.** The band speed cap
+(`FlightMode.band_speed_cap_ms`) is applied purely from altitude and is
+completely **direction-blind**: `PlanetSystem.refresh` folds it into
+`speed_limit` whenever `salt < ceiling`. So climbing straight out you are still
+held to 60–600 m/s all the way to the ceiling, which is the opposite of what
+leaving a gravity well should feel like.
+
+The cap only exists to stop the hull crossing more than one ring-0 quad per
+frame — i.e. to stop you tunnelling into *ground*. Moving away from the ground,
+it has no job. The fix is to scale it by how much of the velocity is **inward**:
+
+```
+inward = max(dot(velocity_dir, -up), 0)      # 1 = straight down, 0 = level or climbing
+cap = lerp(NO_CAP, band_speed_cap(alt), inward)
+```
+
+Straight up: uncapped, you accelerate away. Straight down: full cap, contact kill
+stays sound. Level flight along a valley: mostly capped, which is right. The
+anti-tunnelling proof has to be re-derived against the *inward component* of
+travel rather than the whole magnitude — that is the part that needs care, not
+the lerp.
+
+Not done in this pass; it is the top item in "What's left".
+
 Things I cannot verify and you can. Everything here renders on **llvmpipe
 software Vulkan** in my environment, so I can prove geometry, ranges, shared
 rules and bounds — never appearance. Delete a line once you've judged it.

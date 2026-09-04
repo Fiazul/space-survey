@@ -143,11 +143,53 @@ func _sampler() -> int:
 	var ms: TerrainSampler = G.terrain_sampler(moon)
 	var md := _dir_of(12.0, 34.0)
 	var mh: float = ms.height_m(md)
-	failed += _check("airless_world_has_height", mh > 0.0)
-	failed += _check("airless_world_height_is_bounded", mh < 4000.0)
+	failed += _check("airless_world_height_is_bounded", absf(mh) < 4000.0)
+
+	# TERRAIN MUST STRADDLE THE DATUM, and this is the assertion that was missing.
+	# crust_height() is all-positive, so multiplying it by the relief put the whole
+	# lunar surface on a plinth: 380 m to 2421 m above the sphere, averaging
+	# 1457 m. Altitude is reported from the sphere, so at "Alt 2 km" over the Moon
+	# the ground was already at the hull and the contact kill fired - in play that
+	# read as being unable to descend below 2 km at all.
+	var m_lo := 1.0e9
+	var m_hi := -1.0e9
+	var m_sum := 0.0
+	var samples := 1500
+	for i in samples:
+		var a := float(i) * 0.00419
+		var d := Vector3(cos(a) * cos(a * 0.7), sin(a * 1.3), sin(a) * cos(a * 0.7)).normalized()
+		var h: float = ms.height_m(d)
+		m_lo = minf(m_lo, h)
+		m_hi = maxf(m_hi, h)
+		m_sum += h
+	var m_mean := m_sum / float(samples)
+	failed += _check("airless_terrain_has_ground_below_the_datum", m_lo < -100.0)
+	failed += _check("airless_terrain_has_ground_above_the_datum", m_hi > 100.0)
+	failed += _check("airless_terrain_is_centred_not_on_a_plinth", absf(m_mean) < 300.0)
+	# ...so the sphere-relative altitude the tape shows is roughly honest.
+	failed += _check("sphere_altitude_is_not_misleading_by_kilometres",
+		absf(m_mean) < 500.0 and m_hi < 2000.0)
+
+	# Two named airless worlds must not share one crust. Named recipes carried no
+	# seed, so every one of them ran the noise at 0 and the Moon, Mars and Mercury
+	# came out byte-identical.
+	var mars: TerrainSampler = G.terrain_sampler(G.recipe_for({"name": "Mars"}))
+	var probe := _dir_of(12.0, 34.0)
+	failed += _check("named_worlds_have_their_own_seed",
+		not is_equal_approx(float(G.recipe_for({"name": "Moon"}).get("seed", 0.0)),
+			float(G.recipe_for({"name": "Mars"}).get("seed", 0.0))))
+	failed += _check("two_airless_worlds_are_not_the_same_crust",
+		absf(ms.height_m(probe) - mars.height_m(probe)) > 10.0)
+
+	print("earth_terrain: crust  Moon %+.0f..%+.0f m, mean %+.0f (straddles the datum); Moon seed %.2f vs Mars %.2f"
+		% [m_lo, m_hi, m_mean, float(G.recipe_for({"name": "Moon"}).get("seed", 0.0)),
+		float(G.recipe_for({"name": "Mars"}).get("seed", 0.0))])
 	failed += _check("airless_world_is_never_water", not ms.is_water(md))
+	# Centred terrain peaks at only the HALF-range above the datum, so this bound
+	# moved when the plinth was removed: (0.96875 - 0.484) * 3.2 + 0.42 = 1.97 km,
+	# not the 3.1 km an all-positive crust reached.
 	failed += _check("airless_max_height_is_bounded",
-		ms.max_height_km() > 2.5 and ms.max_height_km() < 3.5)
+		ms.max_height_km() > 1.2 and ms.max_height_km() < 2.5)
 	failed += _check("airless_uses_noise_not_a_map",
 		str(ms.report().height_source) == "noise")
 	failed += _check("earth_uses_its_map", str(s.report().height_source) == "map")

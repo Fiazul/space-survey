@@ -409,6 +409,12 @@ static func recipe_for(spec: Dictionary) -> Dictionary:
 		var r: Dictionary = (RECIPES[name] as Dictionary).duplicate()
 		r["name"] = name
 		r["features"] = r.get("features", [])
+		# NAMED recipes carry no seed, so every one of them ran the crust noise at
+		# seed 0 - and the Moon, Mars and Mercury came out with literally identical
+		# terrain (measured: min -1170 m, mean -93 m, max +871 m on all three).
+		# Derive it from the name, the same way invent() does.
+		if not r.has("seed"):
+			r["seed"] = float(name.hash() % 10000) * 0.017
 		if not has_map(r):
 			r["source"] = "named-pending-map"
 		return r

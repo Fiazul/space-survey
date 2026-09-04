@@ -37,6 +37,17 @@ const DEM_SCALE_M := DEM_PEAK_M / maxf(DEM_PEAK_VALUE - DEM_SEA_LEVEL, 0.0001)
 const NOISE_RELIEF_KM := 3.2
 # fbm3 sums 5 octaves of halving amplitude: 0.5+0.25+0.125+0.0625+0.03125.
 const FBM_CEILING := 0.96875
+# ...and its MEAN is that ceiling times 0.5, because the underlying value noise is
+# uniform on 0..1. Subtracting it is what makes a noise world's terrain straddle
+# the sphere instead of standing on a plinth above it.
+#
+# THE BUG THIS FIXES: crust_height() is all-positive, so
+# `crust * NOISE_RELIEF_KM` put the ENTIRE lunar surface between 380 m and
+# 2421 m above the sphere, averaging 1457 m. Altitude on the tape is measured
+# from the sphere, so at "Alt 2 km" over the Moon the real ground was already at
+# the hull and contact kill fired correctly - which in play read as being unable
+# to descend below 2 km. Terrain oscillates about a datum.
+const FBM_MEAN := FBM_CEILING * 0.5
 
 # Procedural detail added on top of the DEM. Amplitude scales with the DEM's
 # local slope: a 7.42 km texel cannot express a ridge, so flat sea floor stays
@@ -99,13 +110,8 @@ func _init(recipe: Dictionary) -> void:
 # Metres above sea level at a point on the crust. `dir` is an outward unit vector
 # in MODEL space — the same vector the cook shader calls `n`.
 func height_m(dir: Vector3) -> float:
-	var base: float
-	if _has_map:
-		base = (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
-	else:
-		# No map: the cook shader's own crust fbm, so the tile agrees with the globe.
-		base = PlanetGenerator.crust_height(dir, _seed) * NOISE_RELIEF_KM * 1000.0
-	if base <= 0.0 and not DEM_HAS_BATHYMETRY:
+	var base := base_height_m(dir)
+	if _has_map and base <= 0.0 and not DEM_HAS_BATHYMETRY:
 		return 0.0                 # ocean floor is not modelled; sea level is the floor
 	return base + _detail_m(dir, base)
 
@@ -115,12 +121,14 @@ func height_m(dir: Vector3) -> float:
 # ground" passes on bilinear interpolation of the DEM alone, which is what it did
 # on the first draft of tools/test_earth_terrain.gd.
 func base_height_m(dir: Vector3) -> float:
-	var base: float
 	if _has_map:
-		base = (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) * DEM_SCALE_M
-	else:
-		base = PlanetGenerator.crust_height(dir, _seed) * NOISE_RELIEF_KM * 1000.0
-	return maxf(base, 0.0) if not DEM_HAS_BATHYMETRY else base
+		var mapped := (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) \
+			* DEM_SCALE_M
+		return maxf(mapped, 0.0) if not DEM_HAS_BATHYMETRY else mapped
+	# CENTRED on the datum, and deliberately NOT clamped: negative is a basin, not
+	# an ocean. An airless world has no sea level, and clamping here would flatten
+	# half the Moon into a plate sitting exactly on the sphere.
+	return (PlanetGenerator.crust_height(dir, _seed) - FBM_MEAN) * NOISE_RELIEF_KM * 1000.0
 
 
 # Ruggedness between DEM samples, scaled by how steep the DEM already is here.
@@ -132,7 +140,9 @@ func _detail_m(dir: Vector3, base_m: float) -> float:
 	# Pacific flat; only forcing slope01() to a constant wrinkles it. Keep all three
 	# anyway - the early returns are cheap and they are what will matter the day
 	# DEM_HAS_BATHYMETRY becomes true and `base` can legitimately go negative.
-	if base_m < 1.0:
+	# Flat where there is water. Gated on _has_map, because a noise world's basins
+	# are legitimately below the datum and must still get their detail.
+	if _has_map and base_m < 1.0:
 		return 0.0                 # keep water flat
 	var slope := slope01(dir)
 	var n: float = PlanetGenerator.fbm3_octaves(
@@ -185,7 +195,8 @@ func is_water(dir: Vector3) -> bool:
 func max_height_km() -> float:
 	if _has_map:
 		return (DEM_MAX_VALUE * DEM_SCALE_M + DETAIL_MAX_M) / 1000.0
-	return NOISE_RELIEF_KM * FBM_CEILING
+	# Centred, so the peak ABOVE the datum is only the half-range.
+	return (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0
 
 
 # Did the hull touch ground anywhere along this frame's movement? Samples the

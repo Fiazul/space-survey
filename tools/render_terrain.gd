@@ -31,9 +31,9 @@ func _ready() -> void:
 	# lat, lon, altitude km, LOOK-AHEAD km, label
 	_shots = [
 		# The conditions in the reported screenshots: over water and over a coast.
-		[10.0, -35.0, 6.0, 40.0, "ocean_6km"],
+		[20.5, -17.0, 12.0, 60.0, "coast_12km"],
 		[20.5, -17.0, 6.0, 40.0, "coast_6km"],
-		[20.5, -17.0, 15.0, 90.0, "coast_15km"],
+		[20.5, -17.0, 2.0, 14.0, "coast_2km"],
 		# Above the Himalaya rather than inside it - the ground there is 7626 m.
 		[27.95, 86.80, 12.0, 40.0, "himalaya_12km"],
 		[27.95, 86.80, 9.0, 18.0, "himalaya_9km"],

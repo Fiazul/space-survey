@@ -222,6 +222,26 @@ func alt_above_ground_km(pos: Vector3, body_radius_km: float) -> float:
 const SEA_LEVEL_TOL_M := 40.0
 
 
+# CONTINUOUS wetness, 0..1. The boolean below is for decisions (props, kill);
+# this is for LOOK, and the difference matters: classifying whole quads as land
+# or water and sending them to two different meshes drew every coastline at quad
+# resolution - 1.5 km quads on ring 2, 6.1 km on ring 3 - as hard-edged angular
+# polygons. Water is a material property of the surface, not separate geometry.
+func water01(dir: Vector3) -> float:
+	if _s_w > 0:
+		var mask := _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir))
+		# Elevation still has a veto: the mask is 19.5 km per texel, so its
+		# interpolation reaches over mountains.
+		var fade: float = 1.0 - smoothstep(SEA_LEVEL_TOL_M, SEA_LEVEL_TOL_M * 8.0,
+			base_height_m(dir))
+		return clampf(smoothstep(0.35, 0.65, mask) * fade, 0.0, 1.0)
+	if _has_map:
+		return 1.0 - smoothstep(0.0, SEA_LEVEL_TOL_M, height_m(dir))
+	var edge := 1.0 - _land
+	var h: float = PlanetGenerator.fbm3(dir * 2.1 + Vector3(_seed, _seed, _seed))
+	return clampf(1.0 - smoothstep(edge - 0.05, edge + 0.05, h), 0.0, 1.0)
+
+
 func is_water(dir: Vector3) -> bool:
 	if _s_w > 0:
 		if _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) <= 0.5:
@@ -318,8 +338,6 @@ func map_weight(plate_km: float, body_radius_km: float) -> float:
 # Ground colour. The map keeps the evidence - Mare Imbrium dark, the Sahara pale -
 # and the palette supplies the detail the map has no resolution for.
 func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Color:
-	if is_water(dir):
-		return PALETTE_OCEAN
 	var h_m := height_m(dir)
 	var span: float = maxf(max_height_km() * 1000.0, 1.0)
 	var h01 := clampf(h_m / span, 0.0, 1.0)
@@ -328,9 +346,11 @@ func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Colo
 	proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
 	proc = proc.lerp(PALETTE_ROCK, slope * 0.65)
 	var w := map_weight(plate_km, body_radius_km)
-	if w <= 0.0:
-		return proc
-	return proc.lerp(albedo_color(dir), w)
+	if w > 0.0:
+		proc = proc.lerp(albedo_color(dir), w)
+	# Blend toward the ocean by CONTINUOUS wetness, so a shoreline is a gradient
+	# across vertices rather than a hard polygon edge between two meshes.
+	return proc.lerp(PALETTE_OCEAN, water01(dir))
 
 
 func report() -> Dictionary:

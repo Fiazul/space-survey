@@ -28,6 +28,7 @@ func _initialize() -> void:
 	failed += _band()
 	failed += _rings()
 	failed += _cap()
+	failed += _descent()
 	failed += _kill()
 	if failed == 0:
 		print("earth_terrain: OK")
@@ -299,8 +300,14 @@ func _rings() -> int:
 		var b: float = SP.base_quad_km(probe_alt, EARTH_R)
 		var hz: float = SP.horizon_km(probe_alt, EARTH_R)
 		var cover: float = SP.ring_reach_km(3, b) / hz
+		# NEVER SHORT, and at worst 2x over. The base is quantised to powers of two
+		# so a scale change is rare and always exactly 2x (a continuous base changed
+		# with every metre of altitude, and each change tore the mesh open for three
+		# frames). Quantising costs coverage precision, so it rounds UP - short
+		# coverage would put the body's bare 208 km-facet sphere back in the outer
+		# part of the view, which is the fault horizon-scaling exists to fix.
 		failed += _check("rings_reach_the_horizon_at_%s_km" % probe_alt,
-			cover > 0.95 and cover < 1.5)
+			cover >= 1.0 and cover <= 2.1)
 	# ...and the quad size must actually grow with altitude, or nothing changed.
 	failed += _check("ring_scale_grows_with_altitude",
 		SP.base_quad_km(15.0, EARTH_R) > SP.base_quad_km(0.5, EARTH_R) * 3.0)
@@ -317,7 +324,7 @@ func _rings() -> int:
 		and SP.ring_quad_km(2, base_q) > SP.ring_quad_km(1, base_q)
 		and SP.ring_quad_km(3, base_q) > SP.ring_quad_km(2, base_q))
 	failed += _check("outer_ring_reaches_this_horizon",
-		absf(SP.ring_reach_km(3, base_q) - SP.horizon_km(1.0, MOON_R)) < 1.0)
+		SP.ring_reach_km(3, base_q) >= SP.horizon_km(1.0, MOON_R))
 	failed += _check("rings_have_no_gaps", bool(patch.rings_seal()))
 
 	# Build at 1 km over the Moon.
@@ -332,7 +339,13 @@ func _rings() -> int:
 	for v in first:
 		if v > 0:
 			built_first += 1
-	failed += _check("one_update_builds_one_ring", built_first == SP.RINGS_PER_UPDATE)
+	# A COLD ARRIVAL builds every ring in one update, on purpose: a scale change
+	# invalidates them all, and filling them one per frame would leave ring 0 at
+	# the new scale beside rings still at the old one - mismatched boundaries, a
+	# torn mesh. The prebuild window means that hitch happens before the band
+	# opens. Only steady flight at an unchanged scale is one-ring-per-update.
+	failed += _check("a_cold_arrival_builds_every_ring_at_once",
+		built_first == SP.RING_COUNT)
 	for _i in SP.RING_COUNT:
 		patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
 	var r: Dictionary = patch.report()
@@ -539,6 +552,68 @@ func _cap() -> int:
 		% [FM.band_speed_cap_ms(100.0), FM.band_speed_cap_ms(15.0),
 		FM.band_speed_cap_ms(5.0), FM.band_speed_cap_ms(1.0), FM.band_speed_cap_ms(0.2),
 		worst_ratio * 100.0, worst_quad * 1000.0, worst_alt, 1.0 / FM.WORST_FRAME_S])
+	return failed
+
+
+# --- A real descent, frame by frame ------------------------------------------
+# Everything above tests the tile at ONE altitude. This flies it down, which is
+# where it actually broke: ring scale follows the horizon, a scale change
+# invalidates every ring, and rebuilding them one per frame left ring 0 at the
+# new scale beside rings still at the old one. Mismatched boundaries tear the mesh
+# open, and over a 20 km descent that happened on thousands of frames.
+func _descent() -> int:
+	var failed := 0
+	var earth := G.recipe_for({"name": "Earth"})
+	var s: TerrainSampler = G.terrain_sampler(earth)
+	var ceiling: float = G.band_ceiling_km(s)
+	var patch = SP.new()
+	patch._ready()
+	var lat := deg_to_rad(20.5)
+	var lon := deg_to_rad(-17.0)
+	var base := Vector3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon)).normalized()
+	var north := base.cross(Vector3.UP).normalized().cross(base).normalized()
+
+	var alt := 16.0
+	var travelled := 0.0
+	var frames := 0
+	var mixed := 0
+	var empty := 0
+	var rescales := 0
+	var last_base := 0.0
+	while alt > 0.3 and frames < 6000:
+		frames += 1
+		alt -= 0.004                 # ~4 m of descent per frame
+		travelled += 0.0018          # 108 m/s at 60 fps
+		var pos: Vector3 = (base * EARTH_R + north * travelled).normalized() * (EARTH_R + alt)
+		patch.update_for(pos, "Earth", true, EARTH_R, alt, 0.02, ceiling, earth, s)
+		var rep: Dictionary = patch.report()
+		var bases: Array = rep.ring_bases
+		var b0 := float(bases[0])
+		for b in bases:
+			if float(b) > 0.0 and not is_equal_approx(float(b), b0):
+				mixed += 1
+				break
+		if not is_equal_approx(b0, last_base):
+			rescales += 1
+			last_base = b0
+		var rv: PackedInt32Array = rep.ring_verts
+		for v in rv:
+			if v <= 0:
+				empty += 1
+				break
+
+	# THE assertion. Two rings at different scales do not share a boundary.
+	failed += _check("no_frame_has_mixed_ring_scales", mixed == 0)
+	# ...and no frame may be missing a ring entirely, or there is a hole in the view.
+	failed += _check("no_frame_is_missing_a_ring", empty == 0)
+	# Rescales must be RARE. Quantising the base to powers of two is what makes
+	# them so; a continuous base changed with every metre of altitude.
+	failed += _check("rescales_are_rare", rescales <= 6)
+	failed += _check("the_descent_actually_rescaled", rescales >= 2)
+
+	print("earth_terrain: descent  %d frames from 16 km to 0.3 km: %d mixed-scale, %d missing a ring, %d rescales"
+		% [frames, mixed, empty, rescales])
+	patch.free()
 	return failed
 
 

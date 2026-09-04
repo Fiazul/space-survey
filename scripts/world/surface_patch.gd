@@ -96,6 +96,9 @@ var _land_mat: ShaderMaterial
 var _water_mat: ShaderMaterial
 var _base_quad := 0.0          # ring 0's quad size for the current altitude
 var _rim_stitched: Array[bool] = []  # per ring: was its rim snapped to the coarser grid
+# The base quad each ring was last BUILT at. If two of these ever differ, the
+# rings are at mismatched scales and their boundaries are torn open.
+var _ring_base: Array[float] = []
 var _radius := 1.0             # the body's radius, for the colour palette's texel maths
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
@@ -127,6 +130,7 @@ func _ready() -> void:
 		_ring_skirt.append(skirt)
 		_ring_anchor.append(Vector3.ZERO)
 		_rim_stitched.append(false)
+		_ring_base.append(0.0)
 	_props = MultiMeshInstance3D.new()
 	_props.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	_props.multimesh = _make_prop_multimesh(_kit)
@@ -140,9 +144,26 @@ static func horizon_km(alt_km: float, radius_km: float) -> float:
 	return sqrt(maxf(2.0 * radius_km * a + a * a, 0.0))
 
 
-# Ring 0's quad size for an altitude, chosen so ring 3 lands on the horizon.
+# Ring 0's quad size for an altitude, chosen so ring 3 lands on the horizon -
+# then QUANTISED TO POWERS OF TWO.
+#
+# The continuous version changed with every metre of altitude, and a change
+# invalidates every ring at once. With one ring rebuilt per frame, ring 0 then sat
+# at the new scale while rings 1-3 were still at the old one, so their shared
+# boundaries no longer lined up and the mesh tore open. Over a 20 km descent that
+# happened EIGHT times, which in flight is continuous. Quantising means the scale
+# changes rarely and always by exactly 2x, and rescale_is_atomic below makes sure
+# the rings are never at two different scales at once.
 static func base_quad_km(alt_km: float, radius_km: float) -> float:
-	return clampf(horizon_km(alt_km, radius_km) / RING_SPAN,
+	var want: float = clampf(horizon_km(alt_km, radius_km) / RING_SPAN,
+		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
+	# CEIL, not round. Rounding to the nearest power of two can land 0.71x short
+	# of the horizon, which puts the body's bare 208 km-facet sphere back in the
+	# outer third of the view - the very fault the horizon-scaling fixed. Rounding
+	# up keeps coverage in [1.0, 2.0]: never short, at worst some geometry past the
+	# horizon, which is hidden.
+	var steps: float = ceil(log(want / BASE_QUAD_MIN_KM) / log(2.0) - 0.0001)
+	return clampf(BASE_QUAD_MIN_KM * pow(2.0, steps),
 		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
 
 
@@ -241,22 +262,31 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	_radius = radius
 	var hit: Vector3 = ship_pos.normalized() * radius
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
+	# RESCALE IS ATOMIC. A scale change invalidates every ring, and rebuilding them
+	# one per frame left ring 0 at the new scale beside rings still at the old one -
+	# mismatched boundaries, so the mesh tore open for three frames every time.
+	# Rebuild them all in this one update instead: one bounded hitch, and the rings
+	# are never at two scales at once.
 	var want_base: float = base_quad_km(alt, radius)
-	if _base_quad <= 0.0 or absf(want_base - _base_quad) > _base_quad * BASE_DRIFT_FRAC:
+	var rescaled: bool = not is_equal_approx(want_base, _base_quad)
+	if rescaled:
 		_base_quad = want_base
 		for i in RING_COUNT:
-			_ring_anchor[i] = Vector3.ZERO
-	# Each ring rebuilds only when the hull has crossed a fraction of ITS OWN
-	# reach, so ring 0 follows you closely and cheaply while ring 3 rarely moves.
-	var built := 0
-	for i in RING_COUNT:
-		if built >= RINGS_PER_UPDATE:
-			break
-		var drift := ring_reach_km(i, _base_quad) * REBUILD_FRAC
-		if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > drift:
 			_build_ring(i, hit, radius)
 			_ring_anchor[i] = hit
-			built += 1
+	else:
+		# Otherwise each ring rebuilds only when the hull has crossed a fraction of
+		# ITS OWN reach, so ring 0 follows you closely and cheaply while ring 3
+		# rarely moves - at most one per update so a frame is never four rebuilds.
+		var built := 0
+		for i in RING_COUNT:
+			if built >= RINGS_PER_UPDATE:
+				break
+			var drift := ring_reach_km(i, _base_quad) * REBUILD_FRAC
+			if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > drift:
+				_build_ring(i, hit, radius)
+				_ring_anchor[i] = hit
+				built += 1
 	visible = in_band
 	_tris = 0
 	for m in _ring_land:
@@ -347,6 +377,7 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	# function. The outermost ring has nothing beyond it and is left alone.
 	var stitch: bool = ring < RING_COUNT - 1
 	_rim_stitched[ring] = stitch
+	_ring_base[ring] = _base_quad
 	if stitch:
 		var step := int(RING_STEP)
 		for k in range(0, side, step):
@@ -379,8 +410,13 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			# quad with two wet corners a full water plate, so every shoreline grew
 			# a fringe of dark quads standing 1 m proud of the land beside them.
 			# A shoreline quad is better drawn as land; slice C gives it a real edge.
+			# ONE MESH. Land and water used to be split into two meshes by a
+			# per-quad test, which drew every coastline at quad resolution - 1.5 km
+			# on ring 2, 6.1 km on ring 3 - as hard-edged angular polygons, and put
+			# a material change on the boundary so the step could not soften.
+			# Wetness is now a vertex colour that interpolates.
 			var wet: float = (float(p00.w) + float(p10.w) + float(p01.w) + float(p11.w)) * 0.25
-			var st: SurfaceTool = wat_st if wet > 0.99 else land_st
+			var st: SurfaceTool = land_st
 			# A quad touching the stitched rim goes into the skirt mesh, because its
 			# rim corners were moved off the height function to meet the neighbour.
 			var on_rim: bool = i == 0 or j == 0 or i == RING_SEGS - 1 or j == RING_SEGS - 1
@@ -419,10 +455,9 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 					prop_xforms.append(t)
 	_ring_land[ring].mesh = land_st.commit()
 	_ring_land[ring].material_override = _land_mat
-	_ring_water[ring].mesh = wat_st.commit()
-	_ring_water[ring].material_override = _water_mat
-	# See WATER_LIFT_KM: sea level and the globe's sphere share a radius.
-	_ring_water[ring].position = up * WATER_LIFT_KM
+	# The water mesh is retired - one surface now - but the node stays so the
+	# report and the error walk keep a stable shape.
+	_ring_water[ring].mesh = null
 	_ring_skirt[ring].mesh = skirt_st.commit() if skirted else null
 	_ring_skirt[ring].material_override = _land_mat
 	if ring == 0:
@@ -504,7 +539,7 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 	var dir: Vector3 = (hit + east * off_e + north * off_n).normalized()
 	var uv := _dir_uv(dir)
 	var gr: float = _sampler.ground_radius_km(dir, radius)
-	var wet: float = 1.0 if _sampler.is_water(dir) else 0.0
+	var wet: float = _sampler.water01(dir)
 	# 0..1 of this world's own relief, for prop placement and colour banding.
 	var h: float = clampf((gr - radius) / maxf(_sampler.max_height_km(), 0.001), 0.0, 1.0)
 	# "n" starts radial and is replaced by the grid's smooth normal in _build_ring.
@@ -836,6 +871,7 @@ func report() -> Dictionary:
 			else _ring_land[0].mesh.get_aabb(),
 		"ring0_reach_km": ring_reach_km(0, _base_quad),
 		"base_quad_km": _base_quad,
+		"ring_bases": _ring_base.duplicate(),
 		"ring3_reach_km": ring_reach_km(3, _base_quad),
 		# Per-ring land vertices, so the donut is directly observable: rings 1-3
 		# each drop the footprint of the ring inside them, so they MUST commit

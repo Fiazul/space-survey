@@ -555,8 +555,30 @@ static func close_enough(dist: float, radius: float) -> bool:
 	return dist < maxf(radius * 22.0, 400.0)
 
 
-# Hills only near the skin. EZ (Earth 100 km) stays a globe — continents, not grass.
-const STAMP_BELOW_KM := 3.0
+# --- Skin band: the bird-eye ground tile ---
+# The tile is a LOCAL plate of ground, so it only reads while its own width dwarfs
+# your altitude. 36 km of ground seen from 100 km up is a sticker floating on a
+# globe (the bug commit 8933730 closed); the same plate from 1 km up is ground out
+# to the horizon. So the ceiling is not a magic number — it is the tile's own size:
+#     ceiling = TILE_KM_MAX * BAND_ALT_FRACTION = 36 * 0.09 = 3.24 km
+# EZ (Earth 100 km, airless radius + 10 km) stays the cook globe: continents, not
+# grass. Hills only near the skin.
+const TILE_KM_MAX := 36.0            # widest plate; from ~3 km up it fills the view
+const TILE_KM_MIN := 2.0             # narrowest; keeps quads fine at 100 m altitude
+const BAND_ALT_FRACTION := 0.09      # alt / plate-width at the top of the band
+const TILE_ALT_MULT := 10.0          # plate width = alt x this, so quads scale with height
+const STAMP_BELOW_KM := TILE_KM_MAX * BAND_ALT_FRACTION
+
+
+# Ceiling of the band, km above the skin. Below it a local tile reads as ground.
+static func band_top_km() -> float:
+	return STAMP_BELOW_KM
+
+
+# Plate width for an altitude. Quad size is width / SEGS, so tying the width to
+# altitude stops the ground going chunky on the way down: 1 km up -> a 10 km plate.
+static func tile_km_for(alt_km: float) -> float:
+	return clampf(alt_km * TILE_ALT_MULT, TILE_KM_MIN, TILE_KM_MAX)
 
 
 static func close_detail(alt_km: float) -> float:
@@ -569,8 +591,95 @@ static func close_detail(alt_km: float) -> float:
 	return 1.0 - (alt_km - NEAR_KM) / (FAR_KM - NEAR_KM)
 
 
+# Is a ground tile allowed at this altitude? Above the kill line (you are alive)
+# and inside the band.
+# NOTE this window is EMPTY on Earth: its kill line is 29 km, well above the
+# 3.24 km ceiling, so Earth shows no hills-as-objects until that line moves. That
+# is the documented state, not an oversight — see PLANET_GENERATOR.md "Honest
+# limits". Airless worlds kill at 100 m, so their band is 0.1 -> 3.24 km and they
+# get the flyover first.
 static func ground_stamp_ok(alt_km: float, kill_km: float) -> bool:
-	return alt_km > kill_km and alt_km < STAMP_BELOW_KM
+	return alt_km > kill_km and alt_km < band_top_km()
+
+
+# Does a body get a ground tile at all? A gas giant and a star have no surface to
+# stand a plate on. Every rocky / ice world does, mapped or invented.
+static func has_surface(recipe: Dictionary) -> bool:
+	var kind := str(recipe.get("kind", "rocky"))
+	return kind == "rocky" or kind == "ice"
+
+
+# Which kit morphology dresses the tile. Recipe-driven, per the asset-kit spec:
+# recognizable vegetation needs a biosphere, so "tree" is gated on real air AND
+# standing liquid, not on a colour. Cold worlds get ice shards, the rest bare
+# rock. These are separate meshes on purpose — recolouring a tree blue does not
+# make it an ice spire, and recolouring lava does not make it cryovolcanism.
+static func surface_kit(recipe: Dictionary) -> String:
+	if not has_surface(recipe):
+		return "none"
+	if float(recipe.get("air_amount", 0.0)) > 0.5 and float(recipe.get("water_shine", 0.0)) > 0.3:
+		return "tree"
+	if float(recipe.get("ice_amount", 0.0)) > 0.25:
+		return "ice"
+	return "rock"
+
+
+# --- Crust height, shared with the shader ---
+# planet_cook.gdshader's sample_height() falls back to fbm(n * CRUST_FREQ + seed)
+# for any world with no height map. The ground tile MUST use the same function
+# with the same seed, or the hills you fly over disagree with the crust the globe
+# above you is painting. hash3/noise3/fbm3 are a line-for-line mirror of that
+# shader's hash/noise/fbm — if you touch one, touch both.
+const CRUST_FREQ := 6.0
+
+
+static func _hash3(p: Vector3) -> float:
+	var v: float = sin(p.dot(Vector3(127.1, 311.7, 74.7))) * 43758.5453
+	return v - floor(v)
+
+
+static func _noise3(p: Vector3) -> float:
+	var i := p.floor()
+	var f := p - i
+	f = f * f * (Vector3(3.0, 3.0, 3.0) - f * 2.0)
+	var n000 := _hash3(i)
+	var n100 := _hash3(i + Vector3(1.0, 0.0, 0.0))
+	var n010 := _hash3(i + Vector3(0.0, 1.0, 0.0))
+	var n110 := _hash3(i + Vector3(1.0, 1.0, 0.0))
+	var n001 := _hash3(i + Vector3(0.0, 0.0, 1.0))
+	var n101 := _hash3(i + Vector3(1.0, 0.0, 1.0))
+	var n011 := _hash3(i + Vector3(0.0, 1.0, 1.0))
+	var n111 := _hash3(i + Vector3(1.0, 1.0, 1.0))
+	var nx00 := lerpf(n000, n100, f.x)
+	var nx10 := lerpf(n010, n110, f.x)
+	var nx01 := lerpf(n001, n101, f.x)
+	var nx11 := lerpf(n011, n111, f.x)
+	return lerpf(lerpf(nx00, nx10, f.y), lerpf(nx01, nx11, f.y), f.z)
+
+
+static func fbm3(p: Vector3) -> float:
+	var a := 0.5
+	var s := 0.0
+	var q := p
+	for _i in 5:
+		s += a * _noise3(q)
+		q *= 2.07
+		a *= 0.5
+	return s
+
+
+# Height at a point on the crust, 0..1-ish, for a world with no height map.
+# `n` is the outward unit normal in MODEL space (the same vector the shader uses).
+static func crust_height(n: Vector3, seed_v: float) -> float:
+	return fbm3(n * CRUST_FREQ + Vector3(seed_v, seed_v, seed_v))
+
+
+# One sampler per body, built from its recipe. Callers must SHARE the instance —
+# the ring mesh builder and the contact kill have to be looking at the same
+# terrain, or you die in clear air or fly through rock. PlanetSystem owns the
+# per-body cache (see terrain_sampler_for).
+static func terrain_sampler(recipe: Dictionary) -> TerrainSampler:
+	return TerrainSampler.new(recipe)
 
 
 static func make_ring_material(recipe: Dictionary) -> StandardMaterial3D:

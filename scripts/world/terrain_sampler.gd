@@ -53,14 +53,46 @@ const FBM_MEAN := FBM_CEILING * 0.5
 # local slope: a 7.42 km texel cannot express a ridge, so flat sea floor stays
 # flat while mountains get rugged. This is what makes 50 m triangles worth
 # building instead of just interpolating between texels.
-const DETAIL_FREQ := 900.0         # cycles across the body; ~44 km wavelength on Earth
-const DETAIL_MAX_M := 420.0        # amplitude at full slope
+# DETAIL FREQUENCY, and it was wrong by 150x.
+# 900 cycles across the body is a 44.5 km wavelength - COARSER than ring 0's
+# entire width (4.3 km at 6 km altitude), so detail was a constant offset across
+# the whole fine ring and contributed nothing. Worse, the DEM's 7.42 km texels
+# already supply everything above ~15 km, so the band detail was covering was
+# already covered.
+#
+# Detail's job is the range the DEM CANNOT express: from one texel down to
+# roughly a ring-0 quad. 11000 gives a 3.6 km base, and four ridged octaves carry
+# it to 3643 / 1760 / 850 / 411 m - ridge scale through to roughness.
+const DETAIL_FREQ := 11000.0
+const DETAIL_MAX_M := 160.0        # amplitude at full slope
+# 160 is MEASURED, not guessed. Amplitude has to be set against the finest
+# octave's wavelength or the terrain becomes spikes: at 420 m the Moon came out
+# with a mean grade of 0.85 (40 degrees) and a worst of 3.89 (76), which is not
+# terrain. Ridged noise roughly doubles the gradient of smooth noise, which is
+# what the first pass failed to compensate for. Swept over 40 m steps:
+#   420 m -> mean 40.5 deg, worst 76   spikes
+#   160 m -> mean 18.0 deg, worst 56   a hillside with cliff faces
+#   110 m -> mean 12.6 deg, worst 46   gentle
+#    80 m -> mean  9.2 deg, worst 36   rolling
+# A real mountainside is 0.3-0.7 grade (17-35 degrees), so 160 sits at the rugged
+# end of believable. tools/test_earth_terrain.gd pins the band.
+# Even flat plains are not billiard tables, so slope scales detail down but never
+# to nothing - and it is CAPPED well below 1.0 at the top.
+#
+# Detail is ROUGHNESS ON TOP OF the DEM's shape, not a multiplier of it. Letting
+# it scale to full amplitude wherever the DEM is steep piled 160 m of ridged noise
+# onto the Himalaya's own grade (slope01 there is 1.00, against the Moon's flat
+# 0.35) and produced 78-degree turns between adjacent vertex normals. Capping the
+# top keeps roughness roughly consistent everywhere and leaves the large-scale
+# steepness to the DEM, which is the thing that actually knows about it.
+const DETAIL_SLOPE_FLOOR := 0.18
+const DETAIL_SLOPE_CEIL := 0.55
 # Three octaves, not five. Each octave is 8 hash() calls, and this fbm is the
 # single dominant cost in a ring rebuild (4,225 heights x 40 sin() at five
 # octaves). Octaves 4 and 5 together carry under 9% of the amplitude - at most
 # 39 m here. crust_height() still uses the full five, because THAT one has to
 # mirror planet_cook.gdshader exactly.
-const DETAIL_OCTAVES := 3
+const DETAIL_OCTAVES := 4
 const NOISE_WORLD_SLOPE := 0.35    # a noise world is already rugged at every scale
 
 # Maps are cached as RAW SINGLE-CHANNEL BYTES, not as Images.
@@ -144,9 +176,14 @@ func _detail_m(dir: Vector3, base_m: float) -> float:
 	# are legitimately below the datum and must still get their detail.
 	if _has_map and base_m < 1.0:
 		return 0.0                 # keep water flat
-	var slope := slope01(dir)
-	var n: float = PlanetGenerator.fbm3_octaves(
+	# RIDGED, not smooth: ridged noise creases, which is what reads as a mountain
+	# ridgeline instead of a dune, and it gets that structure without paying for
+	# more octaves.
+	var slope := lerpf(DETAIL_SLOPE_FLOOR, DETAIL_SLOPE_CEIL, slope01(dir))
+	var n: float = PlanetGenerator.ridged3(
 		dir * DETAIL_FREQ + Vector3(_seed, _seed, _seed), DETAIL_OCTAVES)
+	# Ridged noise is 0..1 with its mass toward 1, so centre it before scaling or
+	# it becomes a uniform lift rather than relief.
 	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope
 
 
@@ -236,6 +273,54 @@ func albedo_color(dir: Vector3) -> Color:
 	var i := (y * _a_w + x) * 3
 	return Color(float(_a_bytes[i]) / 255.0, float(_a_bytes[i + 1]) / 255.0,
 		float(_a_bytes[i + 2]) / 255.0)
+
+
+# --- Surface colour ---
+# The albedo map runs out of information long before the geometry does. Measured:
+# Earth's 2048px albedo is 19.5 km per texel, so ring 0 at 6 km altitude spans
+# 0.22 of a texel - the whole visible ground is ONE FLAT COLOUR, and no triangle
+# count changes that. planet_cook.gdshader already blends a procedural
+# height/slope palette for the globe past detail > 0.02; the tile sampled the
+# albedo and stopped, so it was blurrier than the globe at the same altitude.
+const MAP_FADE_TEXELS := 4.0
+const PALETTE_GRASS := Color(0.16, 0.30, 0.09)
+const PALETTE_ROCK := Color(0.40, 0.36, 0.32)
+const PALETTE_DIRT := Color(0.38, 0.28, 0.16)
+const PALETTE_ICE := Color(0.86, 0.89, 0.93)
+const PALETTE_OCEAN := Color(0.06, 0.22, 0.32)
+
+
+# Kilometres of ground per albedo texel on a body this size.
+func km_per_texel(body_radius_km: float) -> float:
+	return TAU * body_radius_km / 2048.0
+
+
+# How much the MAP should lead, 0..1, from how many texels it still spans across
+# the plate. A measurable quantity, not a taste knob: above four texels the map
+# still carries real information; below it the map is a broad tint and the
+# procedural palette has to carry the detail.
+func map_weight(plate_km: float, body_radius_km: float) -> float:
+	if _a_w <= 0:
+		return 0.0
+	return clampf(plate_km / km_per_texel(body_radius_km) / MAP_FADE_TEXELS, 0.0, 1.0)
+
+
+# Ground colour. The map keeps the evidence - Mare Imbrium dark, the Sahara pale -
+# and the palette supplies the detail the map has no resolution for.
+func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Color:
+	if is_water(dir):
+		return PALETTE_OCEAN
+	var h_m := height_m(dir)
+	var span: float = maxf(max_height_km() * 1000.0, 1.0)
+	var h01 := clampf(h_m / span, 0.0, 1.0)
+	var slope := slope01(dir)
+	var proc: Color = PALETTE_GRASS.lerp(PALETTE_DIRT, clampf(h01 * 2.2, 0.0, 1.0))
+	proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
+	proc = proc.lerp(PALETTE_ROCK, slope * 0.65)
+	var w := map_weight(plate_km, body_radius_km)
+	if w <= 0.0:
+		return proc
+	return proc.lerp(albedo_color(dir), w)
 
 
 func report() -> Dictionary:

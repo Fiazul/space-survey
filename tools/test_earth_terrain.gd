@@ -181,6 +181,35 @@ func _sampler() -> int:
 	failed += _check("two_airless_worlds_are_not_the_same_crust",
 		absf(ms.height_m(probe) - mars.height_m(probe)) > 10.0)
 
+	# GRADE. This is the assertion that was missing when detail was retuned to
+	# ridge scale: amplitude has to be set against the FINEST octave's wavelength,
+	# and at 420 m the Moon came out at a mean grade of 0.85 - 40 degrees
+	# everywhere - which is spikes, not terrain. It also broke the mesh/function
+	# agreement check, because comparing heights at two float32-quantised
+	# directions only matters when the ground is steep.
+	var g_worst := 0.0
+	var g_sum := 0.0
+	var walk := 2000
+	var step_km := 0.04
+	var base_dir := Vector3(0.42, 0.31, 0.85).normalized()
+	var walk_east := base_dir.cross(Vector3.UP).normalized()
+	var g_prev: float = ms.height_m(base_dir)
+	for i in range(1, walk):
+		var wd: Vector3 = (base_dir * MOON_R + walk_east * (step_km * float(i))).normalized()
+		var wh: float = ms.height_m(wd)
+		var grade: float = absf(wh - g_prev) / (step_km * 1000.0)
+		g_worst = maxf(g_worst, grade)
+		g_sum += grade
+		g_prev = wh
+	var g_mean := g_sum / float(walk - 1)
+	# A real mountainside is 0.3-0.7. Mean well under that (most ground is not a
+	# mountainside) but not flat, and a worst that is a cliff rather than a spire.
+	failed += _check("terrain_is_not_flat", g_mean > 0.08)
+	failed += _check("terrain_is_not_spikes", g_mean < 0.5)
+	failed += _check("steepest_ground_is_a_cliff_not_a_spire", g_worst < 2.0)
+
+	print("earth_terrain: grade  Moon over 40 m steps: mean %.3f (%.1f deg), worst %.2f (%.0f deg)"
+		% [g_mean, rad_to_deg(atan(g_mean)), g_worst, rad_to_deg(atan(g_worst))])
 	print("earth_terrain: crust  Moon %+.0f..%+.0f m, mean %+.0f (straddles the datum); Moon seed %.2f vs Mars %.2f"
 		% [m_lo, m_hi, m_mean, float(G.recipe_for({"name": "Moon"}).get("seed", 0.0)),
 		float(G.recipe_for({"name": "Mars"}).get("seed", 0.0))])

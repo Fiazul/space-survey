@@ -689,6 +689,25 @@ static func fbm3(p: Vector3) -> float:
 # crust painted on the globe. Decorative detail can afford fewer: each octave is 8
 # hash() calls (40 sin() at five), and that is the single dominant cost in a ring
 # rebuild. Octaves 4 and 5 contribute at most 9% of the amplitude.
+# RIDGED fbm. Each octave is folded through 1 - |2n - 1|, which turns a smooth
+# blob field into creases with sharp tops. That is what reads as a mountain
+# RIDGELINE rather than as a dune, and it buys the structure that would otherwise
+# need two or three more octaves - each of which is 8 more sin() calls in the
+# single dominant cost of a ring rebuild.
+static func ridged3(p: Vector3, octaves: int) -> float:
+	var a := 0.5
+	var s := 0.0
+	var norm := 0.0
+	var q := p
+	for _i in maxi(octaves, 1):
+		var n := _noise3(q)
+		s += a * (1.0 - absf(2.0 * n - 1.0))
+		norm += a
+		q *= 2.07
+		a *= 0.5
+	return s / maxf(norm, 0.0001)
+
+
 static func fbm3_octaves(p: Vector3, octaves: int) -> float:
 	var a := 0.5
 	var s := 0.0

@@ -88,6 +88,7 @@ var _tris := 0
 var _land_mat: ShaderMaterial
 var _water_mat: ShaderMaterial
 var _base_quad := 0.0          # ring 0's quad size for the current altitude
+var _radius := 1.0             # the body's radius, for the colour palette's texel maths
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -228,6 +229,7 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	if _body != body or _sampler != sampler:
 		bind_body(recipe, sampler)
 		_body = body
+	_radius = radius
 	var hit: Vector3 = ship_pos.normalized() * radius
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	var want_base: float = base_quad_km(alt, radius)
@@ -448,8 +450,11 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 # these altitudes the map is under two texels across the whole ring and carries
 # no detail — see the spec.
 func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
-	if _aimg != null:
-		return _sampler.albedo_color(dir)
+	if _sampler != null:
+		# The palette, weighted by how many albedo texels the ring still spans.
+		# Straight albedo sampling gave ONE flat colour: Earth's map is 19.5 km per
+		# texel and ring 0 at 6 km altitude spans 0.22 of one.
+		return _sampler.surface_color(dir, ring_reach_km(0, _base_quad), _radius)
 	var mixf: float = PlanetGenerator.fbm3(dir * 5.0 + Vector3(_seed, _seed, _seed))
 	return _crust_a.lerp(_crust_b, clampf(mixf, 0.0, 1.0)).lightened(clampf(h - 0.5, 0.0, 0.3))
 
@@ -694,6 +699,8 @@ func normal_report(radius: float) -> Dictionary:
 	var unit := true
 	var max_turn := 0.0
 	var max_tilt := 0.0
+	var turn_sum := 0.0
+	var turn_n := 0
 	for ring in RING_COUNT:
 		var mi: MeshInstance3D = _ring_land[ring]
 		if mi == null or mi.mesh == null or mi.mesh.get_surface_count() == 0:
@@ -710,7 +717,10 @@ func normal_report(radius: float) -> Dictionary:
 			if verts[i].length() > 0.0001 and nv.dot(verts[i].normalized()) < 0.0:
 				inward += 1
 			if i > 0:
-				max_turn = maxf(max_turn, prev.angle_to(nv))
+				var turn: float = prev.angle_to(nv)
+				max_turn = maxf(max_turn, turn)
+				turn_sum += turn
+				turn_n += 1
 			prev = nv
 			# How far the normal leans off the plain RADIAL direction. This is the
 			# number that distinguishes "follows the terrain" from "smooth sphere":
@@ -720,7 +730,8 @@ func normal_report(radius: float) -> Dictionary:
 			if verts[i].length() > 0.0001:
 				max_tilt = maxf(max_tilt, nv.angle_to(verts[i].normalized()))
 	return { "counted": counted, "inward": inward, "unit": unit,
-		"max_neighbour_angle": max_turn, "max_radial_tilt": max_tilt }
+		"max_neighbour_angle": max_turn, "max_radial_tilt": max_tilt,
+		"mean_neighbour_angle": 0.0 if turn_n == 0 else turn_sum / float(turn_n) }
 
 
 # Is this tile reading the given height function? Test hook for the invariant

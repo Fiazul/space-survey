@@ -121,15 +121,22 @@ func _normals() -> int:
 	# OFF the radial where the ground has grade.
 	failed += _check("normals_follow_the_terrain_not_the_sphere",
 		float(n.max_radial_tilt) > 0.01)
-	# ...but not wild: a 50 m quad on real terrain turns by a small angle.
-	failed += _check("normals_are_not_shattered", float(n.max_neighbour_angle) < 1.2)
+	# "Not shattered" is a property of the MEAN, not the maximum. A sharp arete
+	# legitimately creases, so a single 70-degree turn between two vertices is
+	# terrain, not noise - the first version capped the maximum at 1.2 rad and was
+	# just an arbitrary number that fought real ridges. What must stay small is the
+	# typical turn.
+	failed += _check("normals_are_not_shattered",
+		float(n.mean_neighbour_angle) < 0.35)
+	failed += _check("normals_are_not_degenerate", float(n.max_neighbour_angle) < 2.6)
 	# An inverted normal lights the terrain from underneath and the tile reads
 	# inside-out - the kind of thing that looks like a shader bug for an hour.
 	failed += _check("every_normal_points_outward", int(n.inward) == 0)
 	failed += _check("normals_are_unit_length", bool(n.unit))
 
-	print("terrain_light: normals  %d checked over the Himalaya, max neighbour turn %.4f rad, max lean off radial %.4f rad (%.2f deg), %d inward"
-		% [int(n.counted), float(n.max_neighbour_angle), float(n.max_radial_tilt),
+	print("terrain_light: normals  %d over the Himalaya: neighbour turn mean %.1f deg / max %.0f deg, lean off radial max %.1f deg, %d inward"
+		% [int(n.counted), rad_to_deg(float(n.mean_neighbour_angle)),
+		rad_to_deg(float(n.max_neighbour_angle)),
 		rad_to_deg(float(n.max_radial_tilt)), int(n.inward)])
 	patch.free()
 	return failed

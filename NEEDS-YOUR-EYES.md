@@ -1,5 +1,36 @@
 # Needs your eyes
 
+## STANDING PHYSICS NOTE from the user (2026-09-04) — keep this
+
+Verbatim, on a frame at 52 km altitude where the air shell was painting the whole
+sky light blue:
+
+> No, the view in this image does not align with reality.
+>
+> **Sky Brightness in Space:** The background sky is rendered in a bright
+> light-blue color instead of deep pitch-black space. In real low Earth orbit or
+> deep space, space appears pitch black, even on the sunlit side of a planet.
+>
+> **Lack of Atmospheric Scattering in Space:** Light-blue sky illumination
+> requires Rayleigh scattering through a dense planetary atmosphere around the
+> observer. Looking past the edge of a planet from space does not illuminate the
+> vacuum of space itself.
+>
+> **Surface Shadow Contrast:** The dark side (night side) of the planet visible on
+> the bottom-left drops into a total black void, but the sky right next to it
+> remains light blue, which violates basic light propagation and exposure physics
+> in space.
+>
+> **Dynamic Range & Exposure:** If cameras or human eyes expose for a brightly lit
+> sunlit planet curvature, faint background stars remain invisible; conversely, the
+> background vacuum stays black rather than glowing blue.
+
+This is a standing constraint, not a one-off bug report. Any future sky, haze,
+glow or atmosphere work has to satisfy it: **scattering needs air AROUND THE
+OBSERVER along the view ray, and it needs sunlight on that air.** Vacuum is black
+regardless of what is nearby and how brightly it is lit.
+
+
 Things I cannot verify and you can. Everything here renders on **llvmpipe
 software Vulkan** in my environment, so I can prove geometry, ranges, shared
 rules and bounds — never appearance. Delete a line once you've judged it.

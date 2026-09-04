@@ -734,6 +734,9 @@ static func air_shell_material(recipe: Dictionary, spec: Dictionary) -> ShaderMa
 	var warm := sun_warm_for(spec)
 	mat.set_shader_parameter("sun_warm", Vector3(warm.r, warm.g, warm.b))
 	mat.set_shader_parameter("opacity", 0.0)
+	mat.set_shader_parameter("zenith_floor", SKY_ZENITH_FLOOR)
+	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
+	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
 	return mat
 
 
@@ -746,22 +749,64 @@ static func sun_warm_for(spec: Dictionary) -> Color:
 	return c.lerp(Color(1.0, 1.0, 1.0), 0.35)
 
 
-# How much sky there is at this altitude. depth^1.5 so it fades out well before
-# the air does: 0.78 at 15 km of Earth's 100 km column, 0.09 at 80 km. Orbit
-# keeps its black sky, and the band gets a real one.
+# --- Air density, and why it is exponential ---
+# Scattering needs air AROUND THE OBSERVER. The first version of this used
+# pow(1 - alt/atmo_top, 1.5), a linear slab, and it was wrong by two orders of
+# magnitude in the middle of the range: at 52 km it returned 0.333 - a bright
+# sky - where real air density is 0.0022 of sea level, i.e. vacuum. In play that
+# painted the whole sky light blue from 52 km up, including the half of the view
+# pointing away from the planet into space.
+#
+# Air falls off exponentially with a scale height, not linearly to a ceiling.
+# Earth's Rayleigh scale height is ~8.5 km against a 100 km column, so the
+# fraction below is 0.085 and every world with an air column gets the same shape.
+#   0 km  1.000     15 km  0.171     52 km  0.0022
+#   6 km  0.494     30 km  0.029     80 km  0.0001
+# See the standing physics note in NEEDS-YOUR-EYES.md - vacuum is black
+# regardless of how brightly lit the thing next to it is.
+const SCALE_HEIGHT_FRAC := 0.085
+# Sky brightness at the ZENITH relative to the horizon. Looking straight up you
+# see through the thin column above you; along the horizon you look through a far
+# longer slant of the same air. This is the term that makes the vacuum overhead
+# go dark instead of staying blue, which was the second item in the standing
+# physics note. Shared with shaders/air_shell.gdshader as a uniform, so the curve
+# below is the specification and the shader is its mirror.
+const SKY_ZENITH_FLOOR := 0.12
+
+
+# Relative air mass along a view ray, from its dot product with local up.
+# 1.0 along the horizon, SKY_ZENITH_FLOOR straight up.
+static func sky_air_mass(up_dot: float) -> float:
+	return lerpf(1.0, SKY_ZENITH_FLOOR, pow(clampf(up_dot, 0.0, 1.0), 0.65))
+
+
+# Air density at an altitude, as a fraction of the value at the surface.
+static func air_density_at(alt_km: float, atmo_top_km: float) -> float:
+	if atmo_top_km <= 0.0:
+		return 0.0
+	var scale_h: float = maxf(atmo_top_km * SCALE_HEIGHT_FRAC, 0.001)
+	return exp(-maxf(alt_km, 0.0) / scale_h)
+
+
+# How much sky there is at this altitude. Follows the air, so orbit is black and
+# the band has a real sky.
 static func air_shell_opacity(alt_km: float, atmo_top_km: float, air_amount: float) -> float:
 	if atmo_top_km <= 0.0 or air_amount <= 0.0:
 		return 0.0
-	var depth := clampf(1.0 - alt_km / atmo_top_km, 0.0, 1.0)
-	return pow(depth, 1.5) * clampf(air_amount, 0.0, 1.0)
+	return air_density_at(alt_km, atmo_top_km) * clampf(air_amount, 0.0, 1.0)
 
 
-# How much thicker the haze is down low. Flying the deck you look through far
-# more air than you do from the ceiling.
-static func haze_density_at(alt_km: float, ceiling_km: float) -> float:
-	if ceiling_km <= 0.0:
-		return 1.0
-	return lerpf(1.35, 0.7, clampf(alt_km / ceiling_km, 0.0, 1.0))
+# How thick the terrain haze is. Same exponential as the sky, for the same
+# reason: at 30 km there is almost no air to scatter in, so distant ground must
+# go CLEAR rather than staying fogged. `ceiling_km` is no longer used for the
+# falloff and is kept only so the caller need not know the air column.
+static func haze_density_at(alt_km: float, atmo_top_km: float) -> float:
+	if atmo_top_km <= 0.0:
+		return 0.0
+	# 1.35 at the deck, following the air upward. Slightly over 1 low down because
+	# a horizontal ray through dense air passes through more of it than the
+	# vertical density alone implies.
+	return 1.35 * air_density_at(alt_km, atmo_top_km)
 
 
 static func make_ring_material(recipe: Dictionary) -> StandardMaterial3D:

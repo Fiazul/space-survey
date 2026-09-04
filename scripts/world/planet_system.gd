@@ -763,7 +763,9 @@ func _build_air_shell() -> void:
 func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 		recipe: Dictionary, body: String, physical: bool) -> void:
 	if _surface != null and _surface.has_method("set_view"):
-		_surface.set_view(sun_dir, alt_km, ceiling_km)
+		# Haze follows the AIR, not the band ceiling: at 30 km there is almost
+		# nothing to scatter in, so distant ground has to go clear.
+		_surface.set_view(sun_dir, alt_km, eph.atmo_top_km(body))
 	if _air_shell == null:
 		return
 	var air_top: float = eph.atmo_top_km(body)
@@ -783,6 +785,8 @@ func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 	var up: Vector3 = -_rel.get(body, Vector3.ZERO)
 	_air_mat.set_shader_parameter("opacity", opacity)
 	_air_mat.set_shader_parameter("sun_dir", sun_dir.normalized())
+	_air_mat.set_shader_parameter("term_lo", PlanetGenerator.TERMINATOR_LO)
+	_air_mat.set_shader_parameter("term_hi", PlanetGenerator.TERMINATOR_HI)
 	if up.length_squared() > 0.0001:
 		_air_mat.set_shader_parameter("up_dir", up.normalized())
 

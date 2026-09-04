@@ -160,11 +160,17 @@ func _haze() -> int:
 	var e_mat: ShaderMaterial = G.terrain_material(earth, {"spectral": "G"})
 	failed += _check("earth_has_air", float(e_mat.get_shader_parameter("air_amount")) > 0.5)
 
-	# Haze is thicker low down: you look through more air along the deck.
-	var lo: float = G.haze_density_at(0.2, 16.16)
-	var hi: float = G.haze_density_at(16.0, 16.16)
-	failed += _check("haze_is_thicker_low_down", lo > hi)
-	failed += _check("haze_density_stays_sane", lo < 2.0 and hi > 0.4)
+	# Haze follows the AIR, exponentially. The first version faded linearly to the
+	# band ceiling, which left distant ground fogged at 30 km where there is
+	# essentially no air to scatter in.
+	var lo: float = G.haze_density_at(0.2, 100.0)
+	var mid: float = G.haze_density_at(15.0, 100.0)
+	var hi: float = G.haze_density_at(52.0, 100.0)
+	failed += _check("haze_is_thicker_low_down", lo > mid and mid > hi)
+	failed += _check("haze_is_gone_where_there_is_no_air", hi < 0.02)
+	failed += _check("haze_is_present_on_the_deck", lo > 1.0)
+	failed += _check("haze_has_no_air_in_vacuum",
+		is_equal_approx(G.haze_density_at(1.0, 0.0), 0.0))
 
 	# The warm colour comes from the STAR, so a red dwarf's horizon is red with no
 	# per-system table entry.
@@ -178,8 +184,8 @@ func _haze() -> int:
 	failed += _check("scattered_light_is_paler_than_the_star",
 		m_warm.b > G.color_from_spectral("M").b)
 
-	print("terrain_light: haze  %.0f%% at ring 3's %.0f km rim, %.0f%% at 20 km, %.0f%% at 2 km; density %.2f low / %.2f high"
-		% [at_rim * 100.0, rim, at_20 * 100.0, at_2 * 100.0, lo, hi])
+	print("terrain_light: haze  %.0f%% at ring 3's %.0f km rim, %.0f%% at 20 km, %.0f%% at 2 km; air density %.2f at 0.2 km / %.3f at 15 / %.4f at 52"
+		% [at_rim * 100.0, rim, at_20 * 100.0, at_2 * 100.0, lo, mid, hi])
 	return failed
 
 
@@ -188,17 +194,64 @@ func _sky() -> int:
 	var failed := 0
 	const AIR_TOP := 100.0     # Earth's Karman line, Ephemeris.EARTH_ATMO_TOP_KM
 
+	var at_0: float = G.air_shell_opacity(0.0, AIR_TOP, 1.0)
 	var at_5: float = G.air_shell_opacity(5.0, AIR_TOP, 1.0)
 	var at_15: float = G.air_shell_opacity(15.0, AIR_TOP, 1.0)
 	var at_40: float = G.air_shell_opacity(40.0, AIR_TOP, 1.0)
+	var at_52: float = G.air_shell_opacity(52.0, AIR_TOP, 1.0)
 	var at_80: float = G.air_shell_opacity(80.0, AIR_TOP, 1.0)
 
-	# A real sky in the band, black space in orbit - and stars still through it,
-	# which is why this is additive rather than opaque.
-	failed += _check("real_sky_in_the_band", at_15 > 0.5)
-	failed += _check("orbit_keeps_its_black_sky", at_80 < 0.15)
+	# THE ONE THE FIRST VERSION FAILED. Scattering needs air around the OBSERVER,
+	# and air falls off exponentially with a scale height. The linear model
+	# returned 0.333 at 52 km - a bright sky - where the real density is 0.0022,
+	# and in play that painted the whole sky light blue from 52 km up, including
+	# the directions pointing away from the planet into space. See the standing
+	# physics note in NEEDS-YOUR-EYES.md.
+	failed += _check("space_is_black_not_blue", at_52 < 0.01)
+	failed += _check("high_altitude_is_effectively_vacuum", at_80 < 0.001)
+	failed += _check("thirty_km_is_already_nearly_black",
+		G.air_shell_opacity(30.0, AIR_TOP, 1.0) < 0.05)
+	# ...while the band still has a real sky.
+	failed += _check("real_sky_in_the_band", at_15 > 0.1)
+	failed += _check("strong_sky_on_the_deck", at_0 > 0.95)
 	failed += _check("sky_thickens_as_you_descend",
-		at_5 > at_15 and at_15 > at_40 and at_40 > at_80)
+		at_0 > at_5 and at_5 > at_15 and at_15 > at_40 and at_40 > at_52 and at_52 > at_80)
+	# The falloff must be EXPONENTIAL, not linear: halving the altitude must more
+	# than double the density in the thin part of the range. A linear model
+	# cannot satisfy this, which is what makes it a real check and not a restatement.
+	failed += _check("falloff_is_exponential_not_linear",
+		G.air_shell_opacity(10.0, AIR_TOP, 1.0) / at_40 > 20.0)
+
+	# The sky must be dark on the NIGHT side, and the shell has to read the same
+	# terminator the ground and the globe use to know that.
+	var shell_src := FileAccess.get_file_as_string("res://shaders/air_shell.gdshader")
+	failed += _check("night_sky_is_dark",
+		shell_src.find("smoothstep(term_lo, term_hi") >= 0)
+	# AIR MASS ALONG THE RAY, asserted numerically rather than by grepping for an
+	# identifier. The first version of this check only looked for the word
+	# "airmass" in the shader, and a mutation that flattened the curve kept the
+	# word on its usage line and sailed through. The curve now lives in
+	# PlanetGenerator as the specification, is bound to the shader as a uniform,
+	# and its SHAPE is checked here.
+	var zenith: float = G.sky_air_mass(1.0)
+	var horizon: float = G.sky_air_mass(0.0)
+	var mid_sky: float = G.sky_air_mass(0.5)
+	failed += _check("zenith_is_dimmer_than_the_horizon", zenith < horizon)
+	failed += _check("horizon_is_the_full_slant", is_equal_approx(horizon, 1.0))
+	failed += _check("zenith_is_the_shared_floor",
+		is_equal_approx(zenith, G.SKY_ZENITH_FLOOR))
+	failed += _check("air_mass_falls_monotonically_upward",
+		horizon > mid_sky and mid_sky > zenith)
+	# Big enough a difference to actually darken the vacuum overhead: a near-flat
+	# curve is what painted blue sky in every outward direction.
+	failed += _check("air_mass_range_is_wide_enough", horizon / zenith > 5.0)
+	failed += _check("shell_reads_the_shared_floor",
+		shell_src.find("zenith_floor") >= 0)
+	failed += _check("shell_scales_by_air_mass",
+		shell_src.find("* airmass *") >= 0)
+	# NOTE ON LIMITS: a shader's arithmetic cannot be evaluated headlessly. The
+	# curve above is the contract; the shader mirrors it; a shader that fails to
+	# compile shows up as SHADER ERROR in the boot log, not here.
 	failed += _check("sky_is_gone_above_the_air",
 		is_equal_approx(G.air_shell_opacity(AIR_TOP + 1.0, AIR_TOP, 1.0), 0.0))
 	# Vacuum never draws it at all.
@@ -236,8 +289,8 @@ func _sky() -> int:
 	# The real check is the boot log. tools/ has no way to assert on stderr, so
 	# the routine is: godot --headless --quit-after N | grep "SHADER ERROR".
 
-	print("terrain_light: sky  opacity %.2f at 5 km, %.2f at 15, %.2f at 40, %.2f at 80"
-		% [at_5, at_15, at_40, at_80])
+	print("terrain_light: sky  opacity %.3f at 0 km, %.3f at 5, %.3f at 15, %.4f at 40, %.4f at 52, %.5f at 80"
+		% [at_0, at_5, at_15, at_40, at_52, at_80])
 	return failed
 
 

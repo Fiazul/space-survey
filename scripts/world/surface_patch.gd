@@ -618,12 +618,12 @@ func _place_props(xforms: Array[Transform3D], hit: Vector3, east: Vector3, north
 # the right world's ground".
 # Feed the light and air state the shader needs. Called every frame by
 # PlanetSystem, with the SAME sun vector the globe's material receives.
-func set_view(sun_dir: Vector3, alt_km: float, ceiling_km: float) -> void:
+func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 	if _land_mat == null:
 		return
 	var d: Vector3 = sun_dir.normalized() if sun_dir.length_squared() > 0.0001 \
 		else Vector3(0.72, 0.28, 0.63)
-	var density: float = PlanetGenerator.haze_density_at(alt_km, ceiling_km)
+	var density: float = PlanetGenerator.haze_density_at(alt_km, atmo_top_km)
 	for m in [_land_mat, _water_mat]:
 		m.set_shader_parameter("sun_dir", d)
 		m.set_shader_parameter("haze_density", density)

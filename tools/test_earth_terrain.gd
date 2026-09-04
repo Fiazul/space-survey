@@ -14,6 +14,7 @@ extends SceneTree
 
 const G := preload("res://scripts/world/planet_generator.gd")
 const TS := preload("res://scripts/world/terrain_sampler.gd")
+const SP := preload("res://scripts/world/surface_patch.gd")
 
 const EARTH_R := 6371.0
 const MOON_R := 1737.4
@@ -23,6 +24,7 @@ func _initialize() -> void:
 	var failed := 0
 	failed += _encoding()
 	failed += _sampler()
+	failed += _rings()
 	failed += _kill()
 	if failed == 0:
 		print("earth_terrain: OK")
@@ -154,6 +156,111 @@ func _sampler() -> int:
 		% [e_m, d_m, p_m, s.max_height_km(), ms.max_height_km(), TS.DEM_SCALE_M])
 	print("earth_terrain: detail  flank +%.1f m over base; texel walk spans %.0f m with a worst step of %.1f m"
 		% [s.height_m(flank) - s.base_height_m(flank), span, worst_step])
+	return failed
+
+
+# --- Four nested rings --------------------------------------------------------
+func _rings() -> int:
+	var failed := 0
+	var moon := G.recipe_for({"name": "Moon"})
+	var sampler: TerrainSampler = G.terrain_sampler(moon)
+	var patch = SP.new()
+	patch._ready()
+	patch.bind_body(moon, sampler)
+
+	# Ring geometry: 4 rings, each quad 4x the one inside, reaching past 200 km.
+	failed += _check("four_rings", SP.RING_COUNT == 4)
+	failed += _check("ring_0_is_fine", SP.ring_quad_km(0) <= 0.05)
+	failed += _check("each_ring_is_coarser",
+		SP.ring_quad_km(1) > SP.ring_quad_km(0)
+		and SP.ring_quad_km(2) > SP.ring_quad_km(1)
+		and SP.ring_quad_km(3) > SP.ring_quad_km(2))
+	failed += _check("outer_ring_reaches_the_horizon", SP.ring_reach_km(3) > 200.0)
+	failed += _check("rings_have_no_gaps", bool(patch.rings_seal()))
+
+	# Build at 1 km over the Moon.
+	var dir := Vector3(0.42, 0.31, 0.85).normalized()
+	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, moon)
+	var r: Dictionary = patch.report()
+
+	failed += _check("all_rings_built", int(r.rings) == SP.RING_COUNT)
+	failed += _check("rings_committed_geometry", int(r.tris) > 0)
+	# Exact, not a lower bound: skirts live in their own mesh now, so ring 0 is
+	# precisely its grid. A dropped quad or a stray extra triangle shows here.
+	failed += _check("ring_0_is_exactly_its_grid",
+		int(r.ring0_verts) == SP.RING_SEGS * SP.RING_SEGS * 6)
+	failed += _check("airless_world_has_no_water", int(r.ring0_water_verts) == 0)
+	failed += _check("rings_planted_kit_props", int(r.props) > 0)
+
+	# THE assertion. Every committed vertex must sit where the height function
+	# says the ground is. Divergence here means dying in clear air.
+	# The tolerance is FLOAT32 MESH QUANTISATION, not slop. Vertices are stored as
+	# float32 at a 1737 km radius, whose relative precision (~6e-8) is about 10 cm;
+	# Earth's 6371 km radius gives ~38 cm. Measured worst here is 31 cm. That is
+	# 60x smaller than the 20 m contact margin, so it cannot make the kill fire
+	# early — but it is the reason this is not asserted at exactly zero, and it is
+	# the floor under any future attempt to shrink that margin.
+	var err: Dictionary = patch.vertex_error_km(MOON_R)
+	var worst: float = maxf(float(err.over), float(err.under))
+	# BOTH directions. Over-height means the mesh floats above the ground the kill
+	# test uses; under-height means the mesh sits inside it and you watch terrain
+	# pass below you as you die. The first draft measured only over-height, and a
+	# mutation that put the ENTIRE mesh below the ground passed it.
+	failed += _check("mesh_never_floats_above_the_ground", float(err.over) < 0.001)
+	failed += _check("mesh_never_sinks_below_the_ground", float(err.under) < 0.001)
+	failed += _check("mesh_matches_the_height_function", worst < 0.001)
+
+	# Constant budget with altitude is the whole point of rings: detail and reach
+	# stop competing. A single plate had to trade one for the other.
+	var tris_low := int(r.tris)
+	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, moon)
+	var tris_high := int(patch.report().tris)
+	failed += _check("triangle_budget_is_constant_with_altitude", tris_low == tris_high)
+	failed += _check("triangle_budget_is_within_range",
+		tris_low > 15000 and tris_low < 60000)
+
+	# The donut must actually remove the overlap, and this has to be asserted
+	# DIRECTLY. A total-triangle bound cannot see it: the holes remove ~1536
+	# triangles while the skirts add ~2048, so the total (33466) sits ABOVE four
+	# ungapped grids (32768) and any budget assertion passes with no holes at all.
+	# So compare rings against each other instead: every ring is the same 64x64
+	# resolution, and rings 1-3 drop the footprint of the ring inside them, so
+	# they must each commit fewer vertices than ring 0's full grid.
+	var full_grids := SP.RING_COUNT * SP.RING_SEGS * SP.RING_SEGS * 2
+	var rv: PackedInt32Array = r.ring_verts
+	failed += _check("every_ring_reports_vertices", rv.size() == SP.RING_COUNT)
+	if rv.size() == SP.RING_COUNT:
+		failed += _check("ring_1_is_holed", rv[1] < rv[0])
+		failed += _check("ring_2_is_holed", rv[2] < rv[0])
+		failed += _check("ring_3_is_holed", rv[3] < rv[0])
+		# The hole is a quarter of the ring's half-extent on a side, so it should
+		# remove about a sixteenth of the grid — not a sliver, and not half of it.
+		var cut := 1.0 - float(rv[1]) / float(rv[0])
+		failed += _check("the_hole_is_about_a_sixteenth", cut > 0.03 and cut < 0.12)
+
+	# Ring 0 sits ON the Moon and stays local — it must not be a whole sphere.
+	var box: AABB = r.ring0_aabb
+	var near: float = box.position.length()
+	failed += _check("ring_0_sits_on_the_moons_shell", near > MOON_R * 0.9)
+	failed += _check("ring_0_is_local_not_global",
+		box.size.x < MOON_R and box.size.y < MOON_R and box.size.z < MOON_R)
+	# ...and it must span about its stated reach, so ring_reach_km is not a lie.
+	var span: float = maxf(box.size.x, maxf(box.size.y, box.size.z))
+	failed += _check("ring_0_spans_its_stated_reach",
+		span > SP.ring_reach_km(0) * 0.6 and span < SP.ring_reach_km(0) * 1.6)
+
+	# Props still cover the ring rather than one corner of it.
+	var cover: Vector2 = r.prop_cover
+	failed += _check("props_cover_ring_0",
+		minf(cover.x, cover.y) > SP.ring_reach_km(0) * 0.7)
+
+	print("earth_terrain: rings  %d rings, %d tris (4 ungapped grids = %d; holes -1.5k, skirts +2k), quads %.3f/%.3f/%.3f/%.3f km, reach %.1f km"
+		% [int(r.rings), tris_low, full_grids, SP.ring_quad_km(0), SP.ring_quad_km(1),
+		SP.ring_quad_km(2), SP.ring_quad_km(3), SP.ring_reach_km(3)])
+	print("earth_terrain: rings  verts per ring %s (ring1 is %.1f%% holed), %d props cover %.2fx%.2f of %.2f km, worst vertex error %.2f m over/under (float32 noise)"
+		% [str(rv), (1.0 - float(rv[1]) / float(rv[0])) * 100.0, int(r.props),
+		cover.x, cover.y, SP.ring_reach_km(0), worst * 1000.0])
+	patch.free()
 	return failed
 
 

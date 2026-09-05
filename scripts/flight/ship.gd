@@ -1,6 +1,7 @@
 class_name Ship
 extends Node3D
 
+const WEDGE_DESIGN := preload("res://scripts/flight/wedge_fighter.gd")
 const _FM := preload("res://scripts/flight/flight_mode.gd")
 # Player ship: loads a swappable GLB/OBJ (see SHIP_MODELS — the Class II cruiser
 # is the default), with speed-reactive authored propulsion meshes and arcade 6DOF
@@ -35,6 +36,8 @@ const SHIP_MODELS := [
 	# chunks; the first two are the actual boosters and all five take the existing
 	# HDR propulsion shader.
 	{ "name": "SpaceShip", "path": "res://assets/jazoone_spaceship/spaceship.glb", "length": 0.90, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.84, "hp": 210, "bolt_scale": 1.3, "bolt_speed": 1280.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 155.0, "energy_use": 0.74, "warp": 118.0, "light_accent": Color(0.32, 0.70, 1.0), "light_energy": 0.36, "jazoone_spaceship": true, "color_pick": false, "default_color": "silver" },
+	# Selene: ceramic interceptor with authored twin engines and exhaust.
+	{ "name": "Selene", "path": "res://assets/wedge_fighter/wedge_fighter.glb", "length": 0.72, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 1.08, "hp": 155, "bolt_scale": 0.9, "bolt_speed": 1500.0, "fire_cd": 0.075, "dmg": 2, "energy_max": 135.0, "energy_use": 0.62, "warp": 130.0, "light_accent": Color(0.16, 0.70, 1.0), "light_energy": 0.35, "wedge_fighter": true, "color_pick": false, "default_color": "gold" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.
@@ -1286,8 +1289,11 @@ func _build_ship_model(idx: int) -> void:
 		_authored_propulsion = ShipMesh.style_dingo57_starship(model)
 	elif info.get("jazoone_spaceship", false):
 		_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)
+	elif info.get("wedge_fighter", false):
+		_authored_propulsion = WEDGE_DESIGN.style(model)
 	var picked_palette := _palette_for(_color_for(info.name, info))
-	ShipMesh.color_authored_ship(model, picked_palette.swatch, _finish_for(info.name))
+	if not info.get("wedge_fighter", false):
+		ShipMesh.color_authored_ship(model, picked_palette.swatch, _finish_for(info.name))
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM

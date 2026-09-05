@@ -80,13 +80,14 @@ static func gather_mesh_instances(node: Node) -> Array[MeshInstance3D]:
 	return out
 
 
-# Union of every child MeshInstance3D's AABB, expressed in `root`'s local space.
+# Union of child mesh bounds in root space. Authored FX can opt out with
+# ship_bounds_exclude so throttle geometry never changes the fitted hull size.
 static func combined_aabb(root: Node3D) -> AABB:
 	var out := AABB()
 	var first := true
 	var inv := root.global_transform.affine_inverse()
 	for mi in gather_mesh_instances(root):
-		if mi.mesh == null:
+		if mi.mesh == null or mi.get_meta("ship_bounds_exclude", false):
 			continue
 		var box := (inv * mi.global_transform) * mi.get_aabb()
 		if first:

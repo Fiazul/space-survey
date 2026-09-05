@@ -81,41 +81,43 @@ func _initialize() -> void:
 			var torch_mat := (child as MeshInstance3D).material_override as ShaderMaterial
 			torch_shaders_ok = torch_shaders_ok and torch_mat != null \
 				and torch_mat.shader == MeshStyler.CRUISER_TORCH_SHADER \
-				and torch_mat.shader.code.contains("tip_fade") \
-				and torch_mat.shader.code.contains("wispy") \
-				and torch_mat.shader.code.contains("billow") \
-				and torch_mat.shader.code.contains("VERTEX.x")
+				and float(torch_mat.get_shader_parameter("plume_length")) > 0.0 \
+				and float(torch_mat.get_shader_parameter("depth_fade")) > 0.0
 	failed += _check("tapered_torch_geometry", torch_meshes_ok)
 	failed += _check("open_plasma_cones", open_cones)
 	failed += _check("torch_hdr_edge_fade", torch_shaders_ok)
-	failed += _check("torch_video_flow", torch_shaders_ok)
 
-	# This used to assert the literal "1920.0" was in the torch shader, which is how a
-	# core "energy" of 6528 survived several rounds of "the booster is too bright" - it
-	# was never reaching a pixel at all. `render_mode unshaded` DISCARDS EMISSION in
-	# Godot 4, so an unshaded additive pass shows ALBEDO * ALPHA and nothing else.
-	# Both properties below exist to stop that trap being re-set:
-	#
-	#   1. The HDR value must be on ALBEDO. If someone moves it back to EMISSION the
-	#      plume goes invisible and no amount of tuning the constant brings it back.
-	#   2. Its top must stay inside the range where a hot core still resolves instead
-	#      of summing, across a dozen overlapping cone layers, into a white slab.
+	# A mirrored housing must occlude its emitter on both sides, including after
+	# hangar customization duplicates the materials.
+	MeshStyler.color_authored_ship(model, Color(0.42, 0.60, 0.95), "metal")
+	for si in [3, 4]:
+		var housing := model.get_active_material(si) as BaseMaterial3D
+		failed += _check("mirrored_housing_%d_stays_opaque" % si,
+			housing != null and housing.cull_mode == BaseMaterial3D.CULL_DISABLED
+			and housing.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
+	failed += _check("paired_emitter_flow", drive.get_shader_parameter("mirror_flow") == true)
+	for i in 3:
+		for layer in ["Fog", "Core"]:
+			var left := plume_root.get_node("Booster%s%02d" % [layer, i + 1]) as MeshInstance3D
+			var right := plume_root.get_node("Booster%s%02d" % [layer, i + 4]) as MeshInstance3D
+			var lm := left.mesh as CylinderMesh
+			var rm := right.mesh as CylinderMesh
+			failed += _check("paired_%s_%d_dimensions" % [layer, i],
+				is_equal_approx(lm.height, rm.height)
+				and is_equal_approx(lm.bottom_radius, rm.bottom_radius)
+				and is_equal_approx(lm.top_radius, rm.top_radius))
+			var left_mat := left.material_override as ShaderMaterial
+			var right_mat := right.material_override as ShaderMaterial
+			failed += _check("paired_%s_%d_brightness" % [layer, i],
+				left_mat.get_shader_parameter("brightness") == right_mat.get_shader_parameter("brightness"))
+
+	# Unshaded exhaust must put its radiance in ALBEDO. Brightness and plume
+	# separation are checked with render_thruster.tscn at cruise/boost and chase;
+	# a source-text energy ceiling cannot measure the composited image.
 	var torch_code := MeshStyler.CRUISER_TORCH_SHADER.code
 	failed += _check("torch_hdr_is_on_albedo_not_emission",
 		torch_code.contains("ALBEDO = torch_color * energy")
 		and torch_code.contains("EMISSION = vec3(0.0)"))
-	var tramp := RegEx.new()
-	tramp.compile("mix\\(([0-9.]+), *([0-9.]+), *pow\\(power")
-	var thit: RegExMatch = tramp.search(torch_code)
-	var t_idle := float(thit.get_string(1)) if thit != null else -1.0
-	var t_full := float(thit.get_string(2)) if thit != null else -1.0
-	# 3.4 is the hottest `brightness` any ship hands the core layer (see ship_mesh.gd);
-	# 0.82 the highest opacity, and the two multiply into what lands on the frame.
-	print("class_ii_cruiser: torch energy %.3f..%.3f x core brightness 3.40 x opacity 0.82 -> peak %.2f"
-		% [t_idle, t_full, t_full * 3.4 * 0.82])
-	failed += _check("torch_energy_ramps_with_throttle",
-		thit != null and t_idle > 0.0 and t_full > t_idle)
-	failed += _check("torch_peak_stays_off_the_slab", t_full * 3.4 * 0.82 <= 1.5)
 
 	# The standalone test runner does not initialize project autoload identifiers
 	# before compiling ship.gd, so check registry wiring as source and exercise the

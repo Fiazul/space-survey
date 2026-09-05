@@ -15,10 +15,15 @@ uniform float temperature : hint_range(0.0, 1.0) = 1.0;
 uniform float power : hint_range(0.0, 1.0) = 0.45;
 uniform float flow_speed : hint_range(0.0, 6.0) = 1.4;
 uniform float brightness : hint_range(0.5, 4.0) = 4.0;
+uniform bool mirror_flow = false;
+uniform float symmetry_center_x = 0.0;
 varying vec3 local_position;
 
 void vertex() {
 	local_position = VERTEX;
+	if (mirror_flow) {
+		local_position.x = abs(VERTEX.x - symmetry_center_x);
+	}
 }
 
 void fragment() {

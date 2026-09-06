@@ -96,9 +96,20 @@ const SNARKRANS_BOOSTER_GAIN := 3.02
 # against. Peak at full boost: 1.29 broad, 1.94 at the very centre.
 const JAZOONE_BOOSTER_GAIN := 0.40
 
+# SYMMETRISED. These were recovered from the emissive mask by a blob probe, and the
+# blobs it found did not agree: the port socket sat 0.846 HIGHER than the starboard
+# one - more than a full nozzle radius (0.818) - and 1.198 out from the centreline
+# against the other's 0.855. Two engines at different heights read as a ship whose
+# exhaust is rotated, which is exactly how it looked in play: angled, one side heavy.
+#
+# The hull is bilaterally symmetric. Measured in this socket space (the hull scaled
+# by ~1/35, which is what makes it the ~12-unit ship described below), its centre
+# sits at x = -0.008 - zero to within 0.14% of its own width. So the engines belong
+# at +/- the same offset, at the same height and the same depth. y, z and radius are
+# the mean of the two probed blobs; x is the mean of their distances from centre.
 const JAZOONE_BOOSTER_SOCKETS := [
-	{ "center": Vector3(0.85526, -0.14978, 3.83112), "radius": 0.81380 },
-	{ "center": Vector3(-1.19826, 0.69599, 3.69080), "radius": 0.82240 },
+	{ "center": Vector3(1.02676, 0.27311, 3.76096), "radius": 0.81810 },
+	{ "center": Vector3(-1.02676, 0.27311, 3.76096), "radius": 0.81810 },
 ]
 
 # --- THE booster brightness knob -------------------------------------------------
@@ -340,7 +351,7 @@ static func add_class_ii_booster_plumes(model: Node3D,
 		# Outer haze: longer and wider, but dimmer and translucent at the edge.
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.5, 1.18, 0.18, 1.25, 0.55, 0.42, false, -1.0, world_scale))
+			radius * 9.5, 0.666667, 0.18, 1.25, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
 			radius * 5.8, 0.58, 0.05, 3.40, 0.82, 0.995, true, -1.0, world_scale))
@@ -356,7 +367,7 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 		center: Vector3, socket_radius: float, length: float, base_ratio: float,
 		tip_ratio: float, brightness: float, opacity: float,
 		white_mix: float, core_layer := false, facing := -1.0,
-		world_scale := 1.0, seat_offset := 0.12) -> ShaderMaterial:
+		world_scale := 1.0) -> ShaderMaterial:
 	var cone := CylinderMesh.new()
 	cone.height = length
 	# A broad, faint sheath supplies local cyan glow without scene-wide bloom.
@@ -388,6 +399,12 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 	material.set_shader_parameter("turbulence", 1.0)
 	material.set_shader_parameter("length_scale", 1.0)
 	material.set_shader_parameter("flare_scale", 1.0)
+	# Pin the width at the ROOT to the authored radius, fleet-wide. Without this the
+	# turbulence billow swells the mouth of the cone, so the plume visibly overhangs
+	# the nozzle it is supposed to be coming out of. base_basic set this on its own
+	# materials and was the only ship that read as exhaust rather than a glow stuck
+	# to the hull; it belongs on every torch layer, so it lives here now.
+	material.set_shader_parameter("lock_nozzle_width", true)
 	material.set_shader_parameter("depth_fade",
 		socket_radius * base_ratio * world_scale * 0.85)
 
@@ -399,7 +416,14 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 	# Cylinder +Y becomes local -Z (or +Z when facing is +1). Its base end sits
 	# exactly behind the authored patch while the narrow tip extends away from the ship.
 	plume.rotation = Vector3(deg_to_rad(90.0 * facing), 0.0, 0.0)
-	plume.position = center + Vector3(0.0, 0.0, facing * (length * 0.5 + seat_offset))
+	# Seat the cone slightly INSIDE the nozzle, by a fraction of the nozzle itself.
+	# This used to default to an absolute 0.12, which is 1.4% of class_ii's 8.6-unit
+	# socket but 15% of jazoone's 0.82 - so on the small-socket ships it shoved the
+	# plume OUT of its housing and the exhaust read as a glow floating off the hull
+	# rather than something leaving the engine. base_basic was the only ship passing
+	# a radius-relative value, and the only one that looked seated. Now they all are.
+	var seat: float = -socket_radius * 0.12
+	plume.position = center + Vector3(0.0, 0.0, facing * (length * 0.5 + seat))
 	# The vertex stage stretches this mesh up to length_scale past its authored AABB.
 	# Without a cull margin Godot culls the whole plume the moment the un-stretched
 	# box leaves the frustum, which pops the engines off at high throttle.
@@ -617,7 +641,7 @@ static func add_snarkrans_booster_plumes(model: Node3D,
 			plume_root, "BoosterFill%02d" % (i + 1), center, radius))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.8, 1.22, 0.20, 1.30, 0.55, 0.42, false, -1.0, world_scale))
+			radius * 9.8, 0.666667, 0.20, 1.30, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
 			radius * 6.0, 0.60, 0.05, 3.50, 0.82, 0.998, true, -1.0, world_scale))
@@ -727,14 +751,13 @@ static func add_base_basic_booster_plumes(model: Node3D,
 		# 6.0 / 3.6 put it alongside class_ii at 26% / 16%.
 		materials.append(_add_torch_layer(rig, "BoosterFog%d" % sockets.size(),
 			center, radius, radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42,
-			false, -1.0, model.scale.x, -radius * 0.12))
+			false, -1.0, model.scale.x))
 		materials.append(_add_torch_layer(rig, "BoosterCore%d" % sockets.size(),
 			center, radius, radius * 3.6, 0.90, 0.05, 3.20, 0.82, 0.995,
-			true, -1.0, model.scale.x, -radius * 0.12))
-	for material in materials:
-		material.set_shader_parameter("lock_nozzle_width", true)
-	# The generic haze is nearly twice the socket radius and obscures these rims.
-	# Keep this compact engine's two plasma layers seated directly in its outlets.
+			true, -1.0, model.scale.x))
+	# lock_nozzle_width and the radius-relative seating that used to be set here, and
+	# only here, are now _add_torch_layer's behaviour for every ship - which is what
+	# made this the one engine that read as exhaust leaving a nozzle.
 	return materials
 
 
@@ -888,7 +911,7 @@ static func add_jazoone_booster_plumes(model: Node3D,
 		var radius: float = float(socket.radius)
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 6.8, 1.10, 0.18, 1.22, 0.55, 0.42, false, 1.0, world_scale))
+			radius * 6.8, 0.666667, 0.18, 1.22, 0.55, 0.42, false, 1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
 			radius * 4.2, 0.54, 0.05, 3.30, 0.82, 0.995, true, 1.0, world_scale))

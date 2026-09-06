@@ -26,10 +26,16 @@ void fragment() {
 	float shell = smoothstep(0.30, 0.38, x) * (1.0 - armor);
 	vec3 paint = mix(graphite, ceramic, shell * top);
 	paint = mix(paint, vec3(0.07, 0.12, 0.15), armor);
-	float sweep = x + z * 0.28;
-	float copper_stripe = band(sweep, 0.76, 0.86) * band(z, -2.8, 2.8);
-	float wing_flash = band(z + x * 0.32, -1.20, -0.88) * wing;
-	paint = mix(paint, copper, max(copper_stripe, wing_flash) * top);
+	// Paired canopy accents stay on the main hull, clear of raised armor.
+	// Mirror the same curve about the centreline rather than crossing panels.
+	float arc_x = 0.46 + 0.09 * (z - 0.35) * (z - 0.35);
+	float arc_end = smoothstep(-0.45, -0.20, z) * (1.0 - smoothstep(0.95, 1.20, z));
+	float arc = (1.0 - smoothstep(0.009, 0.018, abs(x - arc_x))) * arc_end;
+	arc *= (1.0 - wing) * (1.0 - armor);
+	float wing_accent = band(z + x * 0.32, -1.10, -1.065) * wing;
+	wing_accent *= smoothstep(1.85, 2.05, x) * (1.0 - smoothstep(3.15, 3.30, x));
+	float accent = max(arc, wing_accent) * top;
+	paint = mix(paint, vec3(0.18, 0.62, 0.72), accent);
 	// Sparse panel breaks, interrupted at the spine; no repeating noise texture.
 	float seam = band(z, -2.36, -2.34) + band(z, -0.72, -0.70) + band(z, 1.55, 1.57);
 	seam *= smoothstep(0.42, 0.5, x) * top;
@@ -57,5 +63,5 @@ void fragment() {
 	ALBEDO = paint;
 	METALLIC = mix(0.58, 0.28, shell * top);
 	ROUGHNESS = mix(0.34, 0.42, shell * top);
-	EMISSION = vec3(0.08, 0.55, 0.8) * rail * 1.8;
+	EMISSION = vec3(0.08, 0.55, 0.8) * (rail * 1.8 + accent * 0.35);
 }

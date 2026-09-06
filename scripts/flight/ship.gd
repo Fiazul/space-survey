@@ -29,9 +29,8 @@ const SHIP_MODELS := [
 	# Snarkrans Starship — its OBJ split preserves .000 plus .010_...018 as the
 	# upper booster, and .005_...035 plus .001_...034 as the lower twin boosters.
 	{ "name": "Snarkrans Starship", "path": "res://assets/snarkrans_starship/spaceship.obj", "length": 0.82, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 190, "bolt_scale": 1.2, "bolt_speed": 1400.0, "fire_cd": 0.08, "dmg": 3, "energy_max": 145.0, "energy_use": 0.76, "warp": 125.0, "light_accent": Color(0.30, 0.62, 1.0), "light_energy": 0.38, "snarkrans_starship": true, "color_pick": true, "default_color": "graphite" },
-	# Dingo57 Starship — all eight user-identified rear groups remain authored geometry;
-	# their surfaces are replaced by torch-bright, edge-faded propulsion emission.
-	{ "name": "Dingo57 Starship", "path": "res://assets/dingo57_starship/3d-model.obj", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "dingo57_starship": true, "color_pick": true, "default_color": "ash" },
+	# Base Basic PBR — root.1 and root.3 are the authored twin boosters.
+	{ "name": "Base Basic PBR", "path": "res://assets/base_basic_pbr.glb", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "base_basic_pbr": true, "color_pick": false, "default_color": "silver" },
 	# SpaceShip — JazOone / Sketchfab CC-BY. Layer_1 is five Layer_1_Material_0
 	# chunks; the first two are the actual boosters and all five take the existing
 	# HDR propulsion shader.
@@ -1285,14 +1284,14 @@ func _build_ship_model(idx: int) -> void:
 		_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)
 	elif info.get("snarkrans_starship", false):
 		_authored_propulsion = ShipMesh.style_snarkrans_starship(model)
-	elif info.get("dingo57_starship", false):
-		_authored_propulsion = ShipMesh.style_dingo57_starship(model)
+	elif info.get("base_basic_pbr", false):
+		_authored_propulsion = ShipMesh.style_base_basic_pbr(model)
 	elif info.get("jazoone_spaceship", false):
 		_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)
 	elif info.get("wedge_fighter", false):
 		_authored_propulsion = WEDGE_DESIGN.style(model)
 	var picked_palette := _palette_for(_color_for(info.name, info))
-	if not info.get("wedge_fighter", false):
+	if not info.get("wedge_fighter", false) and not info.get("base_basic_pbr", false):
 		ShipMesh.color_authored_ship(model, picked_palette.swatch, _finish_for(info.name))
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
@@ -1307,8 +1306,8 @@ func _build_ship_model(idx: int) -> void:
 		plumes = ShipMesh.add_class_ii_booster_plumes(model)
 	elif info.get("snarkrans_starship", false):
 		plumes = ShipMesh.add_snarkrans_booster_plumes(model)
-	elif info.get("dingo57_starship", false):
-		plumes = ShipMesh.add_dingo57_booster_plumes(model)
+	elif info.get("base_basic_pbr", false):
+		plumes = ShipMesh.add_base_basic_booster_plumes(model)
 	elif info.get("jazoone_spaceship", false):
 		plumes = ShipMesh.add_jazoone_booster_plumes(model)
 	# Torch cones are the only layer whose GEOMETRY reacts to throttle, so they are

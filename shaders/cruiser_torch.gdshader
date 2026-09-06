@@ -27,6 +27,7 @@ uniform float tip_radius = 0.2;
 // Live throttle shaping. 1.0 = the authored mesh size.
 uniform float length_scale : hint_range(0.05, 3.0) = 1.0;
 uniform float flare_scale : hint_range(0.2, 3.0) = 1.0;
+uniform bool lock_nozzle_width = false;
 // Shock train is a core-layer feature; the outer fog sheath passes 0.0.
 uniform float shock_strength : hint_range(0.0, 6.0) = 0.0;
 uniform float temperature : hint_range(0.0, 1.0) = 1.0;
@@ -66,16 +67,19 @@ void vertex() {
 	float billow = textureLod(noise_tex, buv, 0.0).g * 2.0 - 1.0;
 	billow += (textureLod(noise_tex, buv * 2.3 + vec2(0.31, 0.17), 0.0).r * 2.0 - 1.0) * 0.5;
 	float flare = mix(0.015, 0.16, a) * turbulence;
-	float swell = 1.0 + billow * flare;
-	VERTEX.x *= swell * flare_scale;
-	VERTEX.z *= swell * flare_scale;
+	float root_blend = lock_nozzle_width ? smoothstep(0.0, 0.22, a) : 1.0;
+	float swell = 1.0 + billow * flare * root_blend;
+	float width_scale = mix(1.0, flare_scale, root_blend);
+	VERTEX.x *= swell * width_scale;
+	VERTEX.z *= swell * width_scale;
 	local_position = VERTEX;
 	axial = a;
 }
 
 void fragment() {
 	float a = axial;
-	float max_r = mix(base_radius, tip_radius, a) * flare_scale;
+	float width_scale = mix(1.0, flare_scale, lock_nozzle_width ? smoothstep(0.0, 0.22, a) : 1.0);
+	float max_r = mix(base_radius, tip_radius, a) * width_scale;
 	float radial_n = length(vec2(local_position.x, local_position.z)) / max(max_r, 0.001);
 	float tip_fade = 1.0 - smoothstep(0.25, 1.0, a);
 	float radial_fade = mix(1.0, 0.55, clamp(radial_n, 0.0, 1.0));

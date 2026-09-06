@@ -17,6 +17,10 @@ uniform float flow_speed : hint_range(0.0, 6.0) = 1.4;
 uniform float brightness : hint_range(0.5, 4.0) = 4.0;
 uniform bool mirror_flow = false;
 uniform float symmetry_center_x = 0.0;
+// Optional rear-rim glow for complete engine housings; legacy patches use all faces.
+uniform bool rear_only = false;
+uniform float rear_start = 0.0;
+uniform float rear_band = 0.04;
 varying vec3 local_position;
 
 void vertex() {
@@ -27,6 +31,9 @@ void vertex() {
 }
 
 void fragment() {
+	if (rear_only && local_position.z > rear_start + rear_band) {
+		discard;
+	}
 	float facing = abs(dot(normalize(NORMAL), normalize(VIEW)));
 	float edge_softness = smoothstep(0.02, 0.72, facing);
 	float visibility = mix(0.58, 1.0, edge_softness);

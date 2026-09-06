@@ -231,7 +231,7 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 		center: Vector3, socket_radius: float, length: float, base_ratio: float,
 		tip_ratio: float, brightness: float, opacity: float,
 		white_mix: float, core_layer := false, facing := -1.0,
-		world_scale := 1.0) -> ShaderMaterial:
+		world_scale := 1.0, seat_offset := 0.12) -> ShaderMaterial:
 	var cone := CylinderMesh.new()
 	cone.height = length
 	# A broad, faint sheath supplies local cyan glow without scene-wide bloom.
@@ -274,7 +274,7 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 	# Cylinder +Y becomes local -Z (or +Z when facing is +1). Its base end sits
 	# exactly behind the authored patch while the narrow tip extends away from the ship.
 	plume.rotation = Vector3(deg_to_rad(90.0 * facing), 0.0, 0.0)
-	plume.position = center + Vector3(0.0, 0.0, facing * (length * 0.5 + 0.12))
+	plume.position = center + Vector3(0.0, 0.0, facing * (length * 0.5 + seat_offset))
 	# The vertex stage stretches this mesh up to length_scale past its authored AABB.
 	# Without a cull margin Godot culls the whole plume the moment the un-stretched
 	# box leaves the frustum, which pops the engines off at high throttle.
@@ -523,6 +523,77 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	plug.position = center + Vector3(0.0, 0.0, -plug_depth * 0.5 - 0.015)
 	parent.add_child(plug)
 	return material
+
+
+# The supplied GLB names its two engine meshes root.1 and root.3. Match authored
+# names, never traversal order, and preserve the other four PBR textures with a subtle shadow lift.
+static func style_base_basic_pbr(model: Node3D) -> Array[ShaderMaterial]:
+	var materials: Array[ShaderMaterial] = []
+	for mi in gather_mesh_instances(model):
+		if mi.mesh == null:
+			continue
+		if String(mi.name) not in ["root.1", "root.3", "root_1", "root_3"]:
+			for si in mi.mesh.get_surface_count():
+				var source := mi.get_active_material(si) as BaseMaterial3D
+				if source == null:
+					continue
+				var hull := source.duplicate() as BaseMaterial3D
+				# A low neutral fill keeps the unlit underside readable without
+				# removing its authored albedo, normal, or metallic/roughness maps.
+				hull.emission_enabled = true
+				hull.emission = Color(0.16, 0.18, 0.22)
+				hull.emission_energy_multiplier = 0.45
+				mi.set_surface_override_material(si, hull)
+			continue
+		for si in mi.mesh.get_surface_count():
+			var drive := ShaderMaterial.new()
+			drive.shader = CRUISER_PROPULSION_SHADER
+			drive.set_shader_parameter("plasma_color", Color.WHITE)
+			drive.set_shader_parameter("brightness", 1.6)
+			var bounds := mi.get_aabb()
+			drive.set_shader_parameter("rear_only", true)
+			drive.set_shader_parameter("rear_start", bounds.position.z)
+			drive.set_shader_parameter("rear_band", bounds.size.z * 0.10)
+			var source := mi.get_active_material(si) as BaseMaterial3D
+			if source != null:
+				var housing := source.duplicate() as BaseMaterial3D
+				housing.next_pass = drive
+				mi.set_surface_override_material(si, housing)
+			materials.append(drive)
+	return materials
+
+
+static func add_base_basic_booster_plumes(model: Node3D,
+		accent := Color(0.35, 0.68, 1.0)) -> Array[ShaderMaterial]:
+	var materials: Array[ShaderMaterial] = []
+	var sockets: Array = []
+	var rig := Node3D.new()
+	rig.name = "BaseBasicAuthoredBoosterPlumes"
+	model.add_child(rig)
+	var inv := model.global_transform.affine_inverse()
+	for mi in gather_mesh_instances(model):
+		if String(mi.name) not in ["root.1", "root.3", "root_1", "root_3"] or mi.mesh == null:
+			continue
+		var box: AABB = (inv * mi.global_transform) * mi.get_aabb()
+		# Both engines face local -Z; yaw 180 presents their exhaust aft in game.
+		var center := Vector3(box.get_center().x, box.get_center().y, box.position.z)
+		# The rear outlet is narrower than the complete engine housing.
+		# Measured rear lip spans ~0.164 x 0.182 in the supplied GLB.
+		var radius := 0.082
+		center.x = 0.169 if box.get_center().x > 0.0 else -0.169
+		center.y = 0.233
+		sockets.append({"center": center, "radius": radius})
+		materials.append(_add_torch_layer(rig, "BoosterFog%d" % sockets.size(),
+			center, radius, 0.90, 0.666667, 0.10, 1.20, 0.55, 0.42,
+			false, -1.0, model.scale.x, -radius * 0.12))
+		materials.append(_add_torch_layer(rig, "BoosterCore%d" % sockets.size(),
+			center, radius, 0.55, 0.90, 0.05, 3.20, 0.82, 0.995,
+			true, -1.0, model.scale.x, -radius * 0.12))
+	for material in materials:
+		material.set_shader_parameter("lock_nozzle_width", true)
+	# The generic haze is nearly twice the socket radius and obscures these rims.
+	# Keep this compact engine's two plasma layers seated directly in its outlets.
+	return materials
 
 
 static func add_dingo57_booster_plumes(model: Node3D,

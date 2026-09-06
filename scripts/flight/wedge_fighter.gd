@@ -111,8 +111,8 @@ static func _add_details(model: Node3D) -> void:
 		_box(rig, "Intake", Vector3(side * 0.78, 0.50, -1.62), Vector3(0.42, 0.12, 1.1), dark)
 		for i in 7:
 			_box(rig, "CoolingVane", Vector3(side * 0.78, 0.57, -2.04 + i * 0.14), Vector3(0.34, 0.025, 0.045), silver)
-		_box(rig, "IntakeLip", Vector3(side * 0.78, 0.54, -1.04), Vector3(0.46, 0.13, 0.07), copper)
-		# Swept dorsal stabilizer with a copper leading edge.
+		_box(rig, "IntakeLip", Vector3(side * 0.78, 0.54, -1.04), Vector3(0.46, 0.13, 0.07), silver)
+		# Swept dorsal stabilizer with a fine silver leading edge.
 		var fin := SurfaceTool.new()
 		fin.begin(Mesh.PRIMITIVE_TRIANGLES)
 		var a := Vector3(side * 1.15, 0.32, -2.65)
@@ -126,12 +126,11 @@ static func _add_details(model: Node3D) -> void:
 		node.mesh = fin.commit()
 		node.material_override = dark
 		rig.add_child(node)
-		var rail := _box(rig, "FinEdge", (b + c) * 0.5, Vector3(0.025, 0.025, b.distance_to(c)), copper)
+		var rail := _box(rig, "FinEdge", (b + c) * 0.5, Vector3(0.018, 0.018, b.distance_to(c)), silver)
 		rail.basis = Basis.looking_at(c - b, Vector3.UP)
 		# Short paired forward weapon rails, not floating full-length barrels.
 		_box(rig, "WeaponRail", Vector3(side * 1.52, 0.18, -0.55), Vector3(0.13, 0.12, 1.15), dark)
 		_box(rig, "WeaponStatus", Vector3(side * 1.52, 0.25, -0.30), Vector3(0.035, 0.014, 0.26), cyan)
-		_box(rig, "NoseTrim", Vector3(side * 0.23, 0.61, 1.60), Vector3(0.028, 0.025, 0.76), copper)
 
 	# Ventral equipment is inset into the belly, with exposed cooling vanes below.
 	var belly := Node3D.new()

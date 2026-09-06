@@ -122,7 +122,7 @@ const JAZOONE_BOOSTER_SOCKETS := [
 # restart, so F5 is the loop, not live in flight.
 # KEEP THE DECIMAL POINT. `:= 20` infers an INT, and then every fractional value
 # assigned to it truncates - 0.8 becomes 0, which silently kills the boosters.
-static var booster_brightness := 18.0
+static var booster_brightness := 2.0
 
 
 # Every `brightness` handed to a booster shader goes through here. One place to look
@@ -719,11 +719,17 @@ static func add_base_basic_booster_plumes(model: Node3D,
 		center.x = 0.169 if box.get_center().x > 0.0 else -0.169
 		center.y = 0.233
 		sockets.append({"center": center, "radius": radius})
+		# Length as a MULTIPLE OF THE SOCKET RADIUS, the way every other ship in the
+		# fleet states it. The absolute 0.90 / 0.55 that stood here were in this GLB's
+		# own local units, and this is a small model: its hull is 1.898 units long, so
+		# the haze ran 47% of the whole ship and the core 29% - by a wide margin the
+		# longest exhaust in the fleet (class_ii 24%/15%, snarkrans 36%/22%).
+		# 6.0 / 3.6 put it alongside class_ii at 26% / 16%.
 		materials.append(_add_torch_layer(rig, "BoosterFog%d" % sockets.size(),
-			center, radius, 0.90, 0.666667, 0.10, 1.20, 0.55, 0.42,
+			center, radius, radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42,
 			false, -1.0, model.scale.x, -radius * 0.12))
 		materials.append(_add_torch_layer(rig, "BoosterCore%d" % sockets.size(),
-			center, radius, 0.55, 0.90, 0.05, 3.20, 0.82, 0.995,
+			center, radius, radius * 3.6, 0.90, 0.05, 3.20, 0.82, 0.995,
 			true, -1.0, model.scale.x, -radius * 0.12))
 	for material in materials:
 		material.set_shader_parameter("lock_nozzle_width", true)

@@ -55,8 +55,6 @@ const DINGO57_BOOSTER_SOCKETS := [
 # that mask (the same step(0.25) cut the hull shader uses) and clusters the survivors
 # in 3D; these are the two clusters it finds. Mind the sign: this model imports with
 # yaw 0, so its rear is +Z - the opposite of the other three ships.
-# Mach-disk intensity on the inner core layers. The outer fog sheath passes 0.0.
-const SHOCK_TRAIN := 2.6
 # Per-ship gain for the additive booster shader, compensating for how much of each hull
 # it lights: gain = 4.0 * sqrt(class_ii_area / own_area), so a ship with ten times the
 # emissive area does not come out ten times as washed, and ship size cancels because
@@ -262,8 +260,15 @@ static func style_class_ii_cruiser(model: Node3D) -> Array[ShaderMaterial]:
 				var propulsion := ShaderMaterial.new()
 				propulsion.shader = CRUISER_PROPULSION_SHADER
 				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
+				# Brightness comes from the gain knob, not the old literal 4.0: the
+				# per-ship gains are derived from effective emissive area.
 				propulsion.set_shader_parameter("brightness",
 					booster_gain(CLASS_II_BOOSTER_GAIN))
+				# The two banks are mirrored, so the flow noise is folded about the
+				# hull centre line to run outward on both sides. This folds the flow
+				# varying only - see the merge note in cruiser_propulsion.gdshader.
+				propulsion.set_shader_parameter("mirror_flow", true)
+				propulsion.set_shader_parameter("symmetry_center_x", 19.342775)
 				# All six patches live in this one surface, so the material carries all
 				# six sockets and each fragment grades against its nearest.
 				_wire_nozzle_shape(propulsion, CLASS_II_BOOSTER_SOCKETS,
@@ -272,6 +277,8 @@ static func style_class_ii_cruiser(model: Node3D) -> Array[ShaderMaterial]:
 				propulsion_materials.append(propulsion)
 			elif tag.contains("eng_covers") or tag.contains("eng covers") or ordinal == 4:
 				var cover := StandardMaterial3D.new()
+				# Mirrored OBJ shells have opposite winding on the two banks.
+				cover.cull_mode = BaseMaterial3D.CULL_DISABLED
 				cover.albedo_color = Color(0.10, 0.22, 0.34)
 				cover.metallic = 0.82
 				cover.metallic_specular = 0.88
@@ -285,6 +292,9 @@ static func style_class_ii_cruiser(model: Node3D) -> Array[ShaderMaterial]:
 				mi.set_surface_override_material(si, cover)
 			elif tag.contains("ship_body") or tag.contains("ship body") or ordinal == 3:
 				var hull := StandardMaterial3D.new()
+				# Keep both nozzle rims opaque: backface culling otherwise exposes
+				# the full emitter disc through just one mirrored housing.
+				hull.cull_mode = BaseMaterial3D.CULL_DISABLED
 				hull.albedo_texture = source_texture
 				hull.albedo_color = Color(0.92, 0.95, 1.0)
 				hull.metallic = 0.42
@@ -329,10 +339,10 @@ static func add_class_ii_booster_plumes(model: Node3D,
 		# Outer haze: longer and wider, but dimmer and translucent at the edge.
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.5, 1.18, 0.18, 1.25, 0.55, 0.42, 0.0, -1.0, world_scale))
+			radius * 9.5, 1.18, 0.18, 1.25, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 5.8, 0.58, 0.05, 3.40, 0.82, 0.995, SHOCK_TRAIN, -1.0, world_scale))
+			radius * 5.8, 0.58, 0.05, 3.40, 0.82, 0.995, true, -1.0, world_scale))
 	_attach_socket_extras(model, CLASS_II_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	return propulsion_materials
 
@@ -344,10 +354,16 @@ static func add_class_ii_booster_plumes(model: Node3D,
 static func _add_torch_layer(parent: Node3D, layer_name: String,
 		center: Vector3, socket_radius: float, length: float, base_ratio: float,
 		tip_ratio: float, brightness: float, opacity: float,
-		white_mix: float, shock_strength := 0.0, facing := -1.0,
+		white_mix: float, core_layer := false, facing := -1.0,
 		world_scale := 1.0) -> ShaderMaterial:
 	var cone := CylinderMesh.new()
 	cone.height = length
+	# A broad, faint sheath supplies local cyan glow without scene-wide bloom.
+	if not core_layer:
+		base_ratio *= 1.5
+		tip_ratio *= 1.8
+		brightness *= 0.45
+		white_mix = 0.12
 	cone.bottom_radius = socket_radius * base_ratio
 	cone.top_radius = socket_radius * tip_ratio
 	cone.radial_segments = 40
@@ -357,6 +373,8 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 
 	var material := ShaderMaterial.new()
 	material.shader = CRUISER_TORCH_SHADER
+	material.set_shader_parameter("noise_tex", EXHAUST_NOISE)
+	material.set_shader_parameter("shock_strength", 2.6 if core_layer else 0.0)
 	material.set_shader_parameter("edge_color", Color(0.28, 0.70, 1.0))
 	material.set_shader_parameter("brightness", booster_gain(brightness))
 	material.set_shader_parameter("opacity", opacity)
@@ -364,11 +382,7 @@ static func _add_torch_layer(parent: Node3D, layer_name: String,
 	material.set_shader_parameter("plume_length", length)
 	material.set_shader_parameter("base_radius", socket_radius * base_ratio)
 	material.set_shader_parameter("tip_radius", socket_radius * tip_ratio)
-	material.set_shader_parameter("noise_tex", EXHAUST_NOISE)
-	material.set_shader_parameter("cool_color", Color(1.0, 0.33, 0.06))
-	# Only the tight inner core carries a shock train; a Mach disk in the outer fog
-	# sheath would read as banding, not as a rocket.
-	material.set_shader_parameter("shock_strength", shock_strength)
+	material.set_shader_parameter("cool_color", Color(0.10, 0.38, 1.0))
 	material.set_shader_parameter("temperature", 1.0)
 	material.set_shader_parameter("turbulence", 1.0)
 	material.set_shader_parameter("length_scale", 1.0)
@@ -602,10 +616,10 @@ static func add_snarkrans_booster_plumes(model: Node3D,
 			plume_root, "BoosterFill%02d" % (i + 1), center, radius))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.8, 1.22, 0.20, 1.30, 0.55, 0.42, 0.0, -1.0, world_scale))
+			radius * 9.8, 1.22, 0.20, 1.30, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 6.0, 0.60, 0.05, 3.50, 0.82, 0.998, SHOCK_TRAIN, -1.0, world_scale))
+			radius * 6.0, 0.60, 0.05, 3.50, 0.82, 0.998, true, -1.0, world_scale))
 	_attach_socket_extras(model, SNARKRANS_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	return propulsion_materials
 
@@ -660,10 +674,10 @@ static func add_dingo57_booster_plumes(model: Node3D,
 		var radius: float = float(socket.radius)
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.2, 1.16, 0.18, 1.20, 0.55, 0.42, 0.0, -1.0, world_scale))
+			radius * 9.2, 1.16, 0.18, 1.20, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 5.6, 0.56, 0.05, 3.20, 0.82, 0.995, SHOCK_TRAIN, -1.0, world_scale))
+			radius * 5.6, 0.56, 0.05, 3.20, 0.82, 0.995, true, -1.0, world_scale))
 	_attach_socket_extras(model, DINGO57_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	print("dingo57: attached %d torch layers + %d nozzle rigs on %d authored sockets" \
 		% [propulsion_materials.size(), DINGO57_BOOSTER_SOCKETS.size(),
@@ -796,10 +810,10 @@ static func add_jazoone_booster_plumes(model: Node3D,
 		var radius: float = float(socket.radius)
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 6.8, 1.10, 0.18, 1.22, 0.55, 0.42, 0.0, 1.0, world_scale))
+			radius * 6.8, 1.10, 0.18, 1.22, 0.55, 0.42, false, 1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 4.2, 0.54, 0.05, 3.30, 0.82, 0.995, SHOCK_TRAIN, 1.0, world_scale))
+			radius * 4.2, 0.54, 0.05, 3.30, 0.82, 0.995, true, 1.0, world_scale))
 	_attach_socket_extras(model, JAZOONE_BOOSTER_SOCKETS, 1.0, world_scale, accent)
 	print("jazoone: attached %d torch layers + %d nozzle rigs on %d probed sockets" \
 		% [propulsion_materials.size(), JAZOONE_BOOSTER_SOCKETS.size(),

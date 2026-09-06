@@ -7,6 +7,7 @@ extends Node3D
 # Must run as a real SCENE under a GL-capable display, not with --script: a SceneTree
 # script never pumps render frames, so the capture comes back blank.
 #   SHOT_DIR=/tmp/shots xvfb-run -a <godot> --path <copy> res://tools/render_thruster.tscn
+# SHIP=class_ii filters the roster; VIEW=rear gives a centred Class II nozzle comparison.
 
 const ShipMesh := preload("res://scripts/flight/ship_mesh.gd")
 
@@ -335,6 +336,7 @@ func _build_ship(ship: Dictionary):
 	# which just shows a saturated end-cap - so weight the camera to the SIDE and
 	# only slightly aft, to see the plume across its length.
 	_camera.position = centre + Vector3(1.0, 0.30, 0.58).normalized() * reach * 0.95
+	_camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	_camera.fov = 75.0
 	if _view == "chase":
 		# hull_len is the fit_model target below, not `reach` (which includes the plumes).
@@ -345,6 +347,17 @@ func _build_ship(ship: Dictionary):
 			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len))
 		print("render: VIEW=chase fov=%.1f back=%.2f up=%.2f pitch=%.1f"
 			% [_cam_fov, _cam_back, _cam_up, _cam_pitch])
+	elif _view == "rear" and ship.kind == "class_ii":
+		# Orthographic engine-centred comparison removes perspective as a variable.
+		var sockets: Array = ShipMesh.CLASS_II_BOOSTER_SOCKETS
+		var engine_centre := Vector3.ZERO
+		for socket in sockets:
+			engine_centre += model.to_global(socket.center)
+		engine_centre /= float(sockets.size())
+		_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+		_camera.size = 2.4
+		_camera.position = engine_centre + Vector3(0.0, 0.0, 6.0)
+		_camera.look_at(engine_centre, Vector3.UP)
 	elif _detail:
 		# Frame the exhaust column itself, not the ship: push aft of the hull and
 		# close in, so one plume spans the frame.

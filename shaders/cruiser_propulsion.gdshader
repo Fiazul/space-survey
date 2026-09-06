@@ -67,10 +67,28 @@ uniform float core_boost : hint_range(1.0, 4.0) = 1.5;
 // throat. A flat ring measures zero depth and is unaffected.
 uniform float depth_dim : hint_range(0.0, 1.0) = 0.45;
 
-varying vec3 local_position;
+// --- Mirrored housings --------------------------------------------------------
+// The two banks are mirrored copies of one another, so an unmirrored flow pattern
+// slides across the hull instead of running outward on both sides. Folding x about
+// the hull's centre line makes the animation symmetric.
+uniform bool mirror_flow = false;
+uniform float symmetry_center_x = 0.0;
+
+// MERGE NOTE: the fold is for the FLOW NOISE ONLY, and the two features arrived
+// from different branches into the same varying. Socket grading measures real
+// distances against socket_pos[], which are in true surface space; folding x for
+// that too would put every fragment in a different frame from its own socket, so
+// radial_n explodes, `rim` goes to zero and the booster turns BLACK. Two varyings,
+// one job each.
+varying vec3 local_position;    // true surface space - socket grading
+varying vec3 flow_position;     // optionally mirrored - turbulence only
 
 void vertex() {
 	local_position = VERTEX;
+	flow_position = VERTEX;
+	if (mirror_flow) {
+		flow_position.x = abs(VERTEX.x - symmetry_center_x);
+	}
 }
 
 void fragment() {
@@ -78,8 +96,8 @@ void fragment() {
 	float edge_softness = smoothstep(0.02, 0.72, facing);
 	float visibility = mix(0.58, 1.0, edge_softness);
 	float flow = TIME * flow_speed;
-	float broad = sin(local_position.x * 0.24 - flow * 2.1 + sin(local_position.y * 0.19 + flow));
-	float fine = sin(local_position.z * 0.62 + local_position.x * 0.41 + flow * 4.7);
+	float broad = sin(flow_position.x * 0.24 - flow * 2.1 + sin(flow_position.y * 0.19 + flow));
+	float fine = sin(flow_position.z * 0.62 + flow_position.x * 0.41 + flow * 4.7);
 	float turbulence = clamp(0.72 + broad * 0.16 + fine * 0.12, 0.35, 1.0);
 	float shimmer = mix(0.86, 1.12, turbulence);
 	// READ THIS BEFORE CHANGING ANY NUMBER HERE.

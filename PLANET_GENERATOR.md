@@ -78,7 +78,38 @@ Cruise dies at EZ (already). Then a **safety cap** so you cannot F9 through the 
 
 ### Do not build yet
 
-Keep EZ as the cook globe (the 36 km black stamp at 100 km was the wrong layer). Plane-band tile + kit + safety cap is the next visual slice after the globe reads at EZ.
+Keep EZ as the cook globe (the 36 km black stamp at 100 km was the wrong layer). The plane-band **safety speed cap** is still the next slice after the globe reads at EZ. The **tile + kit** half of it is now in — see below.
+
+## Skin band (in, airless worlds first)
+
+The bird-eye ground tile is real and reachable. `scripts/world/surface_patch.gd`, pinned by `tools/test_surface_band.gd`.
+
+**It had never rendered.** `should_show()` let only Earth through, and `ground_stamp_ok()` asked for `alt > kill and alt < 3.0` with Earth's kill at 29 km — a window that is empty at every altitude. So `_rebuild`, the prop MultiMesh and the height sampling were dead code, and no test noticed, because every assertion was about the numbers in the window rather than about whether the window contained anything. The first thing the new test asserts is that a band is **non-empty**.
+
+| | Then | Now |
+|---|---|---|
+| Bodies | Earth only (and Earth could never qualify) | any physical rocky/ice world |
+| Ceiling | hardcoded 3 km | `TILE_KM_MAX * BAND_ALT_FRACTION` = 3.24 km |
+| Plate | fixed 36 km | `tile_km_for(alt)` = alt × 10, clamped 2–36 km |
+| Height | `earth_height.jpg`, always | recipe height map, else the shader's own crust fbm |
+| Water | `earth_spec_2k.png`, always | recipe mask, else the albedo trick, else the `land_amount` cut |
+| Props | trees, always | recipe kit: tree / rock / ice |
+
+**The ceiling is not a magic number.** A local plate only reads while its width dwarfs your altitude — 36 km of ground from 100 km up is the sticker-on-a-globe bug; the same plate from 1 km up is ground to the horizon. So the ceiling is derived from the plate's own size, and the plate is derived from altitude, which keeps quad size proportional on the way down (48 × 48 quads: 208 m at 1 km alt, 42 m at 200 m alt).
+
+**Earth's band is still empty, on purpose.** Kill 29 km sits well above the 3.24 km ceiling. That is the honest limit above, now asserted (`earth_band_still_empty_until_the_kill_line_moves`) so whoever moves that kill line is told exactly what they changed. Airless worlds kill at 100 m, so their band is **0.1 → 3.24 km** and they fly it first. Measured: 0.11–3.23 km.
+
+**`physical` is load-bearing.** An arcade system's units are 1u = 0.01 AU with radii boosted by `VISUAL_SCALE`, so its "altitude" of 0.1 is really a million kilometres. Removing Earth's name filter without adding the truth flag would pop a ground plate in deep space. `main._update_skin_kill` guards the kill line the same way.
+
+**The tile's hills agree with the globe's crust.** `PlanetGenerator.crust_height()` is a line-for-line mirror of `planet_cook.gdshader`'s `sample_height()` fallback, `fbm(n * 6.0 + seed)`, run at the same seed. Touch one, touch both — otherwise the ground you fly over stops matching the crust painted overhead.
+
+**The kit is chosen by physics, not colour.** `PlanetGenerator.surface_kit()`: `tree` needs real air AND standing liquid (a biosphere), `ice` needs `ice_amount > 0.25`, everything else is bare `rock`, and a gas giant or star gets `none` — no surface to stand a plate on. Earth=tree, Moon=rock, Mars=rock, Europa=ice. Separate meshes, because recolouring a tree blue does not make it an ice spire.
+
+The kit meshes are still **project-owned primitives**, not the CC0 pack in `docs/specs/2026-08-22-universal-planet-asset-kit-design.md` — that library is not acquired. Unshaded, per the black-boxes bug.
+
+**Props cover the plate, not a corner of it.** Candidates are collected row-major and thinned at an even fractional stride; bailing out at `PROP_MAX` mid-walk dresses the first rows and leaves the rest bare. The test measures coverage along the plate's **own** east/north axes and asserts both, because a world-axis AABB cannot see this failure: a truncate keeps east at full width and only collapses north (9.8 × 7.1 of a 10 km plate, versus 9.8 × 9.8 when thinned).
+
+Measured on the Moon at 1 km: 13,824 ground verts (a full 48×48 plate), 0 water, 220 of 312 candidate props, plate 10 km, geometry on the 1732–1745 km shell.
 
 ## Not this slice
 

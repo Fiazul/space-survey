@@ -747,6 +747,13 @@ static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMate
 	mat.set_shader_parameter("color_air", Vector3(air.r, air.g, air.b))
 	var warm := sun_warm_for(spec)
 	mat.set_shader_parameter("sun_warm", Vector3(warm.r, warm.g, warm.b))
+	var ocean: Color = recipe.get("color_ocean", Color(0.06, 0.22, 0.32))
+	mat.set_shader_parameter("color_ocean", Vector3(ocean.r, ocean.g, ocean.b))
+	# The maps themselves, so the shoreline and the albedo resolve at the MAP's
+	# resolution rather than at the mesh's. Ring 3's quads are 10.24 km at 13 km
+	# altitude; a coastline quantised to those is a giant angular wedge.
+	_bind_tex(mat, recipe, "albedo", "albedo_tex", "has_albedo")
+	_bind_tex(mat, recipe, "specular", "water_tex", "has_water")
 	return mat
 
 

@@ -544,8 +544,9 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 	var h: float = clampf((gr - radius) / maxf(_sampler.max_height_km(), 0.001), 0.0, 1.0)
 	# "n" starts radial and is replaced by the grid's smooth normal in _build_ring.
 	# Skirt vertices keep this radial one, which is correct for a vertical wall.
-	return { "p": dir * gr, "h": h, "w": wet, "n": dir,
-		"c": _color_at(dir, uv, h), "uv": uv }
+	var col: Color = _color_at(dir, uv, h)
+	col.a = wet          # the shader reads wetness from COLOR.a as its fallback
+	return { "p": dir * gr, "h": h, "w": wet, "n": dir, "c": col, "uv": uv }
 
 
 # Ground colour. Albedo map where the world has one, else the recipe's crust
@@ -557,7 +558,10 @@ func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
 		# The palette, weighted by how many albedo texels the ring still spans.
 		# Straight albedo sampling gave ONE flat colour: Earth's map is 19.5 km per
 		# texel and ring 0 at 6 km altitude spans 0.22 of one.
-		return _sampler.surface_color(dir, ring_reach_km(0, _base_quad), _radius)
+		# Palette only, DRY. The shader blends the ocean per fragment from the mask,
+		# so baking it in here would quantise the shoreline to the vertex spacing -
+		# 10.24 km on ring 3 at 13 km altitude.
+		return _sampler.land_color(dir, _radius)
 	var mixf: float = PlanetGenerator.fbm3(dir * 5.0 + Vector3(_seed, _seed, _seed))
 	return _crust_a.lerp(_crust_b, clampf(mixf, 0.0, 1.0)).lightened(clampf(h - 0.5, 0.0, 0.3))
 
@@ -790,6 +794,9 @@ func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 	for m in [_land_mat, _water_mat]:
 		m.set_shader_parameter("sun_dir", d)
 		m.set_shader_parameter("haze_density", density)
+		# How much the albedo map still knows at this ring size.
+		m.set_shader_parameter("map_weight",
+			_sampler.map_weight(ring_reach_km(0, _base_quad), _radius))
 
 
 # What the committed normals look like. Test hook: flat shading gives every
@@ -835,6 +842,20 @@ func normal_report(radius: float) -> Dictionary:
 	return { "counted": counted, "inward": inward, "unit": unit,
 		"max_neighbour_angle": max_turn, "max_radial_tilt": max_tilt,
 		"mean_neighbour_angle": 0.0 if turn_n == 0 else turn_sum / float(turn_n) }
+
+
+# Test hook: reach a ring's mesh node by name so a probe can walk its triangles.
+func mesh_for(kind: String, ring: int) -> MeshInstance3D:
+	if ring < 0 or ring >= RING_COUNT:
+		return null
+	match kind:
+		"land":
+			return _ring_land[ring]
+		"water":
+			return _ring_water[ring]
+		"skirt":
+			return _ring_skirt[ring]
+	return null
 
 
 # Was this ring's outer rim snapped onto the next ring's grid? Every ring but

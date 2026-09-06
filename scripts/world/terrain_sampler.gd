@@ -337,6 +337,19 @@ func map_weight(plate_km: float, body_radius_km: float) -> float:
 
 # Ground colour. The map keeps the evidence - Mare Imbrium dark, the Sahara pale -
 # and the palette supplies the detail the map has no resolution for.
+# The PALETTE alone - no map, no ocean. Both of those are sampled per fragment in
+# shaders/terrain_tile.gdshader, because at ring 3's 10.24 km vertex spacing a
+# map-derived colour becomes an angular polygon.
+func land_color(dir: Vector3, _body_radius_km: float) -> Color:
+	var h_m := height_m(dir)
+	var span: float = maxf(max_height_km() * 1000.0, 1.0)
+	var h01 := clampf(h_m / span, 0.0, 1.0)
+	var slope := slope01(dir)
+	var proc: Color = PALETTE_GRASS.lerp(PALETTE_DIRT, clampf(h01 * 2.2, 0.0, 1.0))
+	proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
+	return proc.lerp(PALETTE_ROCK, slope * 0.65)
+
+
 func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Color:
 	var h_m := height_m(dir)
 	var span: float = maxf(max_height_km() * 1000.0, 1.0)

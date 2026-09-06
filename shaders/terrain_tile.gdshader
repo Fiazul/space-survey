@@ -27,6 +27,22 @@ uniform vec3 sun_warm : source_color = vec3(1.00, 0.86, 0.62);
 uniform float haze_km = 70.0;
 uniform float haze_density = 1.0;                // thicker the lower you fly
 
+// --- Maps, sampled PER FRAGMENT ---
+// The tile used to take its colour entirely from vertex colours, inherited from
+// when it was a small unshaded plate. Ring scale now follows the horizon, so at
+// 13 km altitude ring 3's quads are 10.24 km across - and a coastline quantised
+// to 10 km vertices is a giant hard-edged angular wedge, which is what showed up
+// in play. The globe's own shader has always sampled its maps at UV; this one now
+// does too, so the shoreline resolves at the MAP's resolution instead of the
+// MESH's. COLOR still carries the procedural palette, which supplies the detail
+// the 19.5 km-per-texel map has none of.
+uniform sampler2D albedo_tex : source_color, hint_default_white, filter_linear;
+uniform sampler2D water_tex : hint_default_black, filter_linear;
+uniform float has_albedo = 0.0;
+uniform float has_water = 0.0;
+uniform vec3 color_ocean : source_color = vec3(0.06, 0.22, 0.32);
+uniform float map_weight = 0.0;    // how much the map still knows; see TerrainSampler
+
 varying vec3 v_world_n;
 
 
@@ -39,7 +55,19 @@ void vertex() {
 
 
 void fragment() {
+	// Procedural palette from the vertex, then the MAP at this fragment's own UV
+	// wherever the map still has information to give.
 	vec3 alb = COLOR.rgb;
+	if (has_albedo > 0.5 && map_weight > 0.001) {
+		alb = mix(alb, texture(albedo_tex, UV).rgb, map_weight);
+	}
+	// Shoreline from the mask, PER FRAGMENT. COLOR.a carries the vertex-level
+	// wetness as the fallback for worlds with no mask.
+	float wet = COLOR.a;
+	if (has_water > 0.5) {
+		wet = smoothstep(0.35, 0.65, texture(water_tex, UV).r);
+	}
+	alb = mix(alb, color_ocean, clamp(wet, 0.0, 1.0));
 	vec3 n = normalize(v_world_n);
 	vec3 l = normalize(sun_dir);
 	float day = smoothstep(term_lo, term_hi, dot(n, l));

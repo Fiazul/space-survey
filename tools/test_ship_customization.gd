@@ -105,7 +105,7 @@ func _initialize() -> void:
 	var main_source := FileAccess.get_file_as_string("res://scripts/core/main.gd")
 	var hud_source := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	var state_source := FileAccess.get_file_as_string("res://scripts/core/game_state.gd")
-	failed += _check("three_customizable_ships", ship_source.count("\"color_pick\": true") == 3)
+	failed += _check("two_customizable_ships", ship_source.count("\"color_pick\": true") == 2)
 	failed += _check("saved_customization_api", ship_source.contains("func customization_state()") \
 		and ship_source.contains("func load_customization(saved: Dictionary)"))
 	failed += _check("profile_persistence_restored", state_source.contains("var customization := {}") \

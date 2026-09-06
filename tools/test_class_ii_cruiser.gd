@@ -182,7 +182,7 @@ func _initialize() -> void:
 	# actual Ship node through the normal project-start smoke test.
 	var ship_source := FileAccess.get_file_as_string("res://scripts/flight/ship.gd")
 	failed += _check("default_registry_entry", ship_source.find("{ \"name\": \"Class II Galactic Cruiser\"") >= 0)
-	failed += _check("four_ship_roster", ship_source.count("{ \"name\":") == 4)
+	failed += _check("five_ship_roster", ship_source.count("{ \"name\":") == 5)
 	failed += _check("authored_propulsion_hook", ship_source.find("_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)") >= 0)
 	failed += _check("authored_plume_hook", ship_source.find("ShipMesh.add_class_ii_booster_plumes(model)") >= 0)
 	failed += _check("no_procedural_boosters", not ship_source.contains("_build_boosters") and not ship_source.contains("BOOSTER_LAYOUTS"))

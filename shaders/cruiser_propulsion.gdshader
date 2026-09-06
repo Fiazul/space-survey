@@ -74,13 +74,18 @@ uniform float depth_dim : hint_range(0.0, 1.0) = 0.45;
 uniform bool mirror_flow = false;
 uniform float symmetry_center_x = 0.0;
 
-// MERGE NOTE: the fold is for the FLOW NOISE ONLY, and the two features arrived
-// from different branches into the same varying. Socket grading measures real
-// distances against socket_pos[], which are in true surface space; folding x for
-// that too would put every fragment in a different frame from its own socket, so
-// radial_n explodes, `rim` goes to zero and the booster turns BLACK. Two varyings,
-// one job each.
-varying vec3 local_position;    // true surface space - socket grading
+// Optional rear-rim glow for complete engine housings; legacy patches use all faces.
+uniform bool rear_only = false;
+uniform float rear_start = 0.0;
+uniform float rear_band = 0.04;
+
+// MERGE NOTE: the fold is for the FLOW NOISE ONLY, and these features arrived from
+// three different branches into what used to be one varying. Socket grading and the
+// rear-rim cut both measure real distances - socket_pos[] and rear_start are in true
+// surface space - so folding x for those too would put every fragment in a different
+// frame from its own socket: radial_n explodes, `rim` goes to zero and the booster
+// turns BLACK. Two varyings, one job each.
+varying vec3 local_position;    // true surface space - socket grading, rear-rim cut
 varying vec3 flow_position;     // optionally mirrored - turbulence only
 
 void vertex() {
@@ -92,6 +97,9 @@ void vertex() {
 }
 
 void fragment() {
+	if (rear_only && local_position.z > rear_start + rear_band) {
+		discard;
+	}
 	float facing = abs(dot(normalize(NORMAL), normalize(VIEW)));
 	float edge_softness = smoothstep(0.02, 0.72, facing);
 	float visibility = mix(0.58, 1.0, edge_softness);

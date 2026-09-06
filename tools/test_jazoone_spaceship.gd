@@ -127,12 +127,12 @@ func _initialize() -> void:
 	var spaceship_block := ""
 	var roster_at := ship_source.find("{ \"name\": \"SpaceShip\"")
 	if roster_at >= 0:
-		spaceship_block = ship_source.substr(roster_at, 700)
+		spaceship_block = ship_source.substr(roster_at).get_slice("\n", 0)
 	failed += _check("spaceship_yaw_zero",
 		spaceship_block.contains("\"yaw\": 0.0") and not spaceship_block.contains("\"yaw\": 180.0"))
 	failed += _check("authored_propulsion_hook",
 		ship_source.contains("_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)"))
-	failed += _check("four_ship_roster", ship_source.count("{ \"name\":") == 4)
+	failed += _check("five_ship_roster", ship_source.count("{ \"name\":") == 5)
 	failed += _check("no_procedural_boosters", not ship_source.contains("_build_boosters") \
 		and not ship_source.contains("BOOSTER_LAYOUTS"))
 

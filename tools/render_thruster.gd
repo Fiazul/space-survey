@@ -10,6 +10,7 @@ extends Node3D
 # SHIP=class_ii filters the roster; VIEW=rear gives a centred Class II nozzle comparison.
 
 const ShipMesh := preload("res://scripts/flight/ship_mesh.gd")
+const WedgeDesign := preload("res://scripts/flight/wedge_fighter.gd")
 
 # `accent` / `light_energy` are copied from Ship.SHIP_MODELS, and `swatch` from the
 # palette each ship defaults to, so add_hull_lights and color_authored_ship get what the
@@ -31,6 +32,9 @@ const SHIPS := [
 		"yaw": 0.0, "kind": "jazoone",
 		"accent": Color(0.90, 0.93, 1.00), "swatch": Color(0.82, 0.84, 0.88),
 		"light_energy": 0.36, "finish": "metal" },
+	{ "label": "wedge", "path": "res://assets/wedge_fighter/wedge_fighter.glb",
+		"yaw": 180.0, "kind": "wedge", "accent": Color(0.16, 0.70, 1.0),
+		"swatch": Color(0.8, 0.85, 0.9), "light_energy": 0.35, "finish": "metal" },
 ]
 
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
@@ -269,6 +273,7 @@ func _build_ship(ship: Dictionary):
 		"snarkrans": driven.append_array(ShipMesh.style_snarkrans_starship(model))
 		"dingo57": driven.append_array(ShipMesh.style_dingo57_starship(model))
 		"jazoone": driven.append_array(ShipMesh.style_jazoone_spaceship(model))
+		"wedge": driven.append_array(WedgeDesign.style(model))
 	holder.add_child(model)
 	model.rotation = Vector3(0.0, deg_to_rad(float(ship.yaw)), 0.0)
 	# Ship._build_ship_model lights the hull off the AABB fit_model RETURNS - the hull
@@ -290,7 +295,8 @@ func _build_ship(ship: Dictionary):
 	var lights := ShipMesh.collect_nozzle_lights(model)
 	# The game recolours every non-propulsion surface before lighting it; without this
 	# the raw imported materials render nothing like the shipped ship.
-	ShipMesh.color_authored_ship(model, ship.swatch, String(ship.finish))
+	if ship.kind != "wedge":
+		ShipMesh.color_authored_ship(model, ship.swatch, String(ship.finish))
 	# Ship._build_ship_model no longer adds ANY ship-attached lights - the scene sun +
 	# fill light the hull. Adding them here would put this harness back out of step
 	# with the game, which is the mistake that made its earlier output worthless.

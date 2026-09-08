@@ -66,6 +66,8 @@ software Vulkan** in my environment, so I can prove geometry, ranges, shared
 rules and bounds — never appearance. Delete a line once you've judged it.
 
 Fly to Earth, drop through **16.16 km**, and look. Band runs 0.03 → 16.16 km.
+(Historical — the ceiling since measured higher: `tools/test_surface_band.gd` now
+reports 0.03 → 34.99 km on Earth.)
 
 ---
 
@@ -75,7 +77,7 @@ These are tuned to numbers I derived, not to a look. Each has a named lever.
 
 | What to judge | If it's wrong | Lever |
 |---|---|---|
-| **Haze distance.** Does the far ground dissolve like kilometres of air, or like a grey fog a few hundred metres out? | too much / too little depth | `PlanetGenerator.HAZE_KM` (70.0). Higher = clearer. Measured: 95% at ring 3's 205 km rim, 25% at 20 km, 3% at 2 km |
+| **Haze distance.** Does the far ground dissolve like kilometres of air, or like a grey fog a few hundred metres out? | too much / too little depth | `PlanetGenerator.HAZE_KM` (70.0). Higher = clearer. Measured: 95% at ring 3's 205 km rim, 25% at 20 km, 3% at 2 km (historical — rings are horizon-following now; `tools/test_terrain_light.gd` currently reports 100% at ring 3's 1311 km rim, 25% at 20 km, 3% at 2 km) |
 | **Terminator curve.** Do ridges read, or does the lit/dark transition crush them into flat black and flat white? | ridges vanish near the terminator | `TERMINATOR_LO` / `TERMINATOR_HI` (−0.04, 0.28). Widen the gap for a softer roll-off. **Changing these changes the globe too — that sharing is deliberate** |
 | **Air shell.** Is it a sky, or a blue wash over everything? | reads as a filter, not air | `air_shell_opacity()`'s `pow(depth, 1.5)`. Measured 0.78 at 15 km, 0.09 at 80 km |
 
@@ -105,7 +107,8 @@ can see through. Haze should now hide the outer ones — that was part of why
 
 ## 4. Does it still hitch?
 
-Ring rebuild is **47.7 ms**, happening every 400 m of travel. At 230 m/s that's
+Ring rebuild is **47.7 ms** (unverified since — not re-measured this session),
+happening every 400 m of travel. At 230 m/s that's
 one hitch every 1.7 seconds — 2.7% of the time, down from 123%. If that hitch is
 visible, the next lever is inlining the noise (~27 GDScript calls per height
 sample is the residual cost), or dropping `RING_SEGS` from 64 to 48.

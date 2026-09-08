@@ -29,10 +29,10 @@ a small reusable surface kit.
   observed maps when available and stable seeded properties otherwise. Close-range
   flight adds height, water, clouds, rocks, and other recipe-selected surface
   details under the hull.
-- **Wormhole network** — a **5-hub** graph (Prim's MST + extra edges, BFS routing) with a
-  *tested* guarantee: **Earth → anywhere ≤ 2 hops, any → any ≤ 3 hops** — you're never
-  more than 3 jumps from a star. Fly to a portal, press **F**, transit the tunnel, arrive.
-  See [`WORMHOLE_NETWORK.md`](WORMHOLE_NETWORK.md).
+- **Wormhole network** — a **5-hub** graph (Prim's MST + extra edges, BFS routing)
+  designed for **Earth → anywhere ≤ 2 hops, any → any ≤ 3 hops** — you're never more
+  than 3 jumps from a star (see [`WORMHOLE_NETWORK.md`](WORMHOLE_NETWORK.md) for the
+  recorded check). Fly to a portal, press **F**, transit the tunnel, arrive.
 - **Combat** — instant **hitscan "ray bullets"** (left-click; aim by flying); alien
   ships hunt and fire dodgeable bolts. Guarded bodies are defended by
   a **named boss** + finite **guardian waves** — clear the swarm, break the boss, capture the
@@ -43,33 +43,31 @@ a small reusable surface kit.
 - **Navigation & discovery** — a real zoomable/pannable star **map** (M): star/wormhole/
   planet icons on toggleable layers, a live player cursor, hover read-outs, wormhole lanes,
   out to ~150 ly. Wormholes show live on the **corner radar** and the always-on nav arrow
-  points you to the nearest wormhole first. **Scan (V)** → persistent **Codex** (L) with real
+  points you to the nearest unsurveyed body first, falling back to the nearest wormhole
+  once the system's fully surveyed. **Scan (V)** → persistent **Codex** (L) with real
   NASA facts (G). A **beginner tutorial/quest** eases new pilots in.
 - **Mission log** (J) — every star, planet & moon is its own mission with a crude,
   (mostly) true story and a coin bounty. Browse the board, click a mission to read it,
   and **Navigate** straight to it. Survey the body to complete it and claim the bounty.
-- **Star gravity & teleport** — stars gently pull you in (and let go once you thrust away, so
-  you're never trapped). A rare, theatrical **teleport ritual** handles emergency-home and
+- **Star gravity & teleport** — in arcade (non-Sol) systems stars gently pull you in and let
+  go once you thrust away, so you're never trapped; Sol uses real Newtonian gravity instead,
+  no damping or release. A rare, theatrical **teleport ritual** handles emergency-home and
   station→station jumps; a **platform-network console** fast-travels between unlocked stations.
 - **Audio** — engine voice + script-generated SFX + background music.
 
 ## Planetary flight and surfaces
 
-Close to a solid body (currently ~35 km above ground, more over exceptional
-relief — this covers Earth and the Moon too, both peaking around 7–20 km), the
-coarse cooked globe is replaced by a local, recipe-driven ground patch: mapped or
-procedural height, water where the recipe calls for it, and kit props (rock/ice/
-tree) seated on the surface. The patch works in the body's own rotating frame, so
-the Moon isn't anchored to Earth's centre. Above that ceiling you fly the cooked
-mesh (bird's-eye globe); farther out, bodies are sky points until you arrive.
-
-There's no separate flight-mode machinery for this — one shared height sampler
-feeds both the terrain mesh and the contact check, so what you fly over is what
-kills you. Contact with the ground (a swept check against the last frame's
-travel, not just a point sample) starts hull-loss and a respawn at the nearest
+Close to a solid body (currently ~35 km above ground on Earth and the Moon — measured
+terrain peaks 9.49 km / 1.97 km respectively), the coarse cooked globe is replaced by a
+local, recipe-driven ground patch: mapped or procedural height, water where the recipe
+calls for it, and kit props (rock/ice/tree) seated on the surface. The patch works in the
+body's own rotating frame, so the Moon isn't anchored to Earth's centre. Above that
+ceiling you fly the cooked mesh (bird's-eye globe); farther out, bodies are sky points
+until you arrive. Contact with the ground starts hull-loss and a respawn at the nearest
 safe park; there is no landing.
 
-See [`PLANET_GENERATOR.md`](PLANET_GENERATOR.md) for the current cook and LOD contract.
+See [`PLANET_GENERATOR.md`](PLANET_GENERATOR.md) for the cook, LOD contract, and how
+height/contact/props all read from the same sampler.
 
 ## Controls
 
@@ -94,7 +92,8 @@ Install **Godot 4.6.3** (GDScript, no C#), open this folder as a project, press
 **F5**. No keys or build steps. *(Open it in the editor once after pulling so it
 imports any new `.obj` / audio assets.)* For release exports (Windows/Linux) see
 `./build.sh`; for Android see [`BUILD-ANDROID.md`](BUILD-ANDROID.md). Touch
-controls auto-enable on mobile, or force them on desktop with `--touch`.
+controls auto-enable on mobile, or force them on desktop with `godot -- --touch`
+(user args must follow `--`; `OS.get_cmdline_user_args()` won't see them otherwise).
 
 ## Data
 [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) (solar system) · HYG/SIMBAD (stars).

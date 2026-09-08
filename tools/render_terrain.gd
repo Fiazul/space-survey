@@ -1,6 +1,7 @@
 extends Node
 # Render the ground tile offscreen so its artifacts can actually be LOOKED at.
-# Run: godot --headless --path . res://tools/render_terrain.tscn
+# Run: xvfb-run -a godot --path . res://tools/render_terrain.tscn (needs a real GL
+# context — plain --headless never delivers a frame, so save_png never runs).
 #
 # Reported three times: "cubes / boxes on Earth". Guessing from a description was
 # not working, so this builds the real rings with the real materials and saves a

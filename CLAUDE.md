@@ -1,6 +1,6 @@
 # CLAUDE.md — Astryx (Godot 4.6.3 GDScript)
 
-Directives for any agent (Claude or otherwise) working in this repo. Terse, actionable, verified.
+Directives for any agent (Claude or otherwise) working in this repo.
 
 ## Architecture
 
@@ -10,7 +10,9 @@ scenes/Main.tscn (one-node stub, boots res://scripts/core/main.gd)
         ▼
   core/main.gd  ── orchestrator: .new()+add_child's every subsystem in _ready(),
   │                 drives them by direct method call each frame in _process()
-  │                 (NOT signals — 6 signals in ~14k lines, wiring is held refs)
+  │                 (NOT signals — 5 signals in ~17.9k lines of scripts/, wiring is held refs)
+  │                 also owns MusicDirector (core/music_director.gd), Onboarding
+  │                 (core/onboarding.gd)
   │
   ├─ autoloads (singletons, reachable by name from anywhere, no wiring):
   │    GameState   (core/game_state.gd)   — persisted profile + economy
@@ -50,30 +52,42 @@ through the same `PlanetGenerator` cook and the same `shaders/planet_cook.gdshad
 kind/color/heat when we don't) — `SurfacePatch` never special-cases a body by name, it
 only reads the recipe.
 
-## Commands (verified 2026-09-08, godot 4.6.3.stable, `godot` on PATH)
+## Commands (godot 4.6.3.stable, `godot` on PATH)
+
+Last verified 2026-09-08: the full `test_*.gd` loop below with `timeout 120` (21 OK, 0 FAIL)
+and `TERRAIN_SHOTS=moon_200m xvfb-run -a godot --path . res://tools/render_terrain.tscn`.
 
 Parse-check a single script:
 ```
 godot --headless --check-only --script <path/to/file.gd>
 ```
-No output on stdout past the engine banner = clean. (Project-wide `--check-only` with no
-`--script` hangs waiting on the main scene — don't use that form.)
+**Exit code is meaningless — it's 0 even on a compile failure.** Read stderr. Any script
+that touches an autoload (`GameState`/`Ephemeris`/`Codex`/`PlanetData`/`GameAudio`) prints
+`Identifier not found: <Autoload>` and fails to compile under this form — that's a false
+positive of the check, not a real bug (autoloads aren't registered outside a running
+project). Only autoload-free scripts parse clean this way (e.g. `surface_recipe.gd`).
 
 Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 ```
 godot --headless --script tools/test_surface_recipes.gd
 # → "surface_recipes: OK"
 ```
-Run all SceneTree-based tests in a loop (skips the 5 scene-based ones below):
+Run all SceneTree-based tests in a loop (skips the 5 scene-based ones below, `timeout 120`
+per file so a hang doesn't stall the whole loop):
 ```
 for f in tools/test_*.gd; do
   case "$f" in
     tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|tools/test_ship_roster.gd|\
     tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
   esac
-  echo "=== $f ==="; godot --headless --script "$f"
+  echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
 ```
+Removed 2026-09-08: `test_wh_network.gd` (hung — `SystemDB.arrival_pos()` reaches the
+`Ephemeris` autoload, which does not exist under `--script`; wormhole hop guarantee is
+currently unchecked, reinstate as a scene-based test), `test_dingo57_starship.gd`,
+`test_jazoone_spaceship.gd` (ships left the roster).
+
 Scene-based tests (`extends Node3D` / `extends Node`, need a live scene tree) — pass the
 `.tscn`, not the `.gd`, as a **positional path arg** (not `--script`):
 ```
@@ -83,14 +97,26 @@ godot --headless tools/test_surface_integration.tscn
 Same form for `test_ship_roster.tscn`, `test_wedge_fighter.tscn`, `test_chase_rig.tscn`,
 `test_base_basic_pbr.tscn`.
 
-Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail):
+Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail).
+**Plain `--headless` captures nothing** — no GL context, so `get_viewport().get_texture()`
+comes back null and `save_png` never runs (render_terrain then loops forever waiting on a
+frame that's never delivered). Run as a real windowed scene under a virtual display instead:
 ```
-TERRAIN_SHOTS=earth_mountains,earth_water godot --headless tools/render_terrain.tscn
-godot --headless tools/render_thruster.tscn
-godot --headless tools/render_wedge_fighter.tscn
+TERRAIN_SHOTS=earth_mountains,earth_water xvfb-run -a godot --path . res://tools/render_terrain.tscn
+SHOT_DIR=/tmp/shots xvfb-run -a godot --path . res://tools/render_thruster.tscn
+SHOT_DIR=/tmp/shots xvfb-run -a godot --path . res://tools/render_wedge_fighter.tscn
 ```
-`TERRAIN_SHOTS` values: `moon_rocks,moon_crater,io_volcano,mars_volcano,europa_ice,
-earth_mountains,earth_water,sun_plasma,jupiter_storms` (see PLANET_GENERATOR.md).
+Env vars actually read (grep each `render_*.gd` before assuming one applies to another):
+- `render_terrain.gd`: `TERRAIN_SHOTS` only. Output is fixed at `user://terrain_%s.png` →
+  `~/.local/share/godot/app_userdata/Cold Light/terrain_<name>.png` (project's registered
+  name is "Cold Light", see project.godot; `SHOT_DIR` is NOT read by this script).
+- `render_thruster.gd`: `SHOT_DIR`, `DETAIL`, `ISOLATE`, `VIEW`, `SHAPE`, `GLOW_ON`, `SHIP`.
+- `render_wedge_fighter.gd`: `RAW`, `SHOT_DIR`.
+
+`TERRAIN_SHOTS` values (all 19, `tools/render_terrain.gd:32-53`): `moon_rocks, moon_crater,
+io_volcano, mars_volcano, europa_ice, earth_mountains, earth_water, sun_plasma,
+jupiter_storms, earth_20km, earth_7km, moon_20km, moon_7km, moon_200m, coast_12km,
+coast_6km, coast_2km, himalaya_12km, himalaya_9km` (see PLANET_GENERATOR.md).
 
 Build: `./build.sh` (flatpak Godot export → `builds/{windows,linux}/`). Android: see
 `BUILD-ANDROID.md`.
@@ -100,6 +126,11 @@ runs it.
 
 ## Directives
 
+- Scene-unit convention: 1 scene unit = 1 km for physical bodies (`ship.gd:61-64`).
+  Arcade (non-Sol) systems use 1u = 0.01 AU with body radii boosted by `VISUAL_SCALE`
+  (`planet_system.gd:36-42`) — never assume a bare unit count means km outside Sol.
+- Every Sol feature shipped so far is a first pass. Treat none of it as finished
+  (`CONTEXT.md`).
 - Always keep `TerrainSampler` the single height source. Never add a second height/noise
   function for mesh, collision, or props — call the sampler.
 - Always mirror `PlanetGenerator.crust_height()` and `planet_cook.gdshader`'s
@@ -117,7 +148,8 @@ runs it.
   `class_name` — drop `class_name` on autoload scripts per ADR-0001 (Godot forbids the
   clash).
 - Always name files `snake_case(class_name)` (e.g. `class_name PlanetSystem` →
-  `planet_system.gd`).
+  `planet_system.gd`). Existing exception: `wedge_fighter.gd` holds `class_name
+  WedgeFighterDesign` — don't "fix" that mismatch as a drive-by.
 - Before any planet/terrain change: run `tools/test_surface_recipes.gd`,
   `tools/test_earth_terrain.gd`, `tools/test_surface_band.gd`, `tools/test_skin_kill.gd`,
   `tools/test_terrain_light.gd`.
@@ -126,8 +158,10 @@ runs it.
 
 Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.md`):
 
-- Never say "Godot unit"/"world position"/"global transform" for game-space coordinates —
-  say **true position** (ship stays at render origin; bodies draw at true minus ship's true).
+- Never say "Godot unit"/"meter"/"old 0.1 AU unit" for the coordinate scale — say
+  **scene unit** (1 km for physical bodies; see scene-unit convention above).
+- Never say "world position"/"global transform" for a body's coordinate — say **true
+  position** (ship stays at render origin; bodies draw at true minus ship's true).
 - Never build an "arcade gravity well" / safe-zone pull / idle-release physics — Newton
   inverse-square only, no damping, no arcade 550 speed cap in Sol.
 - Never add a "fat air shell" / Kerbal bubble / arcade planet spin — Earth atmosphere is a
@@ -151,12 +185,13 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 | `*.gd.uid` (every `.gd` has one) | Godot editor, auto-managed |
 | `*.import` | Godot editor import cache |
 | `.godot/` | Godot editor (import cache, class registry) — gitignored |
-| `assets/starfield_naked/low/high/tycho.res` | `tools/build_starfield.gd` (`godot --headless --script tools/build_starfield.gd`) |
+| `assets/starfield_{naked,low,high,tycho}.res` | `tools/build_starfield.gd` (`godot --headless --script tools/build_starfield.gd`) |
 | `assets/planets/*` | `tools/fetch_planet_maps.py` (→ /tmp) then `tools/ingest_planet_maps.py` (crop/resize into `assets/planets/`) |
 | `WORMHOLE_NETWORK.png` | `tools/export_wh_graph.gd` (dumps `/tmp/wh_graph.json`) → `tools/draw_wh_network.py` |
 | `TAB_TARGETING.png` | `tools/draw_tab_target.py` |
 | `assets/fx/exhaust_noise.png` | `tools/gen_exhaust_noise.py` |
-| `assets/{sfx_fire,laser_loop,notify,reward,teleport,ui_click}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,reward,teleport,ui_click,engine}_audio.py`, `tools/gen_booster.py` |
+| `assets/{sfx_fire,laser_loop,notify,reward,teleport}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,reward,teleport,engine}_audio.py`, `tools/gen_booster.py` |
+| `assets/ui_click.wav` | `tools/gen_ui_click.py` |
 | `tools/data/` | `tools/parse_tycho.py` (raw Tycho-2 catalogue, ~340MB, gitignored) |
 | `builds/` | `build.sh` export output, gitignored |
 
@@ -179,7 +214,12 @@ expected; per-line/per-function narration is not.
 | `CONTEXT.md` | Domain glossary — the project's vocabulary + "_Avoid_" lists per term |
 | `PLANET_GENERATOR.md` | The planet/terrain pipeline contract (recipe → cook → terrain) |
 | `NEEDS-YOUR-EYES.md` | Standing physics/design constraints + open visual-review questions a human must judge (llvmpipe software renderer can't judge appearance) |
-| `HANDOFF.md` | Living project status/handoff log across sessions |
+| `docs/SESSION-*.md` | Dated session notes across sessions (two exist: `2026-08-18-sol-first-pass.md`, `2026-09-04-skin-band.md`) |
+| `CREDITS.md` | Asset credits — what's code-generated vs. free/AI-generated, and where from |
+| `STARFIELD.md` | How the real-catalogue star field is built and rendered |
+| `TAB_TARGETING.md` | How nose-aim Tab-targeting picks and cycles candidates |
+| `WORMHOLE_NETWORK.md` | The wormhole graph's structure and routing rules |
+| `lore.md` | In-universe codex — fleet, factions, setting |
 | `docs/adr/` | Accepted architecture decisions (the "why" behind structural choices) |
 | `docs/specs/`, `docs/superpowers/specs/` | Dated design specs for individual features (older/newer split — both are point-in-time design docs, not living contracts) |
 | `docs/superpowers/plans/` | Worker execution plans for specific slices of work |

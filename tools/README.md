@@ -15,11 +15,9 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_booster_brightness.gd` | `ShipMesh.booster_brightness` + nozzle shaping |
 | `test_chase_rig.gd` (+ `.tscn`) | Third-person chase camera rig + ship-only fill light |
 | `test_class_ii_cruiser.gd` | Class II cruiser default asset + dedicated surfaces |
-| `test_dingo57_starship.gd` | Dingo57 hull: 8 authored boosters + 1 opaque double-sided hull |
 | `test_earth_terrain.gd` | Earth flyover: height function, nested rings, band ceiling, speed cap, contact kill |
 | `test_flight_mode.gd` | `FlightMode` zone/exclusion math |
 | `test_galaxy_backdrop.gd` | Camera never ends up inside the opaque galaxy backdrop mesh |
-| `test_jazoone_spaceship.gd` | JazOone hull material split + emissive engine discs |
 | `test_look_at_pole.gd` | Look-at math doesn't flip the nose when overhead is world-up |
 | `test_newton.gd` | Sol Newton gravity numbers + a parked GEO fall |
 | `test_planet_generator.gd` | The cook: named Sol recipes + invented look for strangers |
@@ -39,7 +37,6 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_terrain_light.gd` | Ground lighting/haze matches the globe's rule |
 | `test_turn_carry.gd` | A turn carries Sol velocity with the hull |
 | `test_wedge_fighter.gd` (+ `.tscn`) | Wedge-fighter hull build |
-| `test_wh_network.gd` | Wormhole graph connectivity + hop distances from Earth |
 
 ## render_* — visual review captures (offscreen screenshots, human/agent judged)
 

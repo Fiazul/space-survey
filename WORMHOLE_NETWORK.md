@@ -37,8 +37,10 @@ So you're never more than **3 wormholes** from anywhere. No 10-hop pilgrimages, 
 
 ## Verification
 
-This isn't vibes — it's tested. `tools/test_wh_network.gd` builds the live graph from
-`SystemDB`, BFS-checks reachability and hop counts, and asserts:
+Recorded check (2026-08). The test that produced it, `tools/test_wh_network.gd`, was removed
+2026-09-08 because it hung under `--script` (reaches the `Ephemeris` autoload). Not re-verified
+since; reinstate as a scene-based test. It built the live graph from `SystemDB`, BFS-checked
+reachability and hop counts, and asserted:
 
 ```
 connected:        PASS
@@ -49,10 +51,7 @@ any <= 3 hops:    PASS   (diameter 3)
 ## Regenerating this doc
 
 ```bash
-# 1. run the test (prints the report)
-godot --headless --script res://tools/test_wh_network.gd
-
-# 2. dump the graph + redraw the diagram
+# 1. dump the graph + redraw the diagram
 godot --headless --script res://tools/export_wh_graph.gd   # -> /tmp/wh_graph.json
 python3 tools/draw_wh_network.py                            # -> WORMHOLE_NETWORK.png
 ```

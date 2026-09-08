@@ -618,10 +618,8 @@ static func close_detail(alt_km: float) -> float:
 # and below this world's own ceiling. The ceiling is PER-WORLD now, so it arrives
 # as an argument instead of being read off a global constant - see band_ceiling_km.
 #
-# Earth's window is still empty at this point in the work, but for a different
-# reason than before: its ceiling now clears Everest (16.2 km) and what keeps the
-# band shut is the 29 km kill bubble sitting above it. Moving that bubble to
-# contact is what opens Earth.
+# ceiling_km = max(1.7 x sampler.max_height_km(), 35.0) — headroom above the tallest
+# terrain, so the band never opens with the ship already inside a mountain.
 static func ground_stamp_ok(alt_km: float, kill_km: float, ceiling_km: float) -> bool:
 	return alt_km > kill_km and alt_km < ceiling_km
 

@@ -5,10 +5,9 @@ You do not land. A billion stars stay sky points until you are there.
 
 ## Current close-flight behaviour (2026-09-07)
 
-This section is current. Earlier drafts of this doc described a 29 km Earth kill
-altitude and a 3.24 km band ceiling; both are gone (see "Skin band" below).
-
-- Solid planets use local terrain below 35 km above ground (higher for exceptional relief), including Earth and Moon at 7–20 km.
+- Solid planets use local terrain below a per-body ceiling, floored at 35 km above ground
+  (see "Skin band" below for the derivation). Measured terrain max: Earth 9.49 km, Moon
+  1.97 km (`tools/test_earth_terrain.gd`), both well under the 35 km floor.
 - Patch coordinates, terrain queries and impact checks use the body's own rotating frame. The Moon is not anchored at Earth's centre.
 - Ring half-width covers the horizon with a projection margin. All rings recenter together to keep their stitched boundaries aligned. The coarse globe is hidden only while the complete local terrain replaces it.
 - The altitude tape reads **AGL**, with metres below 1 km; height above the reference sphere is not clearance above a mountain.
@@ -70,9 +69,12 @@ are deliberately unchanged in this pass.
 
 `tools/test_surface_recipes.gd` covers recipe routing, caldera/crater geometry,
 height bounds, contact, seeded repeatability and level procedural oceans.
-For visual review, run `tools/render_terrain.tscn` with `TERRAIN_SHOTS` set to a
-comma-separated selection of `moon_rocks,moon_crater,io_volcano,mars_volcano,
-europa_ice,earth_mountains,earth_water,sun_plasma,jupiter_storms`.
+For visual review, run under `xvfb-run` (plain `--headless` captures nothing — see
+CLAUDE.md) with `TERRAIN_SHOTS` set to a comma-separated selection of all 19 values
+(`tools/render_terrain.gd:32-53`): `moon_rocks, moon_crater, io_volcano, mars_volcano,
+europa_ice, earth_mountains, earth_water, sun_plasma, jupiter_storms, earth_20km,
+earth_7km, moon_20km, moon_7km, moon_200m, coast_12km, coast_6km, coast_2km,
+himalaya_12km, himalaya_9km`.
 
 ### Original generator contract
 
@@ -134,12 +136,13 @@ rocky/ice world, Earth and Moon included, pinned by `tools/test_surface_band.gd`
 
 **The ceiling is derived, not a magic number.** It used to be a plate-width ratio
 (a fixed-size plate only reads as ground while its width dwarfs your altitude).
-Four nested rings now reach ~205 km, so that constraint no longer applies; the
+The rings' reach is horizon-following now (measured 163.8 km at ~1 km altitude,
+`tools/test_earth_terrain.gd`), so that constraint no longer applies; the
 ceiling's job is instead to open the band **above the tallest terrain** so you
 don't enter it already inside a mountain: `band_ceiling_km = max(sampler.max_height_km
 * 1.7, 35.0)` (`BAND_CEILING_MULT`, `BAND_CEILING_MIN_KM` in `planet_generator.gd`).
-Rationale for the 35 km floor specifically: not recorded beyond "clears Everest
-(16.2 km) and covers Earth/Moon bird's-eye at 7–20 km" in the code comment.
+The only comment on `BAND_CEILING_MIN_KM` (`planet_generator.gd:596`): "bird's-eye
+terrain remains active at 7–20 km". Rationale for 35 specifically: not recorded.
 
 **`physical` is load-bearing.** An arcade system's units are 1u = 0.01 AU with radii boosted by `VISUAL_SCALE`, so its "altitude" of 0.1 is really a million kilometres. A ground plate must never pop up in deep space; `main._update_skin_kill` guards the kill line the same way.
 
@@ -151,7 +154,10 @@ The kit meshes are still **project-owned primitives**, not the CC0 pack in `docs
 
 **Props cover the plate, not a corner of it.** Candidates are collected row-major and thinned at an even fractional stride; bailing out at `PROP_MAX` mid-walk dresses the first rows and leaves the rest bare. The test measures coverage along the plate's **own** east/north axes and asserts both, because a world-axis AABB cannot see this failure: a truncate keeps east at full width and only collapses north (9.8 × 7.1 of a 10 km plate, versus 9.8 × 9.8 when thinned).
 
-Measured on the Moon at 1 km: 13,824 ground verts (a full 48×48 plate), 0 water, 220 of 312 candidate props, plate 10 km, geometry on the 1732–1745 km shell.
+Measured on the Moon (`tools/test_surface_band.gd`, `tools/test_earth_terrain.gd`): 33,466
+tris across 4 rings, verts per ring [26112, 24762, 24762, 24762], quad size 0.040 /
+0.160 / 0.640 / 2.560 km per ring, 220 of 563 candidate props placed, props covering
+2.52 × 2.52 km of a 2.56 km plate.
 
 ## Not this slice
 

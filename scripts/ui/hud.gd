@@ -1081,8 +1081,9 @@ func _linear_gradient(top: Color, bottom: Color) -> GradientTexture2D:
 # (ship set, current selection, or station name), so it's cheap to call per frame.
 func set_hangar(open: bool, names: PackedStringArray, current: int, station: String, teleports := []) -> void:
 	var has_color: bool = open and ship != null and ship.current_has_color_pick()
+	var has_finish: bool = has_color and ship.current_has_finish_pick()
 	var body_key: String = ship.current_body_color() if has_color else ""
-	var finish: String = ship.current_finish() if has_color else ""
+	var finish: String = ship.current_finish() if has_finish else ""
 	var tp_sig := ""
 	for t in teleports:
 		tp_sig += String(t.id) + ","
@@ -1107,6 +1108,7 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 		_hangar_rows.add_child(_make_hangar_row(names[i], i, i == current))
 	if has_color:
 		_hangar_rows.add_child(_make_color_swatches("SHIP COLOUR", body_key))
+	if has_finish:
 		_hangar_rows.add_child(_make_choice_row("FINISH",
 			[{"key": "metallic", "label": "METALLIC"}, {"key": "glassy", "label": "GLASSY"}],
 			finish, _on_finish_choice))
@@ -1386,8 +1388,10 @@ func refresh() -> void:
 			var srel: Vector3 = planets.rel_of("Sun")
 			if srel.length() > 1.0:
 				extra += "\nSun     %.3f AU" % (srel.length() / Ephemeris.AU_TO_UNITS)
-		_tape_label.text = "Alt     %.0f km  %s\nNeed    %s circle  ·  %s esc%s" % [
-			alt, who, _fmt_speed(v_c), _fmt_speed(v_e), extra]
+		var agl: float = planets.ground_altitude_km(who) if planets != null else alt
+		var altitude_text := "%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl
+		_tape_label.text = "AGL     %s  %s\nNeed    %s circle  ·  %s esc%s" % [
+			altitude_text, who, _fmt_speed(v_c), _fmt_speed(v_e), extra]
 		if ship.debug_toast != "":
 			toast = ship.debug_toast
 			toast_t = 2.2

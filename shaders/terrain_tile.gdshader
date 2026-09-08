@@ -42,8 +42,36 @@ uniform float has_albedo = 0.0;
 uniform float has_water = 0.0;
 uniform vec3 color_ocean : source_color = vec3(0.06, 0.22, 0.32);
 uniform float map_weight = 0.0;    // how much the map still knows; see TerrainSampler
+uniform float body_radius_km = 6371.0;
+uniform float rock_amount = 1.0;
+uniform float liquid_amount = 0.0;
+uniform float lava_amount = 0.0;
+uniform float ice_surface = 0.0;
+uniform float wave_scale = 1.0;
+uniform float surface_seed = 0.0;
 
 varying vec3 v_world_n;
+varying vec3 v_radial;
+varying float v_height;
+varying vec3 v_surface;
+
+float grain_hash(vec3 p) {
+	// Keep hash arithmetic bounded: sin(dot(planet_km * frequency, ...))
+	// loses precision and produces rectangular discontinuities on large worlds.
+	p = fract(p * vec3(0.1031, 0.1030, 0.0973));
+	p += dot(p, p.yxz + 33.33);
+	return fract((p.x + p.y) * p.z);
+}
+
+float grain(vec3 p) {
+	vec3 cell = floor(p);
+	vec3 f = fract(p);
+	f = f * f * (3.0 - 2.0 * f);
+	return mix(mix(mix(grain_hash(cell), grain_hash(cell + vec3(1, 0, 0)), f.x),
+		mix(grain_hash(cell + vec3(0, 1, 0)), grain_hash(cell + vec3(1, 1, 0)), f.x), f.y),
+		mix(mix(grain_hash(cell + vec3(0, 0, 1)), grain_hash(cell + vec3(1, 0, 1)), f.x),
+		mix(grain_hash(cell + vec3(0, 1, 1)), grain_hash(cell + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
 
 
 void vertex() {
@@ -51,6 +79,9 @@ void vertex() {
 	// normal is already the world normal — but go through MODEL_MATRIX anyway so a
 	// future rotation cannot silently break the lighting.
 	v_world_n = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
+	v_radial = normalize((MODEL_MATRIX * vec4(normalize(VERTEX), 0.0)).xyz);
+	v_height = length(VERTEX) - body_radius_km;
+	v_surface = VERTEX;
 }
 
 
@@ -65,14 +96,50 @@ void fragment() {
 	// wetness as the fallback for worlds with no mask.
 	float wet = COLOR.a;
 	if (has_water > 0.5) {
-		wet = smoothstep(0.35, 0.65, texture(water_tex, UV).r);
+		wet = smoothstep(0.35, 0.65, texture(water_tex, UV).r) * (1.0 - smoothstep(0.04, 0.32, v_height));
 	}
+	wet *= liquid_amount;
 	alb = mix(alb, color_ocean, clamp(wet, 0.0, 1.0));
+	// World-anchored substrate at kilometre and hundred-metre scales. Fade the
+	// fine octave when pixels become larger than it, avoiding distant shimmer.
+	float footprint = length(fwidth(v_surface));
+	float coarse = grain(v_surface * 0.8) - 0.5;
+	float fine = (grain(v_surface * 8.0) - 0.5) * (1.0 - smoothstep(0.03, 0.2, footprint));
+	alb *= 1.0 + (coarse * 0.22 + fine * 0.12) * (1.0 - wet * 0.7);
 	vec3 n = normalize(v_world_n);
 	vec3 l = normalize(sun_dir);
-	float day = smoothstep(term_lo, term_hi, dot(n, l));
-	float lit = mix(night_fill, 1.0, day);
+	vec3 view_w = normalize((INV_VIEW_MATRIX * vec4(normalize(VERTEX), 0.0)).xyz);
+	vec3 radial = normalize(v_radial);
+	float slope = 1.0 - clamp(dot(n, radial), 0.0, 1.0);
+	vec3 p = v_surface + vec3(surface_seed);
+	float rock_fine = grain(p * 32.0);
+	float strata = sin(v_height * 110.0 + grain(p * 0.3) * 12.0);
+	float exposed = rock_amount * (1.0 - wet) * (1.0 - ice_surface);
+	alb *= 1.0 + exposed * (0.13 * strata * smoothstep(0.005, 0.12, slope) + (rock_fine - 0.5) * 0.20);
+	// Fractures across frozen ground: no liquid mask or water glint on Europa.
+	float crack_noise = grain(p * 0.6) + 0.16 * grain(p * 3.0);
+	float crack = (1.0 - smoothstep(0.012, 0.04, abs(crack_noise - 0.56))) * ice_surface;
+	alb = mix(alb, vec3(0.19, 0.32, 0.40), crack * 0.65);
+	alb = mix(alb, vec3(0.62, 0.76, 0.84), ice_surface * 0.22 * (1.0 - crack));
+	// Two travelling wave directions, anchored in body space, perturb highlights.
+	vec3 ripple = vec3(sin(p.z * 90.0 * wave_scale + TIME * 1.2),
+		cos(p.x * 73.0 * wave_scale - TIME * 0.9), sin(p.y * 83.0 * wave_scale + TIME));
+	ripple = (MODEL_MATRIX * vec4(ripple, 0.0)).xyz;
+	n = normalize(n + (ripple - radial * dot(ripple, radial)) * wet * 0.09);
+	float day = smoothstep(term_lo, term_hi, dot(normalize(v_radial), l));
+	// The terminator alone saturates across the entire day side, flattening hills.
+	float lit = mix(night_fill, 0.18 + 0.82 * max(dot(n, l), 0.0), day);
 	vec3 col = alb * lit;
+	float fresnel = pow(1.0 - max(dot(n, -view_w), 0.0), 5.0);
+	float glint = pow(max(dot(reflect(-l, n), -view_w), 0.0), 110.0);
+	col += wet * day * (vec3(1.0, 0.84, 0.59) * glint * 1.4 + vec3(0.08, 0.16, 0.24) * fresnel);
+	// UV2 carries the SAME volcanic regions that generated the caldera geometry.
+	float volcanic = clamp(UV2.x * lava_amount, 0.0, 1.0);
+	float channels = 1.0 - smoothstep(0.015, 0.055, abs(grain(p * 1.6) + grain(p * 4.0) * 0.2 - 0.58));
+	float molten = max(smoothstep(0.975, 0.995, volcanic), channels * smoothstep(0.08, 0.8, volcanic) * 0.8);
+	col = mix(col, vec3(0.025, 0.018, 0.014) * lit, volcanic * 0.72);
+	float pulse = 0.82 + 0.18 * sin(TIME * 1.7 + grain(p * 3.0) * 9.0);
+	col += mix(vec3(1.6, 0.075, 0.003), vec3(3.2, 0.85, 0.035), molten) * molten * pulse;
 
 	// VERTEX is the fragment's VIEW-space position, so its length is the distance
 	// to the camera in world units — kilometres in Sol.
@@ -83,7 +150,6 @@ void fragment() {
 	// Forward scattering: looking toward the star, the haze goes warm; looking
 	// away it stays the air's own colour. This is what makes a horizon read as
 	// atmosphere rather than as a grey fog constant.
-	vec3 view_w = normalize((INV_VIEW_MATRIX * vec4(normalize(VERTEX), 0.0)).xyz);
 	float warmth = pow(max(dot(view_w, l), 0.0), 2.0);
 	vec3 haze_col = mix(color_air, sun_warm, warmth);
 	// The haze is itself lit. Without this it glows on the night side and the

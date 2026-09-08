@@ -376,6 +376,7 @@ func _process(delta: float) -> void:
 	# Hand the ship the SAME height function the ground rings and the contact kill
 	# read, so its substep ground clamp cannot disagree with either.
 	ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
+	ship.terrain_basis = planets.surface_basis(planets.nearest_name)
 	ship.nearest_dir = planets.nearest_dir   # only ease down when approaching it
 	ship.nearest_name = planets.nearest_name
 	ship.nearest_dist = planets.nearest_dist # warp ships ease out of warp on arrival
@@ -1492,6 +1493,8 @@ var _prev_body := ""
 
 
 func _update_skin_kill(delta: float) -> void:
+	var impact: bool = ship.surface_impact
+	ship.surface_impact = false
 	if _skin_dying:
 		_skin_t += delta
 		ship.locked = true
@@ -1503,12 +1506,17 @@ func _update_skin_kill(delta: float) -> void:
 			_skin_finish()
 		return
 	if _tp_active or ship.transiting or docked or _core_dying:
+		_prev_body = ""
 		return
 	if not ship.newton:
+		_prev_body = ""
 		return
 	if not planets.is_physical(planets.nearest_name):
 		return
 	if planets.nearest_dist >= INF or planets.nearest_radius <= 0.0:
+		return
+	if impact and planets.nearest_name == "Earth":
+		_skin_begin("Earth")
 		return
 	var sampler := planets.terrain_sampler_for(planets.nearest_name)
 	if sampler == null:
@@ -1517,7 +1525,7 @@ func _update_skin_kill(delta: float) -> void:
 	# vector ship->body, so the ship's offset from that body's centre is its
 	# negation. Using the sphere-relative altitude here instead would be wrong by
 	# the full height of the terrain - 8.9 km over Everest.
-	var from_centre: Vector3 = -planets.rel_of(planets.nearest_name)
+	var from_centre: Vector3 = planets.surface_basis(planets.nearest_name).inverse() * -planets.rel_of(planets.nearest_name)
 	if from_centre.length() < 0.001:
 		return
 	var contact: float = Ephemeris.surface_kill_km(planets.nearest_name)
@@ -1536,6 +1544,8 @@ func _update_skin_kill(delta: float) -> void:
 
 
 func _skin_begin(body: String) -> void:
+	# A respawn is a discontinuity, not a flight segment through the planet.
+	_prev_body = ""
 	_skin_dying = true
 	_skin_t = 0.0
 	_skin_body = body

@@ -1,5 +1,7 @@
 class_name TerrainSampler
 extends RefCounted
+const SurfaceRecipe := preload("res://scripts/world/surface_recipe.gd")
+var surface: Dictionary
 # THE height function. One instance per body, and every consumer holds the same
 # instance: the ring mesh builder displaces vertices with it, and main's contact
 # kill measures altitude with it. If those two ever computed height differently
@@ -116,9 +118,11 @@ var _a_h := 0
 var _seed := 0.0                   # the SAME seed the cook material got
 var _land := 1.0                   # recipe land_amount, the water cut with no mask
 var _has_map := false
+var _crust_color := Color(0.5, 0.5, 0.5)
 
 
 func _init(recipe: Dictionary) -> void:
+	surface = SurfaceRecipe.resolve(recipe)
 	var hm := _load_gray(str(recipe.get("height", "")))
 	_h_bytes = hm.bytes
 	_h_w = hm.w
@@ -136,6 +140,7 @@ func _init(recipe: Dictionary) -> void:
 	_aimg = am
 	_seed = float(recipe.get("seed", 0.0))
 	_land = float(recipe.get("land_amount", 1.0))
+	_crust_color = recipe.get("color_a", Color(0.5, 0.5, 0.5))
 	_has_map = _h_w > 0
 
 
@@ -145,7 +150,20 @@ func height_m(dir: Vector3) -> float:
 	var base := base_height_m(dir)
 	if _has_map and base <= 0.0 and not DEM_HAS_BATHYMETRY:
 		return 0.0                 # ocean floor is not modelled; sea level is the floor
-	return base + _detail_m(dir, base)
+	var ground := base + _detail_m(dir, base) + geology_height_m(dir)
+	if not _has_map and float(surface.liquid_amount) > 0.0:
+		# Procedural seas need a level datum too, not water painted up hillsides.
+		var dry := 1.0 - water01(dir)
+		return maxf(ground, 0.0) * smoothstep(0.05, 0.75, dry)
+	return ground
+
+
+func geology_height_m(dir: Vector3) -> float:
+	return SurfaceRecipe.height_offset_m(dir, surface)
+
+
+func lava01(dir: Vector3) -> float:
+	return SurfaceRecipe.lava_mask(dir, surface)
 
 
 # The map/noise value with NO procedural detail on top. Exists so the detail pass
@@ -228,6 +246,10 @@ const SEA_LEVEL_TOL_M := 40.0
 # resolution - 1.5 km quads on ring 2, 6.1 km on ring 3 - as hard-edged angular
 # polygons. Water is a material property of the surface, not separate geometry.
 func water01(dir: Vector3) -> float:
+	if float(surface.liquid_amount) <= 0.0:
+		return 0.0
+	if _land >= 1.0 and _s_w == 0:
+		return 0.0
 	if _s_w > 0:
 		var mask := _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir))
 		# Elevation still has a veto: the mask is 19.5 km per texel, so its
@@ -243,6 +265,10 @@ func water01(dir: Vector3) -> float:
 
 
 func is_water(dir: Vector3) -> bool:
+	if float(surface.liquid_amount) <= 0.0:
+		return false
+	if _land >= 1.0 and _s_w == 0:
+		return false
 	if _s_w > 0:
 		if _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) <= 0.5:
 			return false
@@ -260,10 +286,11 @@ func is_water(dir: Vector3) -> bool:
 # be an UPPER BOUND and not an average — enter the band below the terrain and you
 # arrive inside a mountain.
 func max_height_km() -> float:
+	var geology_bound := SurfaceRecipe.max_offset_m(surface) / 1000.0
 	if _has_map:
-		return (DEM_MAX_VALUE * DEM_SCALE_M + DETAIL_MAX_M) / 1000.0
+		return (DEM_MAX_VALUE * DEM_SCALE_M + DETAIL_MAX_M) / 1000.0 + geology_bound
 	# Centred, so the peak ABOVE the datum is only the half-range.
-	return (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0
+	return (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0 + geology_bound
 
 
 # Did the hull touch ground anywhere along this frame's movement? Samples the
@@ -276,7 +303,7 @@ func max_height_km() -> float:
 # slow hover costs one sample and a fast pass costs proportionally more.
 func swept_contact(from: Vector3, to: Vector3, body_radius_km: float,
 		contact_km: float) -> bool:
-	if alt_above_ground_km(to, body_radius_km) <= contact_km:
+	if alt_above_ground_km(to, body_radius_km) <= contact_km or alt_above_ground_km(from, body_radius_km) <= contact_km:
 		return true
 	var travel := from.distance_to(to)
 	if travel < 0.0001:
@@ -322,7 +349,7 @@ const PALETTE_OCEAN := Color(0.06, 0.22, 0.32)
 
 # Kilometres of ground per albedo texel on a body this size.
 func km_per_texel(body_radius_km: float) -> float:
-	return TAU * body_radius_km / 2048.0
+	return TAU * body_radius_km / maxf(float(_a_w), 1.0)
 
 
 # How much the MAP should lead, 0..1, from how many texels it still spans across
@@ -341,6 +368,12 @@ func map_weight(plate_km: float, body_radius_km: float) -> float:
 # shaders/terrain_tile.gdshader, because at ring 3's 10.24 km vertex spacing a
 # map-derived colour becomes an angular polygon.
 func land_color(dir: Vector3, _body_radius_km: float) -> Color:
+	# Airless/rocky worlds must not inherit Earth's grass and snow palette.
+	# Mapped geography also remains the broad tint when flying below one texel.
+	if _a_w > 0:
+		return albedo_color(dir)
+	if _land >= 1.0:
+		return _crust_color.darkened(slope01(dir) * 0.25)
 	var h_m := height_m(dir)
 	var span: float = maxf(max_height_km() * 1000.0, 1.0)
 	var h01 := clampf(h_m / span, 0.0, 1.0)
@@ -351,13 +384,7 @@ func land_color(dir: Vector3, _body_radius_km: float) -> Color:
 
 
 func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Color:
-	var h_m := height_m(dir)
-	var span: float = maxf(max_height_km() * 1000.0, 1.0)
-	var h01 := clampf(h_m / span, 0.0, 1.0)
-	var slope := slope01(dir)
-	var proc: Color = PALETTE_GRASS.lerp(PALETTE_DIRT, clampf(h01 * 2.2, 0.0, 1.0))
-	proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
-	proc = proc.lerp(PALETTE_ROCK, slope * 0.65)
+	var proc := land_color(dir, body_radius_km)
 	var w := map_weight(plate_km, body_radius_km)
 	if w > 0.0:
 		proc = proc.lerp(albedo_color(dir), w)

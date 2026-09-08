@@ -126,7 +126,7 @@ const RECIPES := {
 		"color_b": Color(0.75, 0.62, 0.40),
 	},
 	"Uranus": {
-		"kind": "ice",
+		"kind": "gas",
 		"albedo": "res://assets/planets/uranus_2k.jpg",
 		"source": "ready-map",
 		"evidence": "Solar System Scope / Voyager 2",
@@ -136,7 +136,7 @@ const RECIPES := {
 		"color_a": Color(0.294, 0.439, 0.867),
 	},
 	"Neptune": {
-		"kind": "ice",
+		"kind": "gas",
 		"albedo": "res://assets/planets/neptune_2k.jpg",
 		"source": "ready-map",
 		"evidence": "Solar System Scope / Voyager 2",
@@ -409,6 +409,8 @@ static func recipe_for(spec: Dictionary) -> Dictionary:
 		var r: Dictionary = (RECIPES[name] as Dictionary).duplicate()
 		r["name"] = name
 		r["features"] = r.get("features", [])
+		if spec.has("surface"):
+			r["surface"] = spec.surface.duplicate(true)
 		# NAMED recipes carry no seed, so every one of them ran the crust noise at
 		# seed 0 - and the Moon, Mars and Mercury came out with literally identical
 		# terrain (measured: min -1170 m, mean -93 m, max +871 m on all three).
@@ -486,6 +488,7 @@ static func invent(spec: Dictionary) -> Dictionary:
 		"air_amount": 0.0,
 		"seed": float(name.hash() % 10000) * 0.017,
 		"features": [],
+		"surface": spec.get("surface", {}).duplicate(true),
 	}
 
 
@@ -590,13 +593,11 @@ static func close_enough(dist: float, radius: float) -> bool:
 # terrain, or you enter the band already inside a mountain. Do not reintroduce a
 # plate-ratio rule here - it no longer describes anything real.
 const BAND_CEILING_MULT := 1.7      # headroom above the highest ground
-const BAND_CEILING_MIN_KM := 3.0    # floor for a world so flat that 1.7x its own
-                                    # relief would open the band underground
+const BAND_CEILING_MIN_KM := 35.0   # bird's-eye terrain remains active at 7–20 km
 
 
-# Ceiling of the band for this world, km above sea level.
-# Earth: the DEM's highest sample plus detail headroom is 9.51 km, x 1.7 = 16.2.
-# A world with no map: 3.2 km of noise relief x 0.96875 x 1.7 = 5.27.
+# Ceiling in kilometres above local ground. The 35 km floor includes bird's-eye
+# flight on both Earth and airless worlds; unusually tall relief can expand it.
 static func band_ceiling_km(sampler: TerrainSampler) -> float:
 	if sampler == null:
 		return BAND_CEILING_MIN_KM
@@ -738,6 +739,10 @@ static func terrain_sampler(recipe: Dictionary) -> TerrainSampler:
 static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = TERRAIN_SHADER
+	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
+	for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "wave_scale"]:
+		mat.set_shader_parameter(key, surface[key])
+	mat.set_shader_parameter("surface_seed", surface.seed)
 	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
 	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
 	mat.set_shader_parameter("night_fill", NIGHT_FILL)
@@ -859,6 +864,9 @@ static func make_ring_material(recipe: Dictionary) -> StandardMaterial3D:
 static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) -> ShaderMaterial:
 	var mat := ShaderMaterial.new()
 	mat.shader = COOK_SHADER
+	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
+	mat.set_shader_parameter("granulation", surface.granulation)
+	mat.set_shader_parameter("storm_strength", surface.storm_strength)
 	var a: Color = recipe.get("color_a", spec.get("color", Color(0.45, 0.4, 0.35)))
 	var b: Color = recipe.get("color_b", a.lightened(0.18))
 	var land_c: Color = recipe.get("color_land", a)

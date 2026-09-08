@@ -40,6 +40,8 @@ uniform float has_height = 0.0;
 uniform float has_spec = 0.0;
 uniform float has_normal = 0.0;
 uniform float sky_glow = 0.0;   // far sky disc: never go fully black
+uniform float granulation = 1.0;
+uniform float storm_strength = 1.0;
 
 varying vec3 v_mdl;
 varying vec3 v_world;
@@ -140,6 +142,8 @@ void fragment() {
 		float g1 = fbm(gp);
 		float g2 = fbm(gp * 3.2 + vec3(TIME * 0.08, seed, 0.0));
 		float cells = clamp(g1 * 0.62 + g2 * 0.38, 0.0, 1.0);
+		float fine_cells = noise(n * 160.0 + vec3(TIME * 0.1, seed, -TIME * 0.06));
+		cells = mix(0.5, clamp(cells + (fine_cells - 0.5) * 0.40, 0.0, 1.0), granulation);
 		vec3 hot = color_a * vec3(1.20, 1.08, 0.72);
 		vec3 cool = color_b * vec3(0.78, 0.38, 0.10);
 		if (has_albedo > 0.5) {
@@ -166,13 +170,14 @@ void fragment() {
 	vec3 col;
 	if (kind == 1) {
 		float bands = sin((lat + 0.07 * sin(n.x * 7.0 + seed)) * band_count * 3.14159);
-		float storm = fbm(n * 6.0 + seed * 2.0);
+		float storm = fbm(n * 6.0 + seed * 2.0 + vec3(TIME * 0.013, 0.0, -TIME * 0.009));
 		col = mix(color_a, color_b, 0.5 + 0.5 * bands);
 		col = mix(col, color_a * 0.7, smoothstep(0.62, 0.82, storm) * 0.45);
 		if (has_albedo > 0.5) {
 			col = alb;
 		}
-		col += (storm - 0.5) * (0.06 + 0.18 * detail);
+		float eddies = fbm(n * 44.0 + vec3(sin(lat * 15.0) * 2.0 + TIME * 0.025, seed, 0.0));
+		col *= 1.0 + storm_strength * ((storm - 0.5) * 0.24 + (eddies - 0.5) * (0.16 + 0.32 * detail));
 	} else if (has_albedo > 0.5) {
 		col = alb;
 		if (kind == 0) {

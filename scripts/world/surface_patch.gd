@@ -38,7 +38,7 @@ const RING_STEP := 4.0              # each ring out is this much coarser
 # was already uniform across rings (~49 px each); coverage was the actual fault.
 const RING_SPAN := 4096.0           # RING_STEP^3 * RING_SEGS
 const BASE_QUAD_MIN_KM := 0.01      # 10 m; the DEM has nothing finer
-const BASE_QUAD_MAX_KM := 0.25
+const BASE_QUAD_MAX_KM := 1.0
 # Rings 1..3 are DONUTS: the footprint the finer ring inside already covers is
 # skipped, so nothing overdraws and the triangle budget stays flat with altitude.
 # Each ring's outer edge drops straight down by one of its own quads. Adjacent
@@ -58,10 +58,8 @@ const SKIRT_DROP_MAX_KM := 0.25
 # measured 240 ms. Drifting an eighth of the reach off-centre still leaves
 # 1.2 km of fine ground ahead of the hull.
 const REBUILD_FRAC := 0.125
-# At most one ring may rebuild per update. Four rings landing in one frame is the
-# 1.2 second freeze seen on arrival; spread over four frames it is four hitches.
-# Ring 0 is checked first, so the ground under the hull always wins the slot.
-const RINGS_PER_UPDATE := 1
+# Rebuilds currently commit together to preserve the shared tangent frame.
+# A future double-buffered builder can spread work without displaying torn rings.
 # Rebuild everything once the altitude has moved the ring scale this far.
 const BASE_DRIFT_FRAC := 0.25
 # Start building while still this many ceilings out, so the rings exist by the
@@ -93,6 +91,7 @@ var _tris := 0
 # code called _mat() on every ring rebuild, which minted a fresh
 # StandardMaterial3D each time - eight per full tile, several times a second.
 var _land_mat: ShaderMaterial
+var _prop_mat: ShaderMaterial
 var _water_mat: ShaderMaterial
 var _base_quad := 0.0          # ring 0's quad size for the current altitude
 var _rim_stitched: Array[bool] = []  # per ring: was its rim snapped to the coarser grid
@@ -155,7 +154,8 @@ static func horizon_km(alt_km: float, radius_km: float) -> float:
 # changes rarely and always by exactly 2x, and rescale_is_atomic below makes sure
 # the rings are never at two different scales at once.
 static func base_quad_km(alt_km: float, radius_km: float) -> float:
-	var want: float = clampf(horizon_km(alt_km, radius_km) / RING_SPAN,
+	# Full width must cover BOTH sides of the horizon, with projection margin.
+	var want: float = clampf(2.4 * horizon_km(alt_km, radius_km) * (1.0 + maxf(alt_km, 0.0) / radius_km) / RING_SPAN,
 		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
 	# CEIL, not round. Rounding to the nearest power of two can land 0.71x short
 	# of the horizon, which puts the body's bare 208 km-facet sphere back in the
@@ -199,10 +199,17 @@ func bind_recipe(recipe: Dictionary) -> void:
 	_land_mat = PlanetGenerator.terrain_material(recipe, spec)
 	_water_mat = PlanetGenerator.terrain_material(recipe, spec)
 	_water_mat.set_shader_parameter("night_fill", PlanetGenerator.NIGHT_FILL * 0.5)
+	_prop_mat = ShaderMaterial.new()
+	_prop_mat.shader = preload("res://shaders/surface_prop.gdshader")
+	_prop_mat.set_shader_parameter("air_amount", float(recipe.get("air_amount", 0.0)))
+	_prop_mat.set_shader_parameter("color_air", recipe.get("color_air", Color(0.3, 0.56, 1.0)))
+	_prop_mat.set_shader_parameter("ice_surface", _sampler.surface.ice_surface if _sampler != null else 0.0)
+	_props.material_override = _prop_mat
 	var kit: String = PlanetGenerator.surface_kit(recipe)
-	if kit != _kit or _props.multimesh == null:
-		_kit = kit
-		_props.multimesh = _make_prop_multimesh(kit)
+	# Geometry colours are recipe-derived, so a Moon -> Mars switch must repaint
+	# even though both bodies use the same morphology.
+	_kit = kit
+	_props.multimesh = _make_prop_multimesh(kit)
 	for i in RING_COUNT:
 		_ring_anchor[i] = Vector3.ZERO      # force every ring to rebuild
 
@@ -260,6 +267,8 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		bind_body(recipe, sampler)
 		_body = body
 	_radius = radius
+	_land_mat.set_shader_parameter("body_radius_km", radius)
+	_water_mat.set_shader_parameter("body_radius_km", radius)
 	var hit: Vector3 = ship_pos.normalized() * radius
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	# RESCALE IS ATOMIC. A scale change invalidates every ring, and rebuilding them
@@ -267,26 +276,16 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# mismatched boundaries, so the mesh tore open for three frames every time.
 	# Rebuild them all in this one update instead: one bounded hitch, and the rings
 	# are never at two scales at once.
-	var want_base: float = base_quad_km(alt, radius)
+	# AGL can be tiny above a mountain while the sea-level horizon is far away.
+	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius)
 	var rescaled: bool = not is_equal_approx(want_base, _base_quad)
-	if rescaled:
+	var recentered := _ring_anchor[0] == Vector3.ZERO or hit.distance_to(_ring_anchor[0]) > ring_reach_km(0, want_base) * REBUILD_FRAC
+	if rescaled or recentered:
 		_base_quad = want_base
 		for i in RING_COUNT:
 			_build_ring(i, hit, radius)
 			_ring_anchor[i] = hit
-	else:
-		# Otherwise each ring rebuilds only when the hull has crossed a fraction of
-		# ITS OWN reach, so ring 0 follows you closely and cheaply while ring 3
-		# rarely moves - at most one per update so a frame is never four rebuilds.
-		var built := 0
-		for i in RING_COUNT:
-			if built >= RINGS_PER_UPDATE:
-				break
-			var drift := ring_reach_km(i, _base_quad) * REBUILD_FRAC
-			if _ring_anchor[i] == Vector3.ZERO or hit.distance_to(_ring_anchor[i]) > drift:
-				_build_ring(i, hit, radius)
-				_ring_anchor[i] = hit
-				built += 1
+	# All rings share a tangent frame; independent recentering tears their seams.
 	visible = in_band
 	_tris = 0
 	for m in _ring_land:
@@ -444,14 +443,16 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 				var seedn := _hash(Vector2(float(i), float(j)))
 				if _prop_here(wet, float(p00.h), seedn):
 					var t := Transform3D()
-					var sc: float = 0.012 + seedn * 0.028
+					var sc: float = 0.004 + seedn * 0.012
 					# Stand the prop on the vertex's own SMOOTH normal, so a
 					# boulder on a slope leans with the slope instead of with the
 					# quad it happened to land in.
 					var stand: Vector3 = p00.n
 					t.basis = Basis(east, stand, north).orthonormalized().scaled(
 						Vector3(sc, sc * _prop_aspect(seedn), sc))
-					t.origin = p00.p + stand * sc * 0.9
+					# Kit meshes already have their base at y=0. Lifting by nearly
+					# a full scale made floating, building-sized lunar boulders.
+					t.origin = p00.p - stand * sc * 0.08
 					prop_xforms.append(t)
 	_ring_land[ring].mesh = land_st.commit()
 	_ring_land[ring].material_override = _land_mat
@@ -544,9 +545,11 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 	var h: float = clampf((gr - radius) / maxf(_sampler.max_height_km(), 0.001), 0.0, 1.0)
 	# "n" starts radial and is replaced by the grid's smooth normal in _build_ring.
 	# Skirt vertices keep this radial one, which is correct for a vertical wall.
-	var col: Color = _color_at(dir, uv, h)
+	# Shader textures tagged source_color are linearized by Godot; vertex colours
+	# are not. Match that space before blending or close terrain washes out.
+	var col: Color = _color_at(dir, uv, h).srgb_to_linear()
 	col.a = wet          # the shader reads wetness from COLOR.a as its fallback
-	return { "p": dir * gr, "h": h, "w": wet, "n": dir, "c": col, "uv": uv }
+	return { "p": dir * gr, "h": h, "w": wet, "n": dir, "c": col, "uv": uv, "lava": _sampler.lava01(dir) }
 
 
 # Ground colour. Albedo map where the world has one, else the recipe's crust
@@ -572,6 +575,7 @@ func _tri(st: SurfaceTool, a: Dictionary, b: Dictionary, c: Dictionary) -> void:
 		st.set_normal(v.n)
 		st.set_color(v.c)
 		st.set_uv(v.uv)
+		st.set_uv2(Vector2(float(v.get("lava", 0.0)), 0.0))
 		st.add_vertex(v.p)
 
 
@@ -646,27 +650,31 @@ func _tree_mesh() -> ArrayMesh:
 	return st.commit()
 
 
-# A boulder: one squashed octahedron with the equator jittered, so a MultiMesh of
-# them reads as scattered rock rather than a field of identical pyramids.
+# A fractured boulder with five irregular cross-sections and a capped crown.
+# The shared prop shader supplies stone grain, strata, sunlight and haze.
 func _rock_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var stone := Color(0.44, 0.41, 0.38)
-	var dark := Color(0.28, 0.26, 0.24)
-	var top := Vector3(0.06, 0.62, -0.04)
-	var bot := Vector3(-0.03, 0.0, 0.05)
-	var nseg := 6
-	var ring: Array[Vector3] = []
-	for i in nseg:
-		var a := TAU * float(i) / float(nseg)
-		var r := 0.36 + _hash(Vector2(float(i), 3.0)) * 0.20
-		var y := 0.22 + _hash(Vector2(float(i), 7.0)) * 0.14
-		ring.append(Vector3(cos(a) * r, y, sin(a) * r))
-	for i in nseg:
-		var p0: Vector3 = ring[i]
-		var p1: Vector3 = ring[(i + 1) % nseg]
-		_face(st, top, p0, p1, stone)
-		_face(st, bot, p1, p0, dark)
+	var stone := _crust_a.lerp(Color(0.38, 0.36, 0.33), 0.6)
+	const SEGMENTS := 11
+	var rings: Array[PackedVector3Array] = []
+	for layer in 5:
+		var ring := PackedVector3Array()
+		var y := float(layer) * 0.17
+		var radius := [0.28, 0.52, 0.48, 0.33, 0.12][layer] as float
+		for i in SEGMENTS:
+			var a := TAU * float(i) / SEGMENTS
+			var irregular := 0.78 + _hash(Vector2(i, layer + 13)) * 0.40
+			ring.append(Vector3(cos(a) * radius * irregular + y * 0.16,
+				y + _hash(Vector2(i + 11, layer)) * 0.06, sin(a) * radius * irregular))
+		rings.append(ring)
+	for layer in 4:
+		for i in SEGMENTS:
+			var j := (i + 1) % SEGMENTS
+			_face(st, rings[layer][i], rings[layer + 1][j], rings[layer + 1][i], stone)
+			_face(st, rings[layer][i], rings[layer][j], rings[layer + 1][j], stone.darkened(0.05))
+	for i in SEGMENTS:
+		_face(st, Vector3(0.1, 0.74, 0.0), rings[4][i], rings[4][(i + 1) % SEGMENTS], stone)
 	st.set_material(_kit_material())
 	return st.commit()
 
@@ -703,7 +711,8 @@ func _kit_material() -> StandardMaterial3D:
 
 
 func _face(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
-	var n: Vector3 = (b - a).cross(c - a)
+	# Godot front faces are clockwise; their outward normal is the NEGATIVE cross.
+	var n: Vector3 = -(b - a).cross(c - a)
 	if n.length_squared() < 1e-10:
 		n = Vector3.UP
 	else:
@@ -723,7 +732,7 @@ func _box(st: SurfaceTool, mid: Vector3, size: Vector3, col: Color) -> void:
 	]
 	var faces := [[0,1,2,3], [5,4,7,6], [4,0,3,7], [1,5,6,2], [3,2,6,7], [4,5,1,0]]
 	for f in faces:
-		var n: Vector3 = (p[f[1]] - p[f[0]]).cross(p[f[2]] - p[f[0]]).normalized()
+		var n: Vector3 = -(p[f[1]] - p[f[0]]).cross(p[f[2]] - p[f[0]]).normalized()
 		st.set_normal(n); st.set_color(col); st.add_vertex(p[f[0]])
 		st.set_normal(n); st.set_color(col); st.add_vertex(p[f[1]])
 		st.set_normal(n); st.set_color(col); st.add_vertex(p[f[2]])
@@ -797,6 +806,9 @@ func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 		# How much the albedo map still knows at this ring size.
 		m.set_shader_parameter("map_weight",
 			_sampler.map_weight(ring_reach_km(0, _base_quad), _radius))
+	if _prop_mat != null:
+		_prop_mat.set_shader_parameter("sun_dir", d)
+		_prop_mat.set_shader_parameter("haze_density", density)
 
 
 # What the committed normals look like. Test hook: flat shading gives every

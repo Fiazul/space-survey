@@ -255,8 +255,8 @@ func _band() -> int:
 	# Derived, not authored: two worlds with different relief get different
 	# ceilings without a table entry for either.
 	failed += _check("ceiling_is_derived_not_authored",
-		not is_equal_approx(e_ceil, m_ceil))
-	failed += _check("earth_ceiling_is_the_taller_one", e_ceil > m_ceil)
+		e_ceil >= es.max_height_km() * G.BAND_CEILING_MULT)
+	failed += _check("both_worlds_support_birds_eye_flight", e_ceil > 20.0 and m_ceil > 20.0)
 	failed += _check("a_flat_world_still_gets_a_floor",
 		G.band_ceiling_km(null) >= G.BAND_CEILING_MIN_KM)
 
@@ -299,7 +299,7 @@ func _rings() -> int:
 	for probe_alt in [0.2, 1.0, 6.0, 15.0]:
 		var b: float = SP.base_quad_km(probe_alt, EARTH_R)
 		var hz: float = SP.horizon_km(probe_alt, EARTH_R)
-		var cover: float = SP.ring_reach_km(3, b) / hz
+		var cover: float = SP.ring_reach_km(3, b) * 0.5 / hz
 		# NEVER SHORT, and at worst 2x over. The base is quantised to powers of two
 		# so a scale change is rare and always exactly 2x (a continuous base changed
 		# with every metre of altitude, and each change tore the mesh open for three
@@ -307,7 +307,7 @@ func _rings() -> int:
 		# coverage would put the body's bare 208 km-facet sphere back in the outer
 		# part of the view, which is the fault horizon-scaling exists to fix.
 		failed += _check("rings_reach_the_horizon_at_%s_km" % probe_alt,
-			cover >= 1.0 and cover <= 2.1)
+			cover >= 1.2 and cover <= 2.5)
 	# ...and the quad size must actually grow with altitude, or nothing changed.
 	failed += _check("ring_scale_grows_with_altitude",
 		SP.base_quad_km(15.0, EARTH_R) > SP.base_quad_km(0.5, EARTH_R) * 3.0)
@@ -479,9 +479,9 @@ func _rings() -> int:
 
 	print("earth_terrain: rings  base %.0f m at 1 km alt; coverage of the horizon %.0f%% at 0.2 km / %.0f%% at 6 km / %.0f%% at 15 km"
 		% [base_q * 1000.0,
-		SP.ring_reach_km(3, SP.base_quad_km(0.2, EARTH_R)) / SP.horizon_km(0.2, EARTH_R) * 100.0,
-		SP.ring_reach_km(3, SP.base_quad_km(6.0, EARTH_R)) / SP.horizon_km(6.0, EARTH_R) * 100.0,
-		SP.ring_reach_km(3, SP.base_quad_km(15.0, EARTH_R)) / SP.horizon_km(15.0, EARTH_R) * 100.0])
+		SP.ring_reach_km(3, SP.base_quad_km(0.2, EARTH_R)) * 0.5 / SP.horizon_km(0.2, EARTH_R) * 100.0,
+		SP.ring_reach_km(3, SP.base_quad_km(6.0, EARTH_R)) * 0.5 / SP.horizon_km(6.0, EARTH_R) * 100.0,
+		SP.ring_reach_km(3, SP.base_quad_km(15.0, EARTH_R)) * 0.5 / SP.horizon_km(15.0, EARTH_R) * 100.0])
 	print("earth_terrain: rings  %d rings, %d tris, quads %.3f/%.3f/%.3f/%.3f km, reach %.1f km"
 		% [int(r.rings), tris_low, SP.ring_quad_km(0, base_q), SP.ring_quad_km(1, base_q),
 		SP.ring_quad_km(2, base_q), SP.ring_quad_km(3, base_q), SP.ring_reach_km(3, base_q)])

@@ -724,7 +724,8 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 		# the render-space vector ship->body, so the ship's offset from the body's
 		# centre - the frame the sampler works in - is its negation.
 		var salt: float = nearest_dist - nearest_radius
-		var from_centre: Vector3 = -_rel.get(nearest_name, Vector3.ZERO)
+		var body_basis := surface_basis(nearest_name)
+		var from_centre: Vector3 = body_basis.inverse() * -_rel.get(nearest_name, Vector3.ZERO)
 		if sampler != null and near_physical and from_centre.length() > 0.001:
 			salt = sampler.alt_above_ground_km(from_centre, nearest_radius)
 			# Fold the band cap into speed_limit, which the ship already reads.
@@ -734,13 +735,34 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 			if salt < ceiling:
 				speed_limit = minf(speed_limit,
 					FlightModeScript.band_speed_cap_units(salt))
-		_surface.position = -ship_pos
-		_surface.update_for(ship_pos, nearest_name, near_physical, nearest_radius,
+		_surface.transform = Transform3D(body_basis, _rel.get(nearest_name, Vector3.ZERO))
+		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler)
+		# The coarse globe has a different displacement and can protrude through
+		# valleys. The complete horizon-covering terrain replaces it in this band.
+		if _surface.visible:
+			for b in _bodies:
+				if str(b.name) == nearest_name:
+					b.sphere.visible = false
 		# Light and air. The sun vector is body -> star, exactly what
 		# PlanetGenerator.apply_view() hands the globe's material.
 		var to_star: Vector3 = star_true - (ship_pos + _rel.get(nearest_name, Vector3.ZERO))
 		_update_air(to_star, salt, ceiling, near_recipe, nearest_name, near_physical)
+
+
+func surface_basis(body: String) -> Basis:
+	for b in _bodies:
+		if str(b.name) == body:
+			return b.sphere.basis.orthonormalized()
+	return Basis.IDENTITY
+
+
+func ground_altitude_km(body: String) -> float:
+	var sampler := terrain_sampler_for(body)
+	for b in _bodies:
+		if str(b.name) == body and sampler != null:
+			return sampler.alt_above_ground_km(surface_basis(body).inverse() * -rel_of(body), float(b.radius))
+	return INF
 
 
 func _build_air_shell() -> void:
@@ -780,6 +802,8 @@ func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 		_air_mat = PlanetGenerator.air_shell_material(recipe, {"spectral": "G"})
 		_air_shell.material_override = _air_mat
 	_air_shell.visible = true
+	var air_color: Color = recipe.get("color_air", Color(0.30, 0.56, 1.0))
+	_air_mat.set_shader_parameter("color_air", Vector3(air_color.r, air_color.g, air_color.b))
 	# The shell is centred on the ship, which is the render-space origin.
 	_air_shell.position = Vector3.ZERO
 	var up: Vector3 = -_rel.get(body, Vector3.ZERO)

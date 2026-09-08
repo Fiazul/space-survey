@@ -112,7 +112,7 @@ sample is the residual cost), or dropping `RING_SEGS` from 64 to 48.
 
 ## 5. The ship mesh looks yaw-rotated ~30°
 
-Reported 2026-09-04, not diagnosed. Full note in `HANDOFF.md` under "Still open",
+Reported 2026-09-04, not diagnosed. Full note in `docs/SESSION-2026-09-04-skin-band.md` under "Still open",
 including the three candidate layers and why a counter-rotation is the wrong first
 move.
 

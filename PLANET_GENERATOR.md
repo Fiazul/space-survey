@@ -3,7 +3,78 @@
 One system paints every world. Catalog row → true position → **recipe** → ball.
 You do not land. A billion stars stay sky points until you are there.
 
+## Current close-flight behaviour (2026-09-07)
+
+This section is current. Earlier drafts of this doc described a 29 km Earth kill
+altitude and a 3.24 km band ceiling; both are gone (see "Skin band" below).
+
+- Solid planets use local terrain below 35 km above ground (higher for exceptional relief), including Earth and Moon at 7–20 km.
+- Patch coordinates, terrain queries and impact checks use the body's own rotating frame. The Moon is not anchored at Earth's centre.
+- Ring half-width covers the horizon with a projection margin. All rings recenter together to keep their stitched boundaries aligned. The coarse globe is hidden only while the complete local terrain replaces it.
+- The altitude tape reads **AGL**, with metres below 1 km; height above the reference sphere is not clearance above a mountain.
+- Contact starts hull-loss/respawn, not landing. Earth's substep clamp latches impacts before floating-point projection can hide them; other bodies use a body-local swept contact test.
+- Terrain retains mapped geography, adds slope lighting and procedural substrate, and seats smaller kit props on the ground. Airless worlds do not inherit grass or ocean water.
+
+Limits: Earth maps are still kilometre-resolution, with procedural finer relief, not satellite-detail scenery. Moon heights are procedural, not a lunar DEM. Synchronous ring rebuilds keep seams coherent but may hitch; asynchronous terrain streaming remains future work. This is not general ship-to-object rigid-body collision.
+
+Checks: `tools/test_surface_integration.tscn` exercises live Moon placement and Earth/Moon death entry; `test_earth_terrain.gd`, `test_surface_band.gd`, `test_terrain_light.gd`, and `test_skin_kill.gd` cover geometry, coverage, materials and contact. `tools/render_terrain.tscn` captures Earth/Moon bird's-eye and low-altitude views.
+
 ## Contract
+
+### Recipe-driven geology and materials
+
+`scripts/world/surface_recipe.gd` resolves the surface profile. Its world defaults
+are starting points; a recipe's `surface` dictionary overrides individual values.
+Both named `recipe_for(...)` and invented worlds accept those overrides.
+
+| Profile | Generated geometry / material |
+| --- | --- |
+| Earth | Existing mapped mountains, rock strata/grain, level ocean with animated ripple normals and glints; seeded dormant cones only on dry terrain |
+| Moon / Mercury | Crater bowls, raised rims, ejecta, lunar small-crater field and irregular lit boulders; no liquid |
+| Mars / Venus | Dry relief and volcanic cones with calderas; no default glowing lava |
+| Io | Cones/calderas with local basalt and animated molten fissures; no water |
+| Europa / icy moons | Frozen terrain with fractured ice material, ice props and subdued relief; no default liquid ocean |
+| Titan | Recipe-selected liquid over a level datum; the visual liquid model is generic, not water chemistry |
+| Sun / stars | Recipe-controlled photospheric granulation/plasma, no ground patches |
+| Jupiter / Saturn / Uranus / Neptune | Animated cloud eddies over the existing planet maps, no solid terrain |
+
+Example for a custom volcanic world:
+
+```gdscript
+var recipe = PlanetGenerator.recipe_for({
+    "name": "Ashfall", "kind": "rocky",
+    "surface": {
+        "mountain_m": 600.0, "crater_count": 6,
+        "volcano_count": 12, "volcano_m": 1800.0,
+        "lava_amount": 1.0, "liquid_amount": 0.0,
+        "rock_amount": 1.0, "ice_surface": 0.0,
+    },
+})
+```
+
+Additional controls: `crater_m`, `crater_field_m`, `wave_scale`, `granulation`
+and `storm_strength`. Counts/amplitudes are bounded; star/gas recipes forcibly
+disable solid features even if an override requests them. The planet seed fixes
+landmark placement. Same-family landmarks do not overlap, and the combined
+height bound includes each feature family.
+
+Crater/cone/ridge heights feed `TerrainSampler.height_m`, so the ground mesh and
+terrain contact test agree. Lava is a material mask carried in terrain UV2; waves
+are animated shading over a level collision surface, not fluid simulation.
+Kit rocks/ice/trees remain decorative and do not have individual colliders.
+
+The new boulders and landmarks are procedural project geometry, **not scanned
+assets or geographically surveyed volcano/crater locations**. Existing maps are
+preserved; fine scenery remains synthetic. Terrain streaming and optimization
+are deliberately unchanged in this pass.
+
+`tools/test_surface_recipes.gd` covers recipe routing, caldera/crater geometry,
+height bounds, contact, seeded repeatability and level procedural oceans.
+For visual review, run `tools/render_terrain.tscn` with `TERRAIN_SHOTS` set to a
+comma-separated selection of `moon_rocks,moon_crater,io_volcano,mars_volcano,
+europa_ice,earth_mountains,earth_water,sun_plasma,jupiter_storms`.
+
+### Original generator contract
 
 - **Planet generator** is the cook. Same shader for Sun, planet, moon, invented exoplanet.
 - **Recipe** is per-body data. Real map path when we have evidence. Kind, colors, heat when we do not.
@@ -17,7 +88,7 @@ You do not land. A billion stars stay sky points until you are there.
 |---|---|
 | Far (past the far plane) | Sky disc, real angular size, same recipe |
 | **EZ** (exclusion) | Cook **mesh**. High bird-eye: curve, continents, weather, craters. Not a 36 km stamp. |
-| Skin (last few km; Earth dies at 29 km) | Local ground patch + kit props on airless worlds. Still no landing. |
+| Skin (below the body's own ceiling, ~35 km on solid worlds) | Local ground patch + kit props, Earth and Moon included. Still no landing. |
 
 The mesh cut is the **near face**, not the centre. A star bigger than the far plane still becomes a ball when you close in.
 
@@ -46,60 +117,31 @@ Look    Earth  mesh  ready-map  rocky
 
 Far: one point. Arrive: one cook from the recipe. EZ: the same ball, close maps bind. Unique planet GLBs cannot reach a billion.
 
-## Plane band (later — possible, not this slice)
+## Plane band — superseded
 
-**Yes.** A Google-Earth-*feel* from a plane is possible on every planet, moon, and (with a different kit) a star’s skin — without Google, without a mesh per world, without killing the frame rate.
+The plane-band design (drop to m/s near a solid world, rebuild one local height-tile
+under the hull, kill it when you leave) was written as a future slice; it is now
+built and described under "Current close-flight behaviour" above. Still true from
+the original design: Google Earth 3D tiles are **not** used — height comes from
+NASA/USGS maps where we have them, invented recipe-seed height otherwise. Only the
+nearest body's tile exists at a time (tens of km, not a planet); far systems stay
+HYG points.
 
-Google Earth 3D tiles are **not** allowed. We do not stream their photogrammetry. The cook already has the legal path: NASA / USGS height where we have it, invented height from the recipe seed where we do not.
+## Skin band
 
-### What it is
+The bird-eye ground tile (`scripts/world/surface_patch.gd`) is live on any physical
+rocky/ice world, Earth and Moon included, pinned by `tools/test_surface_band.gd`.
 
-You drop at EZ. Speed is forced down (safety). Inside the air / the last tens of km you fly at **m/s**, like a plane. The cook globe stays the horizon. Under the hull, one **local tile** rebuilds: hills from height, water from the mask, low-poly kit (rock, ice, tree, lava). Leave the band, the tile dies. You still do not land.
+**The ceiling is derived, not a magic number.** It used to be a plate-width ratio
+(a fixed-size plate only reads as ground while its width dwarfs your altitude).
+Four nested rings now reach ~205 km, so that constraint no longer applies; the
+ceiling's job is instead to open the band **above the tallest terrain** so you
+don't enter it already inside a mountain: `band_ceiling_km = max(sampler.max_height_km
+* 1.7, 35.0)` (`BAND_CEILING_MULT`, `BAND_CEILING_MIN_KM` in `planet_generator.gd`).
+Rationale for the 35 km floor specifically: not recorded beyond "clears Everest
+(16.2 km) and covers Earth/Moon bird's-eye at 7–20 km" in the code comment.
 
-Same system for every body. Recipe picks the kit. Earth: real DEM + water. Mars: rock + ice caps. Europa: ice. Titan: haze + methane lakes as a paint. Invented exoplanet: fbm from seed. Stars: no air, no trees — only if we ever want a chromosphere kit.
-
-### Why it does not hurt performance
-
-- Only the **nearest** body, only while you are in its EZ / air.
-- One tile (tens of km, not a planet). Rebuild when you move a few km, not every frame.
-- Low-poly kit instances (hundreds, not millions). No unique GLB per world.
-- Far systems stay HYG points. A billion worlds never all exist as mesh.
-- “Prerender” here means **bake the tile on entry** (height mesh + prop list), then draw it cheap. Not a video, not a planet-sized cache.
-
-### Speed
-
-Cruise dies at EZ (already). Then a **safety cap** so you cannot F9 through the tile: EZ dump to local, air / last-km band in m/s. Sol already has unused approach speed-zones; they stay off until this band is real. Fat engines stay a debug key, not the plane pass.
-
-### Honest limits
-
-- Earth kill is **29 km**. A true plane pass wants ~0.5–8 km. That kill line has to move, or Earth never sees hills as objects. Airless worlds already allow 100 m, so they get the band first.
-- This is a **survey flyover**, not a landing game. Skin still kills if you go below the floor.
-- It will look like a low-poly aerial, not photogrammetry. That is the point: readable water and relief at m/s, 60 fps on a potato.
-
-### Do not build yet
-
-Keep EZ as the cook globe (the 36 km black stamp at 100 km was the wrong layer). The plane-band **safety speed cap** is still the next slice after the globe reads at EZ. The **tile + kit** half of it is now in — see below.
-
-## Skin band (in, airless worlds first)
-
-The bird-eye ground tile is real and reachable. `scripts/world/surface_patch.gd`, pinned by `tools/test_surface_band.gd`.
-
-**It had never rendered.** `should_show()` let only Earth through, and `ground_stamp_ok()` asked for `alt > kill and alt < 3.0` with Earth's kill at 29 km — a window that is empty at every altitude. So `_rebuild`, the prop MultiMesh and the height sampling were dead code, and no test noticed, because every assertion was about the numbers in the window rather than about whether the window contained anything. The first thing the new test asserts is that a band is **non-empty**.
-
-| | Then | Now |
-|---|---|---|
-| Bodies | Earth only (and Earth could never qualify) | any physical rocky/ice world |
-| Ceiling | hardcoded 3 km | `TILE_KM_MAX * BAND_ALT_FRACTION` = 3.24 km |
-| Plate | fixed 36 km | `tile_km_for(alt)` = alt × 10, clamped 2–36 km |
-| Height | `earth_height.jpg`, always | recipe height map, else the shader's own crust fbm |
-| Water | `earth_spec_2k.png`, always | recipe mask, else the albedo trick, else the `land_amount` cut |
-| Props | trees, always | recipe kit: tree / rock / ice |
-
-**The ceiling is not a magic number.** A local plate only reads while its width dwarfs your altitude — 36 km of ground from 100 km up is the sticker-on-a-globe bug; the same plate from 1 km up is ground to the horizon. So the ceiling is derived from the plate's own size, and the plate is derived from altitude, which keeps quad size proportional on the way down (48 × 48 quads: 208 m at 1 km alt, 42 m at 200 m alt).
-
-**Earth's band is still empty, on purpose.** Kill 29 km sits well above the 3.24 km ceiling. That is the honest limit above, now asserted (`earth_band_still_empty_until_the_kill_line_moves`) so whoever moves that kill line is told exactly what they changed. Airless worlds kill at 100 m, so their band is **0.1 → 3.24 km** and they fly it first. Measured: 0.11–3.23 km.
-
-**`physical` is load-bearing.** An arcade system's units are 1u = 0.01 AU with radii boosted by `VISUAL_SCALE`, so its "altitude" of 0.1 is really a million kilometres. Removing Earth's name filter without adding the truth flag would pop a ground plate in deep space. `main._update_skin_kill` guards the kill line the same way.
+**`physical` is load-bearing.** An arcade system's units are 1u = 0.01 AU with radii boosted by `VISUAL_SCALE`, so its "altitude" of 0.1 is really a million kilometres. A ground plate must never pop up in deep space; `main._update_skin_kill` guards the kill line the same way.
 
 **The tile's hills agree with the globe's crust.** `PlanetGenerator.crust_height()` is a line-for-line mirror of `planet_cook.gdshader`'s `sample_height()` fallback, `fbm(n * 6.0 + seed)`, run at the same seed. Touch one, touch both — otherwise the ground you fly over stops matching the crust painted overhead.
 
@@ -113,4 +155,4 @@ Measured on the Moon at 1 km: 13,824 ground verts (a full 48×48 plate), 0 water
 
 ## Not this slice
 
-Landing. 50 unique planet models. Volumetric air. Gridless mosaic downloads. Rich tree kits. Google Earth tiles. Plane-band tile (see above).
+Landing. 50 unique planet models. Volumetric air. Gridless mosaic downloads. Rich tree kits. Google Earth tiles.

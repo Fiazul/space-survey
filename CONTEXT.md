@@ -50,7 +50,7 @@ One cook. Catalog row → true position → recipe. Real map when we have eviden
 _Avoid_: Earth texture hack, landing game, Elite clone, one mesh per planet, hand-authoring every star, unique GLB per world
 
 **Skin kill / no landing**:
-Earth: you never go below 6400 km from the centre (skin 6371 + air 100 ≈ 6500; kill alt = 29 km). Other worlds: 100 m floor. `surface_kill_km` may raise it later. Death is a short tumble, then a snap to the nearest sweet park (GEO for Earth).
+Every body uses the same swept terrain-contact test (`Ephemeris.surface_kill_km`, a 20 m margin above the sampled ground, in the body's own rotating frame), not a fixed altitude bubble. Death is a short tumble, then a snap to the nearest sweet park (GEO for Earth).
 _Avoid_: landing gear, silent hitch, 8 s home ritual for a skin kill
 
 **Recipe**:
@@ -68,7 +68,7 @@ Debug (Sol only): F6 circularize at this height. F7 park at GEO. F9 fat engines 
 ## Later (do not build now)
 
 - **No special Sun sky path** — start next session here. `_sun_sky` is still a unique impostor. A star should be one physical body: cook mesh when the near face is in range, sky disc when it is not. Recreate with F9 into the Sun; mesh must be on inside ~1.64 R, disc off.
-- **Plane band** — after EZ reads as a globe: safety speed dump, then m/s flyover with one local height tile + low-poly kit (water, hills). Every body, recipe-picked. Not Google tiles. Earth 29 km kill currently blocks that band; airless worlds can take it first. See `PLANET_GENERATOR.md`.
+- **Plane band** — done: the m/s flyover with one local height tile + low-poly kit now runs on every physical body, Earth included (35 km ceiling, no fixed kill altitude). See `PLANET_GENERATOR.md`.
 - Richer 101 m assets (real tree kits, volcanoes). Skin kill and the first ground patch are in. The 36 km stamp must not show at 100 km AIR.
 - Remaining moon mosaics in the same albedo slot (Deimos; Ganymede gridless USGS/NASA swap)
 - USGS / NASA / ESA 8k swap in the recipe albedo slot

@@ -1,4 +1,4 @@
-# Astryx · v0.11.5
+# Astryx · v0.11.4
 
 A potato-friendly **third-person space explorer** in Godot 4 / GDScript. Launch
 from Earth, fly the **real** solar system, wormhole across a tested interstellar
@@ -13,23 +13,25 @@ a small reusable surface kit.
 *Gameplay clips (edited together, with sound) — warp out to real stars, fight the guardian waves defending a world, and capture it.*
 
 ## Features
-- **Real positions** — Sun + planets from live **JPL Horizons**, **~50 of the nearest
+- **Real positions** — Sun + planets from live **JPL Horizons**, **~45 of the nearest
   real star systems** from the J2000 catalog. Earth is the origin (floating-origin
   engine for AU↔ly scale).
-- **Four authored ships** — **Class II Galactic Cruiser** (default), **Snarkrans
-  Starship**, **Dingo57 Starship**, and **SpaceShip**. Dock with **F** and swap
-  with **1–4**. Each model keeps its own booster meshes, rendered as extremely
-  bright, speed-reactive, edge-faded propulsion—no random procedural booster layouts.
+- **Five authored ships** — **Class II Galactic Cruiser** (default), **Snarkrans
+  Starship**, **Base Basic PBR**, **Vanguard**, and **Selene**. Dock with **F**;
+  swap with **1–4** (first four) or click any of the five in the hangar list.
+  Each model keeps its own booster meshes, rendered as extremely bright,
+  speed-reactive, edge-faded propulsion — no random procedural booster layouts.
 - **Editable HUD** — drag-place and scale HUD widgets in a layout editor; placement
   persists to your profile (defaults are the shipped layout).
 - **Flight feel** — sublight "space drift" that carries momentum through turns,
   weighted strafe, eased mouse-steer, and living animated authored propulsion.
 - **Recipe-cooked worlds** — one generator paints stars, planets, and moons from
-  observed maps when available and stable seeded properties otherwise. Close LODs
-  add height, water, clouds, rocks, and other recipe-selected surface details.
+  observed maps when available and stable seeded properties otherwise. Close-range
+  flight adds height, water, clouds, rocks, and other recipe-selected surface
+  details under the hull.
 - **Wormhole network** — a **5-hub** graph (Prim's MST + extra edges, BFS routing) with a
-  *tested* guarantee: **Earth → anywhere ≤ 2 hops, any → any ≤ 3 hops** — you're never more
-  than 3 jumps from a star. Fly to a portal, press **F**, transit the tunnel, arrive.
+  *tested* guarantee: **Earth → anywhere ≤ 2 hops, any → any ≤ 3 hops** — you're never
+  more than 3 jumps from a star. Fly to a portal, press **F**, transit the tunnel, arrive.
   See [`WORMHOLE_NETWORK.md`](WORMHOLE_NETWORK.md).
 - **Combat** — instant **hitscan "ray bullets"** (left-click; aim by flying); alien
   ships hunt and fire dodgeable bolts. Guarded bodies are defended by
@@ -53,63 +55,46 @@ a small reusable surface kit.
 
 ## Planetary flight and surfaces
 
-Planetary flight is being expanded into four automatic regimes. A craft uses
-**supercruise** where gravity and atmosphere are negligible, **gravity cruise**
-inside a body's gravity region, **hypersonic flight** during atmospheric entry,
-and **survey flight** in the lower atmosphere or close to an airless surface.
-Airless bodies skip the hypersonic regime. Transitions will blend instead of
-carrying supercruise velocity into terrain.
+Close to a solid body (currently ~35 km above ground, more over exceptional
+relief — this covers Earth and the Moon too, both peaking around 7–20 km), the
+coarse cooked globe is replaced by a local, recipe-driven ground patch: mapped or
+procedural height, water where the recipe calls for it, and kit props (rock/ice/
+tree) seated on the surface. The patch works in the body's own rotating frame, so
+the Moon isn't anchored to Earth's centre. Above that ceiling you fly the cooked
+mesh (bird's-eye globe); farther out, bodies are sky points until you arrive.
 
-Atmosphere boundaries are not fixed constants copied into each planet recipe.
-Known bodies use observed physical inputs; invented bodies generate stable,
-plausible inputs from their type and seed. The environment cook derives gravity,
-escape velocity, scale height, atmospheric extent, and density by altitude from
-properties such as:
+There's no separate flight-mode machinery for this — one shared height sampler
+feeds both the terrain mesh and the contact check, so what you fly over is what
+kills you. Contact with the ground (a swept check against the last frame's
+travel, not just a point sample) starts hull-loss and a respawn at the nearest
+safe park; there is no landing.
 
-```gdscript
-"physical": {
-    "radius_km": 6371.0,
-    "mass_earth": 1.0,
-    "temperature_k": 288.0,
-    "surface_pressure_bar": 1.0,
-    "molar_mass": 0.029,
-}
-```
-
-Pressure and composition cannot be inferred honestly from radius alone, so they
-come from observations or deterministic procedural assumptions. Flight responds
-to local gravity, atmospheric density, dynamic pressure, speed, and terrain
-proximity rather than a universal altitude cutoff.
-
-The visual path has three scales: the cooked globe from orbit, regional displaced
-terrain during descent, and a local survey patch for mountains, coastlines, water,
-rocks, clouds, and biome props. The generator recipe is the shared source of truth
-for physics, flight transitions, atmosphere rendering, and surface generation.
 See [`PLANET_GENERATOR.md`](PLANET_GENERATOR.md) for the current cook and LOD contract.
 
 ## Controls
-`WASD` thrust · `Space/Ctrl` up·down · `Q/E` roll · `Shift` boost · `mouse` aim ·
-**`L-click` fire** ·
-`Num Lock` auto-cruise · `W+C` drift-flip · **`Tab`** waypoint · **`V`** scan · **`L`** codex ·
-**`J`** mission log · **`G`** details · **`M`** map · **`F`** dock / wormhole · **`H`** teleport to Earth ·
-wheel zoom · **`1–4`** swap ships (docked) · `Esc` free cursor / back
+
+**Flight** — `WASD` thrust/strafe · `Space`/`Ctrl` up/down · `Q`/`E` roll ·
+`Shift` boost · mouse aim · `L-click` fire · `S` brake/reverse · wheel zoom ·
+`Num Lock` toggle hands-free auto-cruise (W + boost) · `W`+`C` cinematic drift-flip
+(`A`/`D` picks the side) · `,`/`.` (or `[`/`]`) step time warp rate · `Esc` free
+cursor / back.
+
+**Interaction** — `Tab` cycle nose-aim waypoint target · `V` scan / hold to
+capture · `L` codex · `J` mission log · `G` body details · `M` star map ·
+`F` dock / undock / enter wormhole · `H` teleport to Earth · `N` toggle the
+nav-arrow guide · hold `X` (~1s) lock the current Tab target as a paid waypoint.
+
+**Debug (Sol only)** — `F3` perf/leak readout · `F4` dump a 15s flight footprint ·
+`F6` circularize at current altitude · `F7` park at GEO · `F9` toggle fat
+(dev-speed) engines · `F10` face the nearest body and kill leftover speed.
 
 ## Run
-Install **Godot 4** (GDScript, no C#), open this folder as a project, press **F5**.
-No keys or build steps. *(Open it in the editor once after pulling so it imports
-any new `.obj` / audio assets.)*
 
-## Layout
-~12k lines of GDScript across ~35 code-spawned modules:
-`main.gd` orchestrator · `ephemeris.gd` real data + Horizons fetch ·
-`systems.gd` star systems · `planet_system.gd` body LOD + gravity · `wormhole.gd` graph +
-transit · `combat.gd` dogfight/bosses · `ship.gd` flight/visuals · `ship_mesh.gd`
-mesh/material helpers · `props.gd` stations/platforms · `platform_teleport.gd` fast-travel
-console · `hud.gd` + `minimap.gd` + `crosshair.gd` UI · `map.gd`/`map_chart.gd` star map ·
-`missions.gd`/`quest_log.gd` quests · `codex.gd`/`codex_panel.gd` discovery · `tutor.gd`
-tutorial · `reward_card.gd` payouts · `navigator.gd` routing · `audio.gd` sound ·
-`starfield.gd` backdrop · `touch.gd` mobile controls · `tools/` verifiers + asset/SFX
-generators.
+Install **Godot 4.6.3** (GDScript, no C#), open this folder as a project, press
+**F5**. No keys or build steps. *(Open it in the editor once after pulling so it
+imports any new `.obj` / audio assets.)* For release exports (Windows/Linux) see
+`./build.sh`; for Android see [`BUILD-ANDROID.md`](BUILD-ANDROID.md). Touch
+controls auto-enable on mobile, or force them on desktop with `--touch`.
 
 ## Data
 [JPL Horizons](https://ssd.jpl.nasa.gov/horizons/) (solar system) · HYG/SIMBAD (stars).
@@ -119,5 +104,10 @@ World, effects and SFX are code/script-generated. 3D ship & prop models are free
 ([Poly Pizza](https://poly.pizza/), [Free3D](https://free3d.com/)); music is AI-generated.
 See [`CREDITS.md`](CREDITS.md).
 
+## Developers
+
+See `CLAUDE.md` and the per-folder `README.md`s under `scripts/` for architecture
+and code layout.
+
 ---
-Hobby / educational project. See `HANDOFF.md` for the full per-system breakdown.
+Hobby / educational project. See [`docs/SESSION-2026-09-04-skin-band.md`](docs/SESSION-2026-09-04-skin-band.md) for the most recent session's per-system notes.

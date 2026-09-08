@@ -817,7 +817,7 @@ meshes (sky points only until you arrive).
   (`core/flight/world/travel/combat/ui` + `autoload/`) behind autoload singletons
   (`GameState`/`Ephemeris`/`Codex`/`PlanetData`/`GameAudio`); `main.gd` 2093→1780,
   `combat.gd` 1352→1031 (CombatFX + EnemyFactory split out). Map in
-  [`ARCHITECTURE.md`](ARCHITECTURE.md), rationale in `docs/adr/0001-*`.
+  module `README.md` files under `scripts/` and `CLAUDE.md`, rationale in `docs/adr/0001-*`.
 - **Galactic core cleanup** — removed the experimental Sgr A\* black-hole visual; the
   Milky Way galaxy backdrop + looming approach remain (`scripts/world/galaxy_model.gd`).
 - **Ship music** — **Vela Iron Pulse** & **Lyra** now fly to the dedicated interstellar

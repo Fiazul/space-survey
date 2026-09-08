@@ -47,12 +47,12 @@ func _initialize() -> void:
 	failed += _check("four_authored_booster_surfaces", propulsion.size() == 4)
 	failed += _check("main_hull_untouched", model.get_surface_override_material(0) == null)
 	failed += _check("accent_hull_untouched", model.get_surface_override_material(2) == null)
-	failed += _check("tip_booster_shader", tip_surface >= 0 and model.get_surface_override_material(tip_surface) is ShaderMaterial)
-	failed += _check("lower_boosters_shader", lower_surface >= 0 and model.get_surface_override_material(lower_surface) is ShaderMaterial)
-	failed += _check("upper_shell_shader", upper_shell_surface >= 0 and model.get_surface_override_material(upper_shell_surface) is ShaderMaterial)
-	failed += _check("lower_shell_shader", lower_shell_surface >= 0 and model.get_surface_override_material(lower_shell_surface) is ShaderMaterial)
+	failed += _check("tip_booster_shader", tip_surface >= 0 and _engine_drive(model, tip_surface) != null)
+	failed += _check("lower_boosters_shader", lower_surface >= 0 and _engine_drive(model, lower_surface) != null)
+	failed += _check("upper_shell_shader", upper_shell_surface >= 0 and _engine_drive(model, upper_shell_surface) != null)
+	failed += _check("lower_shell_shader", lower_shell_surface >= 0 and _engine_drive(model, lower_shell_surface) != null)
 	for booster_surface in [tip_surface, lower_surface, upper_shell_surface, lower_shell_surface]:
-		var drive := model.get_surface_override_material(booster_surface) as ShaderMaterial
+		var drive := _engine_drive(model, booster_surface)
 		# `brightness` is no longer a flat 4.0 across the fleet: it is scaled against
 		# how much of each hull the additive booster shader covers (see
 		# SNARKRANS_BOOSTER_GAIN in ship_mesh.gd and tools/probe_propulsion_area.gd).
@@ -114,6 +114,13 @@ func _initialize() -> void:
 	else:
 		print("snarkrans_starship: FAIL %d" % failed)
 		quit(1)
+
+
+func _engine_drive(model: MeshInstance3D, surface: int) -> ShaderMaterial:
+	var housing := model.get_surface_override_material(surface) as BaseMaterial3D
+	if housing == null or housing.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED:
+		return null
+	return housing.next_pass as ShaderMaterial
 
 
 func _check(name: String, ok: bool) -> int:

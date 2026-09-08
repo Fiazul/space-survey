@@ -24,17 +24,17 @@ const SHIPS := [
 		"yaw": 180.0, "kind": "snarkrans",
 		"accent": Color(0.85, 0.90, 1.00), "swatch": Color(0.30, 0.31, 0.34),
 		"light_energy": 0.38, "finish": "metal" },
-	{ "label": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj",
-		"yaw": 180.0, "kind": "dingo57",
-		"accent": Color(0.92, 0.95, 1.00), "swatch": Color(0.74, 0.76, 0.80),
+	{ "label": "base_basic", "path": "res://assets/base_basic_pbr.glb",
+		"yaw": 180.0, "kind": "base_basic",
+		"accent": Color(0.92, 0.95, 1.00), "swatch": Color(0.42, 0.60, 0.95),
 		"light_energy": 0.34, "finish": "metal" },
-	{ "label": "jazoone", "path": "res://assets/jazoone_spaceship/spaceship.glb",
-		"yaw": 0.0, "kind": "jazoone",
-		"accent": Color(0.90, 0.93, 1.00), "swatch": Color(0.82, 0.84, 0.88),
+	{ "label": "vanguard", "path": "res://assets/vanguard/vanguard.obj",
+		"yaw": 0.0, "kind": "vanguard",
+		"accent": Color(0.35, 0.68, 1.00), "swatch": Color(0.42, 0.60, 0.95),
 		"light_energy": 0.36, "finish": "metal" },
 	{ "label": "wedge", "path": "res://assets/wedge_fighter/wedge_fighter.glb",
 		"yaw": 180.0, "kind": "wedge", "accent": Color(0.16, 0.70, 1.0),
-		"swatch": Color(0.8, 0.85, 0.9), "light_energy": 0.35, "finish": "metal" },
+		"swatch": Color(0.82, 0.84, 0.88), "light_energy": 0.35, "finish": "metal" },
 ]
 
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
@@ -65,7 +65,7 @@ var _view := ""
 # photographed without editing ship.gd first.
 var _cam_back := 2.6      # CAM_OFFSET.z, in hull lengths
 var _cam_up := 0.5        # CAM_OFFSET.y, in hull lengths
-var _cam_pitch := 0.0     # CAM_VIEW_PITCH_DEG
+var _cam_pitch := -14.0   # CAM_VIEW_PITCH_DEG
 var _cam_fov := 70.0      # FOV_BASE
 # Brightness sweep. TORCH_GAIN scales the torch cones' `brightness`, PROP_GAIN the
 # authored propulsion / JazOone hull discs. Lets a candidate exposure be photographed
@@ -231,7 +231,7 @@ func _run() -> void:
 	# one hull.
 	var only := OS.get_environment("SHIP")
 	for ship in SHIPS:
-		if only != "" and String(ship.label) != only:
+		if only != "" and not only.split(",").has(String(ship.label)):
 			continue
 		var rig = await _build_ship(ship)
 		if rig == null:
@@ -272,8 +272,13 @@ func _build_ship(ship: Dictionary):
 		"class_ii": driven.append_array(ShipMesh.style_class_ii_cruiser(model))
 		"snarkrans": driven.append_array(ShipMesh.style_snarkrans_starship(model))
 		"dingo57": driven.append_array(ShipMesh.style_dingo57_starship(model))
+		# These three take the hangar swatch inside their own styler rather than
+		# through color_authored_ship below, so hand it over here or the sheet shows
+		# a colour the game never renders.
+		"base_basic": driven.append_array(ShipMesh.style_base_basic_pbr(model, ship.swatch))
 		"jazoone": driven.append_array(ShipMesh.style_jazoone_spaceship(model))
-		"wedge": driven.append_array(WedgeDesign.style(model))
+		"vanguard": driven.append_array(ShipMesh.style_vanguard(model, ship.swatch))
+		"wedge": driven.append_array(WedgeDesign.style(model, ship.swatch))
 	holder.add_child(model)
 	model.rotation = Vector3(0.0, deg_to_rad(float(ship.yaw)), 0.0)
 	# Ship._build_ship_model lights the hull off the AABB fit_model RETURNS - the hull
@@ -286,7 +291,9 @@ func _build_ship(ship: Dictionary):
 		"class_ii": plumes = ShipMesh.add_class_ii_booster_plumes(model)
 		"snarkrans": plumes = ShipMesh.add_snarkrans_booster_plumes(model)
 		"dingo57": plumes = ShipMesh.add_dingo57_booster_plumes(model)
+		"base_basic": plumes = ShipMesh.add_base_basic_booster_plumes(model)
 		"jazoone": plumes = ShipMesh.add_jazoone_booster_plumes(model)
+		"vanguard": plumes = ShipMesh.add_vanguard_booster_plumes(model)
 	for m in plumes:
 		if m.shader == ShipMesh.CRUISER_TORCH_SHADER:
 			torches.append(m)
@@ -295,7 +302,10 @@ func _build_ship(ship: Dictionary):
 	var lights := ShipMesh.collect_nozzle_lights(model)
 	# The game recolours every non-propulsion surface before lighting it; without this
 	# the raw imported materials render nothing like the shipped ship.
-	if ship.kind != "wedge":
+	# wedge, vanguard and base_basic are absent because they are already painted, above:
+	# they carry authored PBR maps or a procedural hull shader, and this pass would
+	# overwrite the albedo/normal/metallic set the ship was built around.
+	if ship.kind not in ["wedge", "vanguard", "base_basic"]:
 		ShipMesh.color_authored_ship(model, ship.swatch, String(ship.finish))
 	# Ship._build_ship_model no longer adds ANY ship-attached lights - the scene sun +
 	# fill light the hull. Adding them here would put this harness back out of step
@@ -341,7 +351,7 @@ func _build_ship(ship: Dictionary):
 	# model -Z aft). Sitting ON the +Z axis means staring straight down the nozzle,
 	# which just shows a saturated end-cap - so weight the camera to the SIDE and
 	# only slightly aft, to see the plume across its length.
-	_camera.position = centre + Vector3(1.0, 0.30, 0.58).normalized() * reach * 0.95
+	_camera.position = centre + Vector3(1.0, 0.30, 0.58).normalized() * reach * _envf("FRAME_SCALE", 0.95)
 	_camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 	_camera.fov = 75.0
 	if _view == "chase":

@@ -5,7 +5,12 @@ const HULL := preload("res://shaders/wedge_hull.gdshader")
 const EXHAUST := preload("res://shaders/wedge_exhaust.gdshader")
 const NOZZLE := preload("res://shaders/cruiser_propulsion.gdshader")
 
-static func style(model: Node3D) -> Array[ShaderMaterial]:
+# `tint` is the hangar swatch. It reaches the procedural hull shader as hull_tint and
+# repaints the ceramic shell plus every value derived from it; the exhaust, the nozzle
+# emitter, the engine nacelles and the nav lights are propulsion/accent and keep their
+# authored colours. Default = the shader's own ceramic, so callers that don't paint
+# (tools/render_wedge_fighter.gd) get the craft exactly as before.
+static func style(model: Node3D, tint := Color(0.38, 0.48, 0.52)) -> Array[ShaderMaterial]:
 	var driven: Array[ShaderMaterial] = []
 	if model.has_node("InterceptorDetails"):
 		return driven
@@ -57,6 +62,7 @@ static func style(model: Node3D) -> Array[ShaderMaterial]:
 			else:
 				var mat := ShaderMaterial.new()
 				mat.shader = HULL
+				mat.set_shader_parameter("hull_tint", tint)
 				mat.set_shader_parameter("design_offset", mi.position)
 				mat.set_shader_parameter("wing", 1.0 if tag.begins_with("Wing") else 0.0)
 				mat.set_shader_parameter("armor", 1.0 if name == "Mat_Armor" else 0.0)

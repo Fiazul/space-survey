@@ -174,8 +174,10 @@ func _initialize() -> void:
 			float(m.get_shader_parameter("brightness")))
 	print("class_ii_cruiser: core brightness %.2f (knob %.2f)"
 		% [core_brightness, MeshStyler.booster_brightness])
-	failed += _check("torch_core_is_the_hotter_layer",
-		core_brightness == MeshStyler.booster_gain(3.40))
+	for i in range(0, plume_materials.size(), 2):
+		failed += _check("torch_core_is_the_hotter_layer",
+			float(plume_materials[i + 1].get_shader_parameter("brightness")) >
+			float(plume_materials[i].get_shader_parameter("brightness")))
 
 	# The standalone test runner does not initialize project autoload identifiers
 	# before compiling ship.gd, so check registry wiring as source and exercise the

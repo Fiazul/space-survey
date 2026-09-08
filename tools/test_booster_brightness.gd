@@ -25,7 +25,7 @@ const SHIPS := [
 	{
 		"label": "class_ii",
 		"path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj",
-		"base": 4.0, "sockets": 6, "plumes": 12,
+		"base": 3.8, "sockets": 6, "plumes": 12,
 	},
 	{
 		"label": "snarkrans",

@@ -42,6 +42,9 @@ func _initialize() -> void:
 		var seen_leds := 0
 		for si in model.mesh.get_surface_count():
 			var material := model.get_surface_override_material(si)
+			if material is BaseMaterial3D and material.next_pass is ShaderMaterial:
+				failed += _check("engine_housing_painted", _rgb_equal(material.albedo_color, TEST_TINT))
+				material = material.next_pass
 			if material != null and propulsion_ids.has(material.get_instance_id()):
 				seen_boosters += 1
 				var drive := material as ShaderMaterial
@@ -76,6 +79,9 @@ func _initialize() -> void:
 		MeshStyler.color_authored_ship(model, TEST_TINT, "glassy")
 		for si in model.mesh.get_surface_count():
 			var material := model.get_surface_override_material(si)
+			if material is BaseMaterial3D and material.next_pass is ShaderMaterial:
+				failed += _check("engine_housing_stays_opaque", material.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
+				material = material.next_pass
 			if (material != null and propulsion_ids.has(material.get_instance_id())) \
 				or material is ShaderMaterial:
 				continue
@@ -105,7 +111,17 @@ func _initialize() -> void:
 	var main_source := FileAccess.get_file_as_string("res://scripts/core/main.gd")
 	var hud_source := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	var state_source := FileAccess.get_file_as_string("res://scripts/core/game_state.gd")
-	failed += _check("two_customizable_ships", ship_source.count("\"color_pick\": true") == 2)
+	# Every hull in the roster takes a hangar colour. The three texture/procedural ships
+	# paint inside their own styler (see Ship._build_ship_model), so they do NOT offer
+	# metallic/glassy - that finish belongs to color_authored_ship, and only the two
+	# ships that go through it advertise it.
+	failed += _check("whole_roster_is_colorable",
+		ship_source.count("\"color_pick\": true") == 5 \
+		and ship_source.count("\"color_pick\": false") == 0)
+	failed += _check("two_ships_offer_finish",
+		ship_source.count("\"finish_pick\": true") == 2 \
+		and ship_source.contains("func current_has_finish_pick()") \
+		and hud_source.contains("var has_finish: bool"))
 	failed += _check("saved_customization_api", ship_source.contains("func customization_state()") \
 		and ship_source.contains("func load_customization(saved: Dictionary)"))
 	failed += _check("profile_persistence_restored", state_source.contains("var customization := {}") \

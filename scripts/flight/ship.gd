@@ -25,18 +25,17 @@ const SHIP_MODELS := [
 	# rainbow a1 window strip, blue engine covers, and edge-faded rear propulsion.
 	# The six authored propulsion patches remain the nozzle faces and anchor matching
 	# two-layer torch plumes; their positions are never randomized.
-	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "bolt_speed": 1250.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 119.8, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "default_color": "silver" },
+	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "bolt_speed": 1250.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 119.8, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "finish_pick": true, "default_color": "silver" },
 	# Snarkrans Starship — its OBJ split preserves .000 plus .010_...018 as the
 	# upper booster, and .005_...035 plus .001_...034 as the lower twin boosters.
-	{ "name": "Snarkrans Starship", "path": "res://assets/snarkrans_starship/spaceship.obj", "length": 0.82, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 190, "bolt_scale": 1.2, "bolt_speed": 1400.0, "fire_cd": 0.08, "dmg": 3, "energy_max": 145.0, "energy_use": 0.76, "warp": 125.0, "light_accent": Color(0.30, 0.62, 1.0), "light_energy": 0.38, "snarkrans_starship": true, "color_pick": true, "default_color": "graphite" },
+	{ "name": "Snarkrans Starship", "path": "res://assets/snarkrans_starship/spaceship.obj", "length": 0.82, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 190, "bolt_scale": 1.2, "bolt_speed": 1400.0, "fire_cd": 0.08, "dmg": 3, "energy_max": 145.0, "energy_use": 0.76, "warp": 125.0, "light_accent": Color(0.30, 0.62, 1.0), "light_energy": 0.38, "snarkrans_starship": true, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
 	# Base Basic PBR — root.1 and root.3 are the authored twin boosters.
-	{ "name": "Base Basic PBR", "path": "res://assets/base_basic_pbr.glb", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "base_basic_pbr": true, "color_pick": false, "default_color": "silver" },
-	# SpaceShip — JazOone / Sketchfab CC-BY. Layer_1 is five Layer_1_Material_0
-	# chunks; the first two are the actual boosters and all five take the existing
-	# HDR propulsion shader.
-	{ "name": "SpaceShip", "path": "res://assets/jazoone_spaceship/spaceship.glb", "length": 0.90, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.84, "hp": 210, "bolt_scale": 1.3, "bolt_speed": 1280.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 155.0, "energy_use": 0.74, "warp": 118.0, "light_accent": Color(0.32, 0.70, 1.0), "light_energy": 0.36, "jazoone_spaceship": true, "color_pick": false, "default_color": "silver" },
+	{ "name": "Base Basic PBR", "path": "res://assets/base_basic_pbr.glb", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "base_basic_pbr": true, "color_pick": true, "default_color": "silver" },
+	# Vanguard — supplied OBJ/PBR maps, with one central engine in root.1.
+	# Replaces JazOone in slot four; its exhaust travels toward local +Z.
+	{ "name": "Vanguard", "path": "res://assets/vanguard/vanguard.obj", "length": 0.88, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 235, "bolt_scale": 1.3, "bolt_speed": 1350.0, "fire_cd": 0.10, "dmg": 4, "energy_max": 160.0, "energy_use": 0.78, "warp": 116.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.36, "vanguard": true, "color_pick": true, "default_color": "silver" },
 	# Selene: ceramic interceptor with authored twin engines and exhaust.
-	{ "name": "Selene", "path": "res://assets/wedge_fighter/wedge_fighter.glb", "length": 0.72, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 1.08, "hp": 155, "bolt_scale": 0.9, "bolt_speed": 1500.0, "fire_cd": 0.075, "dmg": 2, "energy_max": 135.0, "energy_use": 0.62, "warp": 130.0, "light_accent": Color(0.16, 0.70, 1.0), "light_energy": 0.35, "wedge_fighter": true, "color_pick": false, "default_color": "gold" },
+	{ "name": "Selene", "path": "res://assets/wedge_fighter/wedge_fighter.glb", "length": 0.72, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 1.08, "hp": 155, "bolt_scale": 0.9, "bolt_speed": 1500.0, "fire_cd": 0.075, "dmg": 2, "energy_max": 135.0, "energy_use": 0.62, "warp": 130.0, "light_accent": Color(0.16, 0.70, 1.0), "light_energy": 0.35, "wedge_fighter": true, "color_pick": true, "default_color": "gold" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.
@@ -201,6 +200,8 @@ var speed_limit := INF         # set by main from PlanetSystem; eases us down ne
 # The nearest body's shared height function, assigned by main each frame. The SAME
 # instance the ground rings and the contact kill use - three readers, one function.
 var terrain: TerrainSampler
+var terrain_basis := Basis.IDENTITY
+var surface_impact := false
 var nearest_dir := Vector3.ZERO  # toward nearest body; we only ease down when approaching it
 var nearest_name := ""           # body F10 / tape use (Sun when you're at the Sun)
 var nearest_dist := INF        # distance to nearest body; set by main (warp arrival ease-out)
@@ -299,7 +300,7 @@ const NEWTON_BALLISTIC := 0.005
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g
-const DEV_THRUST_MULT := 10000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 100000000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 
 # True when a warp ship is blazing fast — combat + crosshair are disabled.
 func is_hypersonic() -> bool:
@@ -562,12 +563,16 @@ func _newton_corotate(dt: float) -> void:
 
 
 func _newton_ground() -> void:
+	# Only Earth is at the origin. Other bodies use main's body-local sweep.
+	if not nearest_name.is_empty() and nearest_name != "Earth":
+		return
 	# Backstop so a physics substep can never put the hull INSIDE the rock. This
 	# used to pin at a flat 6400 km from Earth's centre, which is 29 km altitude -
 	# an independent blocker on the Earth flyover: removing the kill bubble alone
 	# would still have stopped every descent 29 km up and looked like the band was
 	# broken. Now it pins at the terrain beneath you plus the contact margin, so the
-	# swept kill in main._update_skin_kill sees contact and fires.
+	# impact latch in main._update_skin_kill sees contact and fires, even when
+	# projection rounds the final position just above the contact threshold.
 	#
 	# true_pos is Earth-centred (Earth is the origin anchor), so this clamp is
 	# Earth's. Other bodies are handled by the kill itself, which works in each
@@ -579,9 +584,11 @@ func _newton_ground() -> void:
 	var contact: float = Ephemeris.surface_kill_km("Earth")
 	var min_r: float = Ephemeris.EARTH_RADIUS_KM + contact
 	if terrain != null:
-		min_r = terrain.ground_radius_km(n, Ephemeris.EARTH_RADIUS_KM) + contact
+		min_r = terrain.ground_radius_km(terrain_basis.inverse() * n, Ephemeris.EARTH_RADIUS_KM) + contact
 	if r >= min_r:
 		return
+	# Preserve the impact before projection/rotation can round it into clear air.
+	surface_impact = true
 	true_pos = n * min_r
 	var inward := velocity.dot(n)
 	if inward < 0.0:
@@ -1358,19 +1365,31 @@ func _build_ship_model(idx: int) -> void:
 	# Install legacy OBJ surface overrides before the MeshInstance3D enters the live
 	# renderer. Growing the override array after scene attachment makes Godot 4.6
 	# briefly query its not-yet-filled material slots.
+	# Two ways a ship takes its hangar colour, and which one it uses is a property of
+	# how its surfaces were authored, not a preference:
+	#  - Class II / Snarkrans are painted AFTER styling, by color_authored_ship, which
+	#    rewrites albedo per surface and also owns the metallic/glassy finish.
+	#  - Base Basic / Vanguard / Selene carry supplied PBR maps or a procedural hull
+	#    shader. That same pass would flatten their albedo and kill their emission, so
+	#    they take the swatch as an argument to their OWN styler and keep every map.
+	# Either way the tint has to be resolved before the styler runs.
+	var picked_palette := _palette_for(_color_for(info.name, info))
+	var hull_tint: Color = picked_palette.swatch
 	if info.get("class_ii_cruiser", false):
 		_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)
 	elif info.get("snarkrans_starship", false):
 		_authored_propulsion = ShipMesh.style_snarkrans_starship(model)
 	elif info.get("base_basic_pbr", false):
-		_authored_propulsion = ShipMesh.style_base_basic_pbr(model)
+		_authored_propulsion = ShipMesh.style_base_basic_pbr(model, hull_tint)
 	elif info.get("jazoone_spaceship", false):
 		_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)
 	elif info.get("wedge_fighter", false):
-		_authored_propulsion = WEDGE_DESIGN.style(model)
-	var picked_palette := _palette_for(_color_for(info.name, info))
-	if not info.get("wedge_fighter", false) and not info.get("base_basic_pbr", false):
-		ShipMesh.color_authored_ship(model, picked_palette.swatch, _finish_for(info.name))
+		_authored_propulsion = WEDGE_DESIGN.style(model, hull_tint)
+	elif info.get("vanguard", false):
+		_authored_propulsion = ShipMesh.style_vanguard(model, hull_tint)
+	if not info.get("wedge_fighter", false) and not info.get("base_basic_pbr", false) \
+			and not info.get("vanguard", false):
+		ShipMesh.color_authored_ship(model, hull_tint, _finish_for(info.name))
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
@@ -1388,6 +1407,8 @@ func _build_ship_model(idx: int) -> void:
 		plumes = ShipMesh.add_base_basic_booster_plumes(model)
 	elif info.get("jazoone_spaceship", false):
 		plumes = ShipMesh.add_jazoone_booster_plumes(model)
+	elif info.get("vanguard", false):
+		plumes = ShipMesh.add_vanguard_booster_plumes(model)
 	# Torch cones are the only layer whose GEOMETRY reacts to throttle, so they are
 	# tracked separately from the flat authored propulsion surfaces and the haze.
 	for material in plumes:
@@ -1476,6 +1497,13 @@ func current_has_color_pick() -> bool:
 	return bool(SHIP_MODELS[_current_model].get("color_pick", false))
 
 
+# Metallic/glassy is color_authored_ship's doing, so only the ships that go through
+# that pass offer it. The three that paint inside their own styler would show a
+# GLASSY button that rebuilt the hull and changed nothing.
+func current_has_finish_pick() -> bool:
+	return bool(SHIP_MODELS[_current_model].get("finish_pick", false))
+
+
 func current_body_color() -> String:
 	var info: Dictionary = SHIP_MODELS[_current_model]
 	return _color_for(info.name, info)
@@ -1495,6 +1523,8 @@ func set_ship_color(_part: String, key: String) -> void:
 
 func set_ship_finish(key: String) -> void:
 	if key != "metallic" and key != "glassy":
+		return
+	if not SHIP_MODELS[_current_model].get("finish_pick", false):
 		return
 	_finish_choice[SHIP_MODELS[_current_model].name] = key
 	_rebuild_customized_ship()

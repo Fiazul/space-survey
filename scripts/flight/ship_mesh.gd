@@ -77,8 +77,8 @@ const DINGO57_BOOSTER_SOCKETS := [
 #
 # What this costs: dingo57 and snarkrans now emit ~34% and ~42% of the total light they
 # used to, which is the excess that came from lighting their housings. class_ii, the
-# anchor, is unchanged at 106%.
-const CLASS_II_BOOSTER_GAIN := 4.0
+# anchor, is trimmed slightly to keep its full-power core below the HDR ceiling.
+const CLASS_II_BOOSTER_GAIN := 3.8
 const DINGO57_BOOSTER_GAIN := 4.68
 const SNARKRANS_BOOSTER_GAIN := 3.02
 # JazOone's two engine discs are far larger relative to its hull than the other ships'
@@ -111,6 +111,36 @@ const JAZOONE_BOOSTER_SOCKETS := [
 	{ "center": Vector3(1.02676, 0.27311, 3.76096), "radius": 0.81810 },
 	{ "center": Vector3(-1.02676, 0.27311, 3.76096), "radius": 0.81810 },
 ]
+
+# --- Vanguard ---------------------------------------------------------------------
+# A 250k-vertex PBR craft supplied as a bare OBJ: eight `o` groups, root.0 .. root.7,
+# and NO mtllib at all. So unlike base_basic - which it otherwise copies - there is no
+# authored material on the mesh to duplicate, and the maps have to be bound here.
+const VANGUARD_DIFFUSE := preload("res://assets/vanguard/vanguard_diffuse.png")
+const VANGUARD_NORMAL := preload("res://assets/vanguard/vanguard_normal.png")
+const VANGUARD_ROUGHNESS := preload("res://assets/vanguard/vanguard_roughness.png")
+const VANGUARD_METALLIC := preload("res://assets/vanguard/vanguard_metallic.png")
+const VANGUARD_EMISSIVE := preload("res://assets/vanguard/vanguard_emissive.png")
+
+# The engine is one central barrel. Its bright rear aperture spans approximately
+# x +/-0.065, y 0.12..0.25, z 0.86..0.89. The rearmost z=0.9486 vertices are
+# thin trim on either side, not two outlets. Seat the exhaust in the aperture;
+# splitting the aft bounding box in half puts two flames below the real engine.
+# Exhaust travels along +Z; the hull is flown at yaw 0.
+const VANGUARD_BOOSTER_SURFACE := "root.1"
+const VANGUARD_BOOSTER_GAIN := 1.6
+const VANGUARD_BOOSTER_SOCKETS := [
+	{ "center": Vector3(-0.0015, 0.1830, 0.8900), "radius": 0.0650 },
+]
+
+# Hangar-tint value groups, as authored. Base_basic paints its hull 0.40/0.50/0.64 and
+# its engine housing 0.20/0.27/0.36 (0.56 of the hull's value); vanguard paints its hull
+# 0.42/0.51/0.64, its root.3/root.4 trim 0.20/0.34/0.50 (0.78) and its root.1/root.2
+# engine barrel 0.19/0.26/0.35 (0.55). Stating them as fractions of the picked colour is
+# what lets one swatch repaint the whole ship without flattening it to one tone.
+const BASE_BASIC_HOUSING_SHADE := 0.56
+const VANGUARD_TRIM_SHADE := 0.78
+const VANGUARD_HOUSING_SHADE := 0.55
 
 # --- THE booster brightness knob -------------------------------------------------
 # Change this number, press F5, look at the ship. It is the single lever for how hot
@@ -351,10 +381,10 @@ static func add_class_ii_booster_plumes(model: Node3D,
 		# Outer haze: longer and wider, but dimmer and translucent at the edge.
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.5, 0.666667, 0.18, 1.25, 0.55, 0.42, false, -1.0, world_scale))
+			radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 5.8, 0.58, 0.05, 3.40, 0.82, 0.995, true, -1.0, world_scale))
+			radius * 3.6, 0.58, 0.05, 3.20, 0.82, 0.995, true, -1.0, world_scale))
 	_attach_socket_extras(model, CLASS_II_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	return propulsion_materials
 
@@ -616,7 +646,19 @@ static func style_snarkrans_starship(model: Node3D) -> Array[ShaderMaterial]:
 				# gets all three rather than a guessed one-to-one mapping.
 				_wire_nozzle_shape(propulsion, SNARKRANS_BOOSTER_SOCKETS,
 					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
-				mi.set_surface_override_material(si, propulsion)
+				# These surfaces include the complete engine bells. Keep them solid;
+				# only the aft lip receives the additive glow, like Base Basic PBR.
+				propulsion.set_shader_parameter("rear_only", true)
+				propulsion.set_shader_parameter("rear_start", -9.26658)
+				propulsion.set_shader_parameter("rear_band", 0.078)
+				var housing := StandardMaterial3D.new()
+				housing.resource_name = "snarkrans_engine_housing"
+				housing.albedo_color = Color(0.30, 0.31, 0.34)
+				housing.metallic = 0.58
+				housing.roughness = 0.34
+				housing.cull_mode = BaseMaterial3D.CULL_DISABLED
+				housing.next_pass = propulsion
+				mi.set_surface_override_material(si, housing)
 				propulsion_materials.append(propulsion)
 	return propulsion_materials
 
@@ -641,10 +683,10 @@ static func add_snarkrans_booster_plumes(model: Node3D,
 			plume_root, "BoosterFill%02d" % (i + 1), center, radius))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
-			radius * 9.8, 0.666667, 0.20, 1.30, 0.55, 0.42, false, -1.0, world_scale))
+			radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42, false, -1.0, world_scale))
 		propulsion_materials.append(_add_torch_layer(
 			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
-			radius * 6.0, 0.60, 0.05, 3.50, 0.82, 0.998, true, -1.0, world_scale))
+			radius * 3.6, 0.60, 0.05, 3.20, 0.82, 0.995, true, -1.0, world_scale))
 	_attach_socket_extras(model, SNARKRANS_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	return propulsion_materials
 
@@ -658,7 +700,8 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	plug_mesh.top_radius = radius * 0.98
 	plug_mesh.radial_segments = 40
 	plug_mesh.rings = 1
-	plug_mesh.cap_bottom = true
+	# A second additive cap shines through the first and doubles the disc energy.
+	plug_mesh.cap_bottom = false
 	plug_mesh.cap_top = true
 
 	var material := ShaderMaterial.new()
@@ -678,16 +721,34 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	plug.material_override = material
 	plug.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	plug.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)
-	# Seat the inner cap on the authored rear plane and put its bright outer face
-	# slightly behind the housing so the housing can still occlude the edges.
-	plug.position = center + Vector3(0.0, 0.0, -plug_depth * 0.5 - 0.015)
+	# Recess the single rear cap inside the bell so its opaque rim occludes it.
+	plug.position = center + Vector3(0.0, 0.0, plug_depth * 0.5 + radius * 0.12)
 	parent.add_child(plug)
 	return material
 
 
+# The three texture-authored hulls (base_basic, vanguard, selene) do NOT go through
+# color_authored_ship - that pass flattens albedo and kills emission, which would throw
+# away their supplied maps. They take the hangar tint here instead, multiplying
+# the original albedo while preserving the normal, metallic, and roughness maps.
+# A hull is painted in more than one value (spine darker than shell, housing darker than
+# hull); those groups are stated as a FRACTION of the picked tint so a colour pick moves
+# the whole ship and the design's own value contrast survives.
+static func shade(tint: Color, fraction: float) -> Color:
+	return Color(tint.r * fraction, tint.g * fraction, tint.b * fraction)
+
+
+# Apply the user's hangar colour without covering the authored surface design.
+static func _apply_authored_hull_tint(material: BaseMaterial3D, tint: Color) -> void:
+	var original := material.albedo_color
+	material.albedo_color = Color(original.r * tint.r, original.g * tint.g,
+		original.b * tint.b, original.a)
+
+
 # The supplied GLB names its two engine meshes root.1 and root.3. Match authored
-# names, never traversal order, and preserve the other four PBR textures with a subtle shadow lift.
-static func style_base_basic_pbr(model: Node3D) -> Array[ShaderMaterial]:
+# names, never traversal order; the paint pass leaves their propulsion intact.
+static func style_base_basic_pbr(model: Node3D,
+		tint := Color.WHITE) -> Array[ShaderMaterial]:
 	var materials: Array[ShaderMaterial] = []
 	for mi in gather_mesh_instances(model):
 		if mi.mesh == null:
@@ -698,8 +759,8 @@ static func style_base_basic_pbr(model: Node3D) -> Array[ShaderMaterial]:
 				if source == null:
 					continue
 				var hull := source.duplicate() as BaseMaterial3D
-				# A low neutral fill keeps the unlit underside readable without
-				# removing its authored albedo, normal, or metallic/roughness maps.
+				_apply_authored_hull_tint(hull, tint)
+				# A low neutral fill keeps the unlit underside readable.
 				hull.emission_enabled = true
 				hull.emission = Color(0.16, 0.18, 0.22)
 				hull.emission_energy_multiplier = 0.45
@@ -717,6 +778,10 @@ static func style_base_basic_pbr(model: Node3D) -> Array[ShaderMaterial]:
 			var source := mi.get_active_material(si) as BaseMaterial3D
 			if source != null:
 				var housing := source.duplicate() as BaseMaterial3D
+				# The housing is the metal AROUND the outlet, not the outlet: it takes
+				# the pick at the authored 0.56 of the hull's value. `drive` below is the
+				# propulsion pass and is never touched by a colour choice.
+				_apply_authored_hull_tint(housing, shade(tint, BASE_BASIC_HOUSING_SHADE))
 				housing.next_pass = drive
 				mi.set_surface_override_material(si, housing)
 			materials.append(drive)
@@ -758,6 +823,82 @@ static func add_base_basic_booster_plumes(model: Node3D,
 	# lock_nozzle_width and the radius-relative seating that used to be set here, and
 	# only here, are now _add_torch_layer's behaviour for every ship - which is what
 	# made this the one engine that read as exhaust leaving a nozzle.
+	return materials
+
+
+# Vanguard, built to base_basic's recipe: authored maps on the hull, the booster
+# surface carrying a propulsion pass, and two torch layers in its single outlet.
+#
+# The OBJ arrives as ONE mesh with eight named surfaces rather than eight nodes, so
+# the booster is found by SURFACE name. It also arrives with no materials, so every
+# surface gets one built from the supplied maps instead of a duplicate of its own.
+static func style_vanguard(model: Node3D,
+		tint := Color.WHITE) -> Array[ShaderMaterial]:
+	var materials: Array[ShaderMaterial] = []
+	for mi in gather_mesh_instances(model):
+		if mi.mesh == null:
+			continue
+		for si in mi.mesh.get_surface_count():
+			var hull := StandardMaterial3D.new()
+			hull.albedo_texture = VANGUARD_DIFFUSE
+			hull.normal_enabled = true
+			hull.normal_texture = VANGUARD_NORMAL
+			hull.roughness_texture = VANGUARD_ROUGHNESS
+			hull.metallic = 1.0
+			hull.metallic_texture = VANGUARD_METALLIC
+			var surface_name: String = mi.mesh.surface_get_name(si)
+			var paint := tint
+			if surface_name in ["root.3", "root.4"]:
+				paint = shade(tint, VANGUARD_TRIM_SHADE)
+			elif surface_name in ["root.1", "root.2"]:
+				paint = shade(tint, VANGUARD_HOUSING_SHADE)
+			_apply_authored_hull_tint(hull, paint)
+			# The craft carries its own emissive map - the strip lighting and the
+			# engine glow are painted into it - so it supplies the fill that
+			# base_basic had to fake with a flat colour.
+			hull.emission_enabled = true
+			hull.emission_texture = VANGUARD_EMISSIVE
+			# ADD makes even black texels emit the white tint across the hull.
+			hull.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
+			hull.emission = Color(1.0, 1.0, 1.0)
+			hull.emission_energy_multiplier = 1.15
+			if mi.mesh.surface_get_name(si) == VANGUARD_BOOSTER_SURFACE:
+				var drive := ShaderMaterial.new()
+				drive.shader = CRUISER_PROPULSION_SHADER
+				drive.set_shader_parameter("plasma_color", Color.WHITE)
+				drive.set_shader_parameter("brightness", VANGUARD_BOOSTER_GAIN)
+				# Grade against the central outlet, so the housing around it stops
+				# being a light source and the glow ends before the mesh does.
+				_wire_nozzle_shape(drive, VANGUARD_BOOSTER_SOCKETS,
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
+				hull.next_pass = drive
+				materials.append(drive)
+			mi.set_surface_override_material(si, hull)
+	return materials
+
+
+static func add_vanguard_booster_plumes(model: Node3D,
+		accent := Color(0.35, 0.68, 1.0)) -> Array[ShaderMaterial]:
+	var materials: Array[ShaderMaterial] = []
+	var rig := Node3D.new()
+	rig.name = "VanguardAuthoredBoosterPlumes"
+	model.add_child(rig)
+	var world_scale: float = model.scale.x
+	# base_basic's proportions exactly - 6.0 and 3.6 socket radii - which put the
+	# haze at 21% of this 1.896-unit hull and the core at 12%.
+	for i in VANGUARD_BOOSTER_SOCKETS.size():
+		var socket: Dictionary = VANGUARD_BOOSTER_SOCKETS[i]
+		var center: Vector3 = socket.center
+		var radius: float = float(socket.radius)
+		materials.append(_add_torch_layer(rig, "BoosterFog%02d" % (i + 1),
+			center, radius, radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42,
+			false, 1.0, world_scale))
+		materials.append(_add_torch_layer(rig, "BoosterCore%02d" % (i + 1),
+			center, radius, radius * 3.6, 0.90, 0.05, 3.20, 0.82, 0.995,
+			true, 1.0, world_scale))
+	_attach_socket_extras(model, VANGUARD_BOOSTER_SOCKETS, 1.0, world_scale, accent)
+	print("vanguard: attached %d torch layers on %d measured outlets"
+		% [materials.size(), VANGUARD_BOOSTER_SOCKETS.size()])
 	return materials
 
 
@@ -933,6 +1074,11 @@ static func color_authored_ship(model: Node3D, tint: Color, finish: String) -> i
 			continue
 		for si in mi.mesh.get_surface_count():
 			var active := mi.get_active_material(si)
+			# Engine housings stay opaque even when the user selects a glass hull.
+			# Their additive next pass remains attached to the live throttle driver.
+			if active is BaseMaterial3D and active.resource_name == "snarkrans_engine_housing":
+				(active as BaseMaterial3D).albedo_color = tint
+				continue
 			# Primitive meshes have no surface_get_name. The game colours the hull
 			# before the plumes exist, but the render harness builds them first and the
 			# raw call aborted this whole loop on the first CylinderMesh it reached,

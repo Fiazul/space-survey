@@ -70,7 +70,7 @@ func _input(event: InputEvent) -> void:
 # A finger went down / up at pos.
 func _touch_at(index: int, pos: Vector2, pressed: bool) -> void:
 	if pressed:
-		var hit := _button_at(pos)
+		var hit: Variant = _button_at(pos)
 		if hit != null:
 			_finger[index] = hit
 			_press(hit)

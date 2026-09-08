@@ -1,6 +1,13 @@
 shader_type spatial;
 render_mode cull_disabled;
 
+// The hangar swatch, as the ceramic shell's colour. Every other structural value on
+// this hull - the dark spine, the raised armor, the belly plate, the inspection hatch -
+// is a fixed fraction of it, so one pick repaints the whole craft and the design's value
+// contrast survives. The copper chevrons and the cyan rail/nav emission are ACCENTS and
+// deliberately stay put; so does everything the exhaust and nozzle shaders own.
+// Default = the authored ceramic, so an unset material looks exactly as it always did.
+uniform vec3 hull_tint : source_color = vec3(0.38, 0.48, 0.52);
 uniform vec3 design_offset = vec3(0.0);
 uniform float wing = 0.0;
 uniform float armor = 0.0;
@@ -19,13 +26,13 @@ void fragment() {
 	float x = abs(position.x);
 	float z = position.z;
 	float top = smoothstep(0.15, 0.65, abs(local_normal.y)) * smoothstep(-0.04, 0.06, position.y);
-	vec3 graphite = vec3(0.025, 0.045, 0.064);
-	vec3 ceramic = vec3(0.38, 0.48, 0.52);
+	vec3 ceramic = hull_tint;
+	vec3 graphite = hull_tint * 0.123;
 	vec3 copper = vec3(0.54, 0.20, 0.075);
 	// Dark central spine inside a pale, swept ceramic shell.
 	float shell = smoothstep(0.30, 0.38, x) * (1.0 - armor);
 	vec3 paint = mix(graphite, ceramic, shell * top);
-	paint = mix(paint, vec3(0.07, 0.12, 0.15), armor);
+	paint = mix(paint, hull_tint * 0.288, armor);
 	// Paired canopy accents stay on the main hull, clear of raised armor.
 	// Mirror the same curve about the centreline rather than crossing panels.
 	float arc_x = 0.46 + 0.09 * (z - 0.35) * (z - 0.35);
@@ -44,7 +51,7 @@ void fragment() {
 	// Ventral armor follows the existing surface, rather than floating decals.
 	float underside = smoothstep(0.15, 0.65, abs(local_normal.y)) * (1.0 - smoothstep(-0.05, 0.02, position.y));
 	float belly_plate = smoothstep(0.28, 0.38, x);
-	vec3 belly = mix(graphite, vec3(0.20, 0.29, 0.33), belly_plate);
+	vec3 belly = mix(graphite, hull_tint * 0.635, belly_plate);
 	belly = mix(belly, ceramic * 0.78, wing);
 	float panel_break = band(z, -2.45, -2.42) + band(z, -0.32, -0.29) + band(z, 1.35, 1.38);
 	panel_break += band(x, 1.05, 1.075) * band(z, -2.4, 1.35);
@@ -55,7 +62,7 @@ void fragment() {
 	// Circular inspection hatch with a thin copper service ring on the keel.
 	float hatch_radius = length(vec2(position.x, z + 0.75));
 	float hatch = 1.0 - smoothstep(0.40, 0.42, hatch_radius);
-	belly = mix(belly, vec3(0.06, 0.10, 0.13), hatch);
+	belly = mix(belly, hull_tint * 0.25, hatch);
 	belly = mix(belly, copper, band(hatch_radius, 0.43, 0.445));
 	float belly_light = band(x, 0.92, 0.935) * band(z, -2.48, -1.05);
 	paint = mix(paint, belly, underside);

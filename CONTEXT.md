@@ -9,8 +9,12 @@ One kilometre. Every `true_pos` and body radius is stored in these units.
 _Avoid_: Godot unit, meter (not yet), old 0.1 AU unit
 
 **True position**:
-A body's absolute position in scene units. The ship stays at the render origin; bodies draw at true position minus the ship's true position.
+A body's absolute position in scene units, Earth-centred. The ship stays at the render origin; bodies draw at true position minus the ship's true position. On the ship itself this is a derived 32-bit view of the anchored state, not the state.
 _Avoid_: world position, global transform
+
+**Anchor body**:
+The body the ship's physics is measured from — the nearest one. The ship's real state is (anchor, offset in km from its centre); the offset is small, so a substep of motion survives at Venus or Saturn where an absolute coordinate cannot hold it. Cross-body distances go through `Ephemeris.rel_km` in 64-bit before packing. Outside Sol the anchor is Earth, which is the origin.
+_Avoid_: absolute ship position as state, `body.pos - ship.true_pos`, re-origin threshold, floating-origin shift
 
 **Physical body**:
 A Sol body whose radius and separation are real. Past the camera far plane it is a sky disc with the real angular size. The cut is the near face, not the centre — a star bigger than the far plane still becomes a cook ball when you close in.

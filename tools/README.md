@@ -4,17 +4,20 @@ Dev-only scripts: none of this ships in a build. See CLAUDE.md for exact invocat
 
 ## test_* — headless tests (pass/fail contracts)
 
-Most `extends SceneTree`, run via `godot --headless --script tools/test_X.gd`. Five are
+Most `extends SceneTree`, run via `godot --headless --script tools/test_X.gd`. Six are
 scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
-`godot --headless tools/test_X.tscn`): `test_base_basic_pbr`, `test_chase_rig`,
-`test_ship_roster`, `test_surface_integration`, `test_wedge_fighter`.
+`godot --headless tools/test_X.tscn`): `test_anchor_frame`, `test_base_basic_pbr`,
+`test_chase_rig`, `test_ship_roster`, `test_surface_integration`, `test_wedge_fighter`.
 
 | File | Covers |
 |---|---|
+| `test_anchor.gd` | Anchored ship frame (docs/adr/0002): the absolute frame still swallows a Venus-scale substep, the anchored one does not; reanchor continuity, save round-trip |
+| `test_anchor_frame.gd` (+ `.tscn`) | The Ephemeris-backed half of the anchor: `rel_km` antisymmetry, a real Newton run at Venus/Saturn, anchor hand-off, anchored-vs-legacy parity |
 | `test_base_basic_pbr.gd` (+ `.tscn`) | Base PBR material/shading contract for a ship hull |
 | `test_booster_brightness.gd` | `ShipMesh.booster_brightness` + nozzle shaping |
 | `test_chase_rig.gd` (+ `.tscn`) | Third-person chase camera rig + ship-only fill light |
 | `test_class_ii_cruiser.gd` | Class II cruiser default asset + dedicated surfaces |
+| `test_cloud_layer.gd` | `CloudLayer` shell radius, visible-gate mirrors the ring's `should_show`, airless bodies get no layer |
 | `test_earth_terrain.gd` | Earth flyover: height function, nested rings, band ceiling, speed cap, contact kill |
 | `test_flight_mode.gd` | `FlightMode` zone/exclusion math |
 | `test_galaxy_backdrop.gd` | Camera never ends up inside the opaque galaxy backdrop mesh |
@@ -43,8 +46,10 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | File | Captures |
 |---|---|
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
+| `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |
 | `render_thruster.gd` (+ `.tscn`) | Contact sheet of every ship's boosters, matching the live WorldEnvironment |
 | `render_wedge_fighter.gd` (+ `.tscn`) | Wedge-fighter hull render |
+| `render_touch_hud.gd` (+ `.tscn`) | Boots the real `Main` scene offscreen at a given resolution (`--resolution WxH ... -- --touch`) so the touch-controls overlay + HUD can be looked at, for diagnosing "buttons/joystick missing" reports without a physical device |
 
 ## gen_*/build_*/draw_*/fetch_*/ingest_*/export_*/parse_* — asset & data generators
 

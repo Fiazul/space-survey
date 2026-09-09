@@ -1,8 +1,10 @@
 class_name PlanetSystem
 extends Node3D
+const _AF := preload("res://scripts/flight/anchor_frame.gd")
 
 const SurfacePatchScript := preload("res://scripts/world/surface_patch.gd")
 const FlightModeScript := preload("res://scripts/flight/flight_mode.gd")
+const CloudLayerScript := preload("res://scripts/world/cloud_layer.gd")
 # Real bodies with floating-origin LOD. Positions come from Ephemeris (live JPL
 # Horizons for the Sun + planets, real catalog for the stars) — nothing here is
 # hand-placed. See ephemeris.gd for the data, frame and scale.
@@ -109,6 +111,11 @@ void fragment() {
 }
 """
 var _surface: Node3D           # skin-band bird-view ground (rings / water / kit)
+var _cloud_layer: Node3D       # deck between the band ceiling and the ground,
+								# alive exactly while _surface is (see CloudLayer.should_show)
+var _cloud_time_s := 0.0       # deterministic sim clock (accumulated `delta`, not wall-clock
+								# TIME) shared by the shell and the globe's cook material — see
+								# CloudLayer.cloud_uv_offset() / PlanetGenerator.set_cloud_drift()
 var _samplers := {}            # body name -> TerrainSampler, built on first need
 # Inside-the-atmosphere sky. An inward-facing sphere centred on the ship, drawn
 # only while there is air around you. Radius is large so terrain and the body's
@@ -188,6 +195,8 @@ func _ready() -> void:
 	_build_sun_sky()
 	_surface = SurfacePatchScript.new()
 	add_child(_surface)
+	_cloud_layer = CloudLayerScript.new()
+	add_child(_cloud_layer)
 	_build_air_shell()
 	load_system(SystemDB.bodies(SystemDB.SOL))
 	_build_star_shell()
@@ -493,7 +502,12 @@ func _build_star_shell() -> void:
 		})
 
 
-func refresh(ship_pos: Vector3, delta: float) -> void:
+# `ship_off` is the ship's offset from `anchor` in km (docs/adr/0002); `anchor`
+# is "" outside Sol, where every coordinate is small and the offset IS absolute.
+# Everything this writes into `_rel` stays SHIP-relative, so nothing downstream
+# (navigator, minimap, HUD, surface band) has to know an anchor exists.
+func refresh(ship_off: Vector3, delta: float, anchor := "") -> void:
+	_cloud_time_s += delta
 	nearest_dist = INF
 	nearest_name = ""
 	speed_limit = INF
@@ -512,6 +526,8 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 	# are built before moons in _sol(), so a parent is always present by the time a moon needs
 	# it). Without this, fast inner planets (Mars) drift off and their moons orbit empty space.
 	var star_true := _star_true()
+	var anchored := anchor != ""
+	var ship_pos: Vector3 = _AF.absolute(eph.pos64(anchor), ship_off) if anchored else ship_off
 	var frame_pos := {}
 	for b in _bodies:
 		var rad: float = b.radius
@@ -545,7 +561,10 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 			# grew, so bigger bodies don't end up inside their (unscaled) star. Star sits at origin.
 			bpos = b.pos * (1.0 if b.star else VISUAL_SCALE)
 		frame_pos[b.name] = bpos   # parents are computed before their moons (see _sol order)
-		var rel: Vector3 = bpos - ship_pos  # floating origin
+		# Sol's physical bodies read their offset from the anchor in doubles; the
+		# authored systems (and the drifting Voyagers) keep the plain subtraction,
+		# where every coordinate is small enough for it to be exact.
+		var rel: Vector3 = _rel_to_ship(b, anchored, anchor, ship_off, bpos, ship_pos)
 		var dist := rel.length()
 
 		var mu: float = float(b.get("mu", 0.0))
@@ -579,10 +598,22 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 			star_dist = dist   # how far we are from this system's sun (FTL gate)
 
 		if b.get("mat") != null and b.mat is ShaderMaterial:
-			var to_sun: Vector3 = star_true - bpos
+			var to_sun: Vector3 = eph.rel_km("Sun", str(b.name)) \
+				if (anchored and b.get("physical", false) and eph.has_pos(str(b.name))) \
+				else star_true - bpos
 			var alt := dist - vrad
 			var det := PlanetGenerator.close_detail(alt)
-			PlanetGenerator.apply_view(b.mat, to_sun, det)
+			var body_atmo_top: float = eph.atmo_top_km(str(b.name)) if b.get("physical", false) else -1.0
+			PlanetGenerator.apply_view(b.mat, to_sun, det, alt, body_atmo_top)
+			PlanetGenerator.set_cloud_drift(b.mat, CloudLayerScript.cloud_uv_offset(_cloud_time_s))
+			# Push the globe's cloud_amount only when GameState.cloud_quality
+			# actually changed since the last push (cached per body) — see
+			# PlanetGenerator.set_cloud_amount's comment for why _cook_material's
+			# one-time bind at construction is not enough on its own.
+			var wanted_cloud_amount: float = float(_cloud_recipe(b.recipe).get("cloud_amount", 0.0))
+			if not is_equal_approx(float(b.get("_pushed_cloud_amount", -1.0)), wanted_cloud_amount):
+				PlanetGenerator.set_cloud_amount(b.mat, wanted_cloud_amount)
+				b["_pushed_cloud_amount"] = wanted_cloud_amount
 			if not b.get("close_maps", false) and PlanetGenerator.close_enough(dist, vrad):
 				PlanetGenerator.ensure_close_maps(b.mat, b.recipe)
 				b.close_maps = true
@@ -655,6 +686,9 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 	# Named stars: floating-origin destinations. Far -> a labelled sky point in the
 	# right direction (clamped); near -> a growing emissive sphere. Live distance.
 	for st in _stars:
+		# Interstellar scale (~1e13 km): the ship's own magnitude is a rounding
+		# error against it, so the anchor buys nothing here and the sky point's
+		# precision is bounded by st.true_pos itself either way.
 		var srel: Vector3 = st.true_pos - ship_pos
 		var sdist := srel.length()
 		_rel[st.name] = srel
@@ -710,7 +744,7 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 		cook_look = "%s  %s  %s  %s" % [
 			str(b.name), path, str(rec.get("source", "?")), str(rec.get("kind", "?"))]
 		break
-	_place_sun_sky(ship_pos)
+	_place_sun_sky(ship_off, anchor)
 	# Skin band: ONE local ground tile, nearest body only, alive between that body's
 	# kill line and its own terrain-derived ceiling. Everything it paints comes from
 	# `near_recipe`, so the Moon gets lunar crust and not Earth's continents.
@@ -728,26 +762,39 @@ func refresh(ship_pos: Vector3, delta: float) -> void:
 		var from_centre: Vector3 = body_basis.inverse() * -_rel.get(nearest_name, Vector3.ZERO)
 		if sampler != null and near_physical and from_centre.length() > 0.001:
 			salt = sampler.alt_above_ground_km(from_centre, nearest_radius)
-			# Fold the band cap into speed_limit, which the ship already reads.
-			# Deliberately NOT gated on `speed_zones`: that flag defers the
-			# approach-zone pass, while this cap is what makes the contact kill
-			# sound - one frame at the cap must be shorter than a ring-0 quad.
-			if salt < ceiling:
-				speed_limit = minf(speed_limit,
-					FlightModeScript.band_speed_cap_units(salt))
+		# Player decision 2026-09-08: no hard speed cap in air at all. Sol
+		# speed is Newton + drag only - see NEEDS-YOUR-EYES.md. The band
+		# speed cap fold that used to sit here (and its inward-only gate)
+		# is removed; FlightMode.band_speed_cap_* is removed alongside it.
 		_surface.transform = Transform3D(body_basis, _rel.get(nearest_name, Vector3.ZERO))
 		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler)
 		# The coarse globe has a different displacement and can protrude through
 		# valleys. The complete horizon-covering terrain replaces it in this band.
-		if _surface.visible:
+		if _surface.visible and _surface.has_ground():
 			for b in _bodies:
 				if str(b.name) == nearest_name:
 					b.sphere.visible = false
 		# Light and air. The sun vector is body -> star, exactly what
 		# PlanetGenerator.apply_view() hands the globe's material.
-		var to_star: Vector3 = star_true - (ship_pos + _rel.get(nearest_name, Vector3.ZERO))
-		_update_air(to_star, salt, ceiling, near_recipe, nearest_name, near_physical)
+		var to_star: Vector3 = (eph.rel_km("Sun", anchor) if anchored else star_true) \
+			- (ship_off + _rel.get(nearest_name, Vector3.ZERO))
+		var deck_recipe: Dictionary = _cloud_recipe(near_recipe)
+		if _cloud_layer != null:
+			_cloud_layer.update_for(_rel.get(nearest_name, Vector3.ZERO), nearest_name,
+				near_physical, nearest_radius, salt, eph.surface_kill_km(nearest_name),
+				ceiling, deck_recipe, to_star, _cloud_time_s)
+		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, near_physical, from_centre)
+
+
+# A body's render-space offset from the ship. Sol's live physical worlds go
+# through Ephemeris.rel_km (64-bit); everything else is small and stays direct.
+func _rel_to_ship(b: Dictionary, anchored: bool, anchor: String, ship_off: Vector3,
+		bpos: Vector3, ship_pos: Vector3) -> Vector3:
+	if anchored and b.get("physical", false) and b.get("live", false) \
+			and not b.get("craft", false) and eph.has_pos(str(b.name)):
+		return eph.rel_km(str(b.name), anchor) - ship_off
+	return bpos - ship_pos
 
 
 func surface_basis(body: String) -> Basis:
@@ -779,11 +826,35 @@ func _build_air_shell() -> void:
 	add_child(_air_shell)
 
 
+# GameState.cloud_quality index (Off/Light/Full) -> cloud_amount multiplier.
+# Player control since clouds are optional: this scales a COPY of the recipe,
+# never the shared one, so the deck (CloudLayer reads cloud_amount) and the
+# fly-through fog above (coverage_at reads the same recipe) both shrink or
+# vanish together under Off/Light. Does not touch the globe's own baked
+# material - that cloud_amount is set once at body construction, outside this
+# region.
+const CLOUD_QUALITY_MULT := [0.0, 0.5, 1.0]
+
+# Pure (no autoload) so tools/test_low_alt_haze.gd can assert the mapping
+# headlessly - GameState is unavailable under `--script` (see CLAUDE.md).
+static func cloud_recipe_for_quality(recipe: Dictionary, quality_idx: int) -> Dictionary:
+	var idx: int = clampi(quality_idx, 0, CLOUD_QUALITY_MULT.size() - 1)
+	var mult: float = CLOUD_QUALITY_MULT[idx]
+	if mult >= 0.999:
+		return recipe
+	var scaled: Dictionary = recipe.duplicate()
+	scaled["cloud_amount"] = float(recipe.get("cloud_amount", 0.0)) * mult
+	return scaled
+
+func _cloud_recipe(recipe: Dictionary) -> Dictionary:
+	return cloud_recipe_for_quality(recipe, GameState.cloud_quality)
+
+
 # Sky, light and haze for the nearest body, every frame. `sun_dir` is the SAME
 # vector the globe's own material gets, so the tile's terminator and the globe's
 # cannot drift apart at the tile's edge.
 func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
-		recipe: Dictionary, body: String, physical: bool) -> void:
+		recipe: Dictionary, body: String, physical: bool, from_centre: Vector3) -> void:
 	if _surface != null and _surface.has_method("set_view"):
 		# Haze follows the AIR, not the band ceiling: at 30 km there is almost
 		# nothing to scatter in, so distant ground has to go clear.
@@ -803,6 +874,34 @@ func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 		_air_shell.material_override = _air_mat
 	_air_shell.visible = true
 	var air_color: Color = recipe.get("color_air", Color(0.30, 0.56, 1.0))
+	# Flying INTO the deck: no second density curve, just fog the existing air
+	# colour/opacity toward white by how deep in the cloud band the ship is and
+	# how much cloud actually covers this lon/lat (CloudLayer.coverage_at reads
+	# the same texture/cloud_amount the deck itself paints).
+	#
+	# The band used to ramp over the FULL thickness on each side of cloud_alt_km
+	# (dividing by cthick, not cthick/2), so a 3 km-thick deck fogged the air
+	# across a 6 km zone - reaching 1 km below the deck's real base. Reported: a
+	# 2 km shot under a dense deck read as uniform murk with no clear air below
+	# it. Tightened to the deck's actual half-thickness plus a small margin so
+	# the ramp starts at the true edge, and zeroes a short distance outside it -
+	# "1 km below the base" now measures fog == 0, matching the reference (air
+	# under a deck is clear; only INSIDE the deck does it go white).
+	if physical and _cloud_layer != null and CloudLayerScript.has_clouds(recipe) \
+			and from_centre.length_squared() > 0.0001:
+		var calt: float = CloudLayerScript.cloud_alt_km(recipe)
+		var half: float = maxf(CloudLayerScript.cloud_thickness_km(recipe), 0.001) * 0.5
+		var margin: float = clampf(half * 0.3, 0.1, 1.0)
+		var d: float = absf(alt_km - calt)
+		var band := clampf((half + margin - d) / margin, 0.0, 1.0)
+		if band > 0.0:
+			var cov: float = _cloud_layer.coverage_at(from_centre.normalized(), recipe)
+			var fog: float = band * cov
+			air_color = air_color.lerp(Color(0.94, 0.96, 0.99), fog)
+			# Budget: sum never exceeds 1.0 (fully opaque). Fog alone can now reach
+			# 1.0 (no *0.9 damping) so being fully immersed in dense cloud is a real
+			# white-out, independent of how much sky opacity was already there.
+			opacity = clampf(opacity + fog, 0.0, 1.0)
 	_air_mat.set_shader_parameter("color_air", Vector3(air_color.r, air_color.g, air_color.b))
 	# The shell is centred on the ship, which is the render-space origin.
 	_air_shell.position = Vector3.ZERO
@@ -832,6 +931,8 @@ func terrain_sampler_for(body: String) -> TerrainSampler:
 func hush_surface() -> void:
 	if _surface != null and _surface.has_method("hush"):
 		_surface.hush()
+	if _cloud_layer != null:
+		_cloud_layer.hush()
 
 
 func _star_true() -> Vector3:
@@ -844,11 +945,11 @@ func _star_true() -> Vector3:
 	return eph.scene_pos("Sun")
 
 
-func _place_sun_sky(ship_pos: Vector3) -> void:
+func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	if _sun_sky == null:
 		return
-	var sunp: Vector3 = eph.scene_pos("Sun")
-	var rel: Vector3 = sunp - ship_pos
+	var rel: Vector3 = eph.rel_km("Sun", anchor) - ship_off if anchor != "" \
+		else eph.scene_pos("Sun") - ship_off
 	var dist := rel.length()
 	if dist < 0.001:
 		_sun_sky.visible = false
@@ -908,8 +1009,10 @@ func _slow_min(mass: float) -> float:
 
 # Gravitational acceleration at an arbitrary true-space position, summed over every
 # planet and star. Used by combat.gd so bullets curve through gravity wells too.
-func gravity_at(pos: Vector3) -> Vector3:
+func gravity_at(pos_off: Vector3, anchor := "") -> Vector3:
 	var g := Vector3.ZERO
+	var anchored := anchor != ""
+	var pos: Vector3 = _AF.absolute(eph.pos64(anchor), pos_off) if anchored else pos_off
 	var frame_pos := {}   # parent render positions this call (planets precede moons in _sol)
 	for b in _bodies:
 		var bpos: Vector3
@@ -927,7 +1030,7 @@ func gravity_at(pos: Vector3) -> Vector3:
 		else:
 			bpos = b.pos * (1.0 if b.star else VISUAL_SCALE)   # match refresh's authored-system spread
 		frame_pos[b.name] = bpos
-		var rel: Vector3 = bpos - pos
+		var rel: Vector3 = _rel_to_ship(b, anchored, anchor, pos_off, bpos, pos)
 		var d := rel.length()
 		var mu: float = float(b.get("mu", 0.0))
 		if mu > 0.0 and d > 0.001:

@@ -6,6 +6,7 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 |---|---|---|
 | `ship.gd` | feature area | Flight physics, visuals (boosters/streaks), warp, autopilot, customization |
 | `ship_mesh.gd` | feature area | Stateless mesh/material/FX build helpers for the hulls, split out of `ship.gd` |
+| `anchor_frame.gd` | data | `AnchorFrame` — 64-bit arithmetic for the anchored ship frame (docs/adr/0002); static, autoload-free |
 | `flight_mode.gd` | feature area | Zone (CENTER/INSIDE/SKIN/AIR/SPACE) vs mode (LOCAL/CRUISE/AIR) + exclusion-zone math |
 | `turn_carry.gd` | feature area | Sol flight assist: a turn carries velocity with the hull |
 | `touch_controls.gd` | feature area | Mobile multi-touch control overlay (`--touch` to test on desktop) |

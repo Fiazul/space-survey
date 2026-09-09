@@ -15,16 +15,32 @@ extends SceneTree
 const G := preload("res://scripts/world/planet_generator.gd")
 const TS := preload("res://scripts/world/terrain_sampler.gd")
 const SP := preload("res://scripts/world/surface_patch.gd")
-const FM := preload("res://scripts/flight/flight_mode.gd")
 
 const EARTH_R := 6371.0
 const MOON_R := 1737.4
+
+# The real "Moon" recipe carries a DEM as of 2026-09-09 (docs/research/
+# 2026-09-09-dem-ingest.md), which suppresses generic craters/mountains at/
+# above the DEM's own texel scale (SurfaceRecipe.resolve()'s height_texel_km
+# branch). _sampler()'s and _rings()' sections below are the AIRLESS/NO-MAP
+# contract test ("a world with no DEM still answers, from the shader's own
+# crust noise" / generic ring-stitching mechanics) - they need a body that is
+# GUARANTEED to have no map and full-amplitude procedural relief everywhere,
+# which the real Moon recipe no longer is. Same radius/seed/WORLD_DEFAULTS,
+# DEM fields stripped.
+static func _airless_moon_recipe() -> Dictionary:
+	var r := G.recipe_for({"name": "Moon"}).duplicate()
+	for key in ["height", "height_encoding", "height_datum", "height_m_per_unit",
+			"height_max", "height_signed", "height_texel_km"]:
+		r.erase(key)
+	return r
 
 
 func _initialize() -> void:
 	var failed := 0
 	failed += _encoding()
 	failed += _sampler()
+	failed += _ice()
 	failed += _band()
 	failed += _rings()
 	failed += _cap()
@@ -58,6 +74,42 @@ func _encoding() -> int:
 	return failed
 
 
+# --- Ice is not water --------------------------------------------------------
+# Measured against the real files (assets/planets/earth_spec_2k.png +
+# earth_2k.jpg): open ocean and Ross Ice Shelf/Arctic sea ice both read spec=255
+# (mask says water), but the ice sites are bright (luma 0.56-0.85) where ocean is
+# dark (luma 0.22). Player report: "Earth surface is all water when I get close,
+# even in white land areas."
+func _ice() -> int:
+	var failed := 0
+	var earth := G.recipe_for({"name": "Earth"})
+	var s: TerrainSampler = G.terrain_sampler(earth)
+	if s == null:
+		return _check("earth_sampler_exists_for_ice", false)
+
+	var ross_ice_shelf := _dir_of(-79.0, -175.0)
+	var arctic_sea_ice := _dir_of(85.0, 0.0)
+	var pacific := _dir_of(0.0, -150.0)
+	var sahara := _dir_of(23.0, 10.0)
+	var everest := _dir_of(27.9881, 86.9250)
+
+	failed += _check("ross_ice_shelf_is_not_water", not s.is_water(ross_ice_shelf))
+	failed += _check("ross_ice_shelf_reads_as_ice", s.ice01(ross_ice_shelf) > 0.5)
+	failed += _check("arctic_sea_ice_is_not_water", not s.is_water(arctic_sea_ice))
+	failed += _check("arctic_sea_ice_reads_as_ice", s.ice01(arctic_sea_ice) > 0.5)
+
+	failed += _check("pacific_is_still_water", s.is_water(pacific))
+	failed += _check("pacific_is_not_ice", s.ice01(pacific) < 0.05)
+
+	# Sahara/Everest never carried a water mask hit (spec=0 at 2k resolution), so
+	# ice01's mask gate already zeroes them — this pins that measured fact rather
+	# than forcing snow-on-Everest to classify as ice through this path.
+	failed += _check("sahara_is_land", not s.is_water(sahara))
+	failed += _check("sahara_is_not_ice", is_equal_approx(s.ice01(sahara), 0.0))
+	failed += _check("everest_is_not_ice", is_equal_approx(s.ice01(everest), 0.0))
+	return failed
+
+
 # --- One height function ------------------------------------------------------
 func _sampler() -> int:
 	var failed := 0
@@ -74,13 +126,17 @@ func _sampler() -> int:
 	var p_m: float = s.height_m(pacific)
 	var d_m: float = s.height_m(denali)
 
-	# A 7.42 km texel smooths every summit, so these are ballparks, not equalities.
-	# The probe's cross-check put Denali within 1% and Everest exact by definition.
-	failed += _check("everest_is_high_ground", e_m > 7500.0)
+	# 2026-09-09 8k rg16 re-wiring (docs/research/2026-09-09-dem-ingest.md): a
+	# 4.89 km texel still smooths every summit, so these are ballparks, not
+	# equalities. Everest's own global-max texel decodes to 7198.3 m
+	# (assets/planets/SOURCES.txt); this file's slightly different probe
+	# coordinate + bilinear + detail lands lower, same as the old map's 8848 m
+	# real summit never came back exact either.
+	failed += _check("everest_is_high_ground", e_m > 6000.0)
 	failed += _check("everest_is_not_absurd", e_m < 10000.0)
 	failed += _check("denali_is_high_ground", d_m > 4500.0)
 	failed += _check("open_ocean_is_at_sea_level", absf(p_m) < 1.0)
-	failed += _check("mountains_are_above_the_ocean", e_m > p_m + 7000.0)
+	failed += _check("mountains_are_above_the_ocean", e_m > p_m + 6000.0)
 	failed += _check("open_ocean_is_water", s.is_water(pacific))
 	failed += _check("everest_is_not_water", not s.is_water(everest))
 
@@ -110,10 +166,14 @@ func _sampler() -> int:
 		absf(s.height_m(flank) - s.base_height_m(flank)) > 5.0)
 	failed += _check("detail_is_bounded_by_its_amplitude",
 		absf(s.height_m(flank) - s.base_height_m(flank)) <= TS.DETAIL_MAX_M)
-	# ...but it must NOT wrinkle the ocean.
+	# ...but it must NOT wrinkle the ocean. 2026-09-09: Earth's map is now
+	# signed/bathymetry-carrying, so base_height_m(sea) is a real (very
+	# negative) seafloor depth - height_m() clamps it to the liquid datum
+	# (0 m), it does not equal the raw depth anymore. Assert the clamp instead.
 	var sea := _dir_of(0.0, -150.0)
-	failed += _check("detail_leaves_the_ocean_flat",
-		is_equal_approx(s.height_m(sea), s.base_height_m(sea)))
+	failed += _check("detail_leaves_the_ocean_flat", is_equal_approx(s.height_m(sea), 0.0))
+	failed += _check("ocean_bathymetry_is_carried_not_discarded",
+		s.base_height_m(sea) < -1000.0)
 
 	# Bilinear, not nearest. A nearest-neighbour sampler holds one value across a
 	# whole 7.42 km texel and then steps, so walking a texel boundary in the
@@ -134,13 +194,16 @@ func _sampler() -> int:
 	failed += _check("the_texel_walk_actually_covers_relief", span > 80.0)
 	failed += _check("sampling_is_smooth_across_a_texel_boundary", worst_step < 60.0)
 
-	# Ceiling source: the file's max, plus detail headroom.
-	failed += _check("earth_max_height_covers_the_file_max", s.max_height_km() > 9.0)
-	failed += _check("earth_max_height_is_not_wild", s.max_height_km() < 11.0)
+	# Ceiling source: the file's max, plus detail headroom. 2026-09-09: the 8k
+	# rg16 map's own global max is 7198.3 m (assets/planets/SOURCES.txt), down
+	# from the old unsigned map's ~9.0 km ceiling (that file's own max sample
+	# was inflated by a different calibration, not a real higher peak).
+	failed += _check("earth_max_height_covers_the_file_max", s.max_height_km() > 7.0)
+	failed += _check("earth_max_height_is_not_wild", s.max_height_km() < 8.5)
 	failed += _check("earth_max_height_bounds_everest", s.max_height_km() * 1000.0 > e_m)
 
 	# A world with no DEM still answers, from the shader's own crust noise.
-	var moon := G.recipe_for({"name": "Moon"})
+	var moon := _airless_moon_recipe()
 	var ms: TerrainSampler = G.terrain_sampler(moon)
 	var md := _dir_of(12.0, 34.0)
 	var mh: float = ms.height_m(md)
@@ -217,9 +280,12 @@ func _sampler() -> int:
 	failed += _check("airless_world_is_never_water", not ms.is_water(md))
 	# Centred terrain peaks at only the HALF-range above the datum, so this bound
 	# moved when the plinth was removed: (0.96875 - 0.484) * 3.2 + 0.42 = 1.97 km,
-	# not the 3.1 km an all-positive crust reached.
+	# not the 3.1 km an all-positive crust reached. Raised to 3.6 for the
+	# recipe-driven crater/hills fields: real lunar relief reaches ~10 km above
+	# datum, and the band ceiling floors at BAND_CEILING_MIN_KM = 35 km, so a
+	# max this size still has no gameplay effect on where the band opens.
 	failed += _check("airless_max_height_is_bounded",
-		ms.max_height_km() > 1.2 and ms.max_height_km() < 2.5)
+		ms.max_height_km() > 1.2 and ms.max_height_km() < 3.6)
 	failed += _check("airless_uses_noise_not_a_map",
 		str(ms.report().height_source) == "noise")
 	failed += _check("earth_uses_its_map", str(s.report().height_source) == "map")
@@ -282,9 +348,9 @@ func _band() -> int:
 # --- Four nested rings --------------------------------------------------------
 func _rings() -> int:
 	var failed := 0
-	var moon := G.recipe_for({"name": "Moon"})
+	var moon := _airless_moon_recipe()
 	var sampler: TerrainSampler = G.terrain_sampler(moon)
-	var patch = SP.new()
+	var patch := SP.new()
 	patch._ready()
 	patch.bind_body(moon, sampler)
 
@@ -330,24 +396,31 @@ func _rings() -> int:
 	# Build at 1 km over the Moon.
 	var dir := Vector3(0.42, 0.31, 0.85).normalized()
 	var m_ceiling: float = G.band_ceiling_km(sampler)
-	# ONE ring builds per update, so a cold tile takes RING_COUNT updates to fill.
-	# Four rings in one frame was a 1.2 s freeze on arrival; spread over four
-	# frames it is four hitches. Assert the contract rather than assuming one call.
+	# update_for only DISPATCHES a rebuild to WorkerThreadPool now (2026-09-08)
+	# - cold arrival, rescale and recenter all go through the same off-thread
+	# path, so nothing commits synchronously in one call any more. Before a
+	# batch lands, every ring's committed vertex count is legitimately zero.
 	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
+	var before_ready: PackedInt32Array = patch.report().ring_verts
+	var built_before := 0
+	for v in before_ready:
+		if v > 0:
+			built_before += 1
+	failed += _check("nothing_commits_before_the_batch_lands", built_before == 0)
+	# force_ready() is the test-only hook that blocks until the in-flight
+	# batch completes and commits it - production code never blocks, it just
+	# polls (see update_for/_poll_rebuild). A cold arrival, a rescale and a
+	# recenter all commit ALL FOUR rings together in one call once ready: a
+	# scale change invalidates every ring's stitch at once, so there is never
+	# a partial commit of some rings at a new scale/anchor and some at the old.
+	patch.force_ready()
 	var first: PackedInt32Array = patch.report().ring_verts
 	var built_first := 0
 	for v in first:
 		if v > 0:
 			built_first += 1
-	# A COLD ARRIVAL builds every ring in one update, on purpose: a scale change
-	# invalidates them all, and filling them one per frame would leave ring 0 at
-	# the new scale beside rings still at the old one - mismatched boundaries, a
-	# torn mesh. The prebuild window means that hitch happens before the band
-	# opens. Only steady flight at an unchanged scale is one-ring-per-update.
-	failed += _check("a_cold_arrival_builds_every_ring_at_once",
+	failed += _check("a_rebuild_commits_every_ring_at_once",
 		built_first == SP.RING_COUNT)
-	for _i in SP.RING_COUNT:
-		patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
 	var r: Dictionary = patch.report()
 
 	failed += _check("all_rings_built", int(r.rings) == SP.RING_COUNT)
@@ -397,8 +470,8 @@ func _rings() -> int:
 	# Constant budget with altitude is the whole point of rings: detail and reach
 	# stop competing. A single plate had to trade one for the other.
 	var tris_low := int(r.tris)
-	for _i in SP.RING_COUNT:
-		patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
+	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
+	patch.force_ready()
 	var tris_high := int(patch.report().tris)
 	# NEAR-constant, not identical. The budget is 4 rings x 64x64 whatever the
 	# altitude - that is the point of rings, and the old plate had to trade detail
@@ -497,25 +570,25 @@ func _cap() -> int:
 	var failed := 0
 
 	# The anchors, m/s.
-	failed += _check("cap_high_up_is_generous", FM.band_speed_cap_ms(100.0) > 1500.0)
-	failed += _check("cap_at_15km", absf(FM.band_speed_cap_ms(15.0) - 600.0) < 60.0)
-	failed += _check("cap_at_5km", absf(FM.band_speed_cap_ms(5.0) - 300.0) < 40.0)
-	failed += _check("cap_at_1km", absf(FM.band_speed_cap_ms(1.0) - 150.0) < 25.0)
-	failed += _check("cap_on_the_deck", absf(FM.band_speed_cap_ms(0.2) - 60.0) < 12.0)
+	failed += _check("cap_high_up_is_generous", SP.design_speed_ms(100.0) > 1500.0)
+	failed += _check("cap_at_15km", absf(SP.design_speed_ms(15.0) - 600.0) < 60.0)
+	failed += _check("cap_at_5km", absf(SP.design_speed_ms(5.0) - 300.0) < 40.0)
+	failed += _check("cap_at_1km", absf(SP.design_speed_ms(1.0) - 150.0) < 25.0)
+	failed += _check("cap_on_the_deck", absf(SP.design_speed_ms(0.2) - 60.0) < 12.0)
 	failed += _check("cap_holds_below_the_lowest_anchor",
-		is_equal_approx(FM.band_speed_cap_ms(0.01), FM.band_speed_cap_ms(0.2)))
+		is_equal_approx(SP.design_speed_ms(0.01), SP.design_speed_ms(0.2)))
 	failed += _check("cap_tightens_as_you_descend",
-		FM.band_speed_cap_ms(1.0) < FM.band_speed_cap_ms(5.0)
-		and FM.band_speed_cap_ms(5.0) < FM.band_speed_cap_ms(15.0)
-		and FM.band_speed_cap_ms(15.0) < FM.band_speed_cap_ms(100.0))
+		SP.design_speed_ms(1.0) < SP.design_speed_ms(5.0)
+		and SP.design_speed_ms(5.0) < SP.design_speed_ms(15.0)
+		and SP.design_speed_ms(15.0) < SP.design_speed_ms(100.0))
 
 	# THE UNIT TRAP. speed_limit is units/s and 1 unit = 1 km in Sol, so a 600 m/s
 	# cap is 0.6. Writing 600.0 there gives 600 km/s: every "the cap is applied"
 	# assertion still passes and the bound below is silently void.
 	failed += _check("units_conversion_is_per_kilometre",
-		is_equal_approx(FM.band_speed_cap_units(15.0), FM.band_speed_cap_ms(15.0) / 1000.0))
+		is_equal_approx(SP.design_speed_units(15.0), SP.design_speed_ms(15.0) / 1000.0))
 	failed += _check("cap_in_units_is_not_kilometres_per_second",
-		FM.band_speed_cap_units(15.0) < 1.0)
+		SP.design_speed_units(15.0) < 1.0)
 
 	# The guarantee this task exists for: at every altitude INSIDE the band, one
 	# frame of travel at the cap is shorter than a ring-0 quad, so a swept contact
@@ -535,7 +608,7 @@ func _cap() -> int:
 		# Ring 0's quad now SCALES with altitude, so the bound has to be evaluated
 		# against the quad that actually exists at each height - not one constant.
 		var quad: float = SP.ring_quad_km(0, SP.base_quad_km(alt, EARTH_R))
-		var step_km: float = FM.band_speed_cap_units(alt) * FM.WORST_FRAME_S
+		var step_km: float = SP.design_speed_units(alt) * SP.WORST_FRAME_S
 		var ratio := step_km / quad
 		if ratio > worst_ratio:
 			worst_ratio = ratio
@@ -546,12 +619,12 @@ func _cap() -> int:
 	failed += _check("tunnelling_bound_has_headroom", worst_ratio < 0.8)
 	# And the bound must be proven at a DIPPED frame rate, not a healthy one -
 	# a 60 fps proof is worthless precisely when it matters.
-	failed += _check("bound_is_proven_at_a_dipped_frame_rate", FM.WORST_FRAME_S >= 0.04)
+	failed += _check("bound_is_proven_at_a_dipped_frame_rate", SP.WORST_FRAME_S >= 0.04)
 
 	print("earth_terrain: cap  %.0f/%.0f/%.0f/%.0f/%.0f m/s at 100/15/5/1/0.2 km; worst step %.0f%% of a %.0f m quad at %.1f km (%.0f fps proof)"
-		% [FM.band_speed_cap_ms(100.0), FM.band_speed_cap_ms(15.0),
-		FM.band_speed_cap_ms(5.0), FM.band_speed_cap_ms(1.0), FM.band_speed_cap_ms(0.2),
-		worst_ratio * 100.0, worst_quad * 1000.0, worst_alt, 1.0 / FM.WORST_FRAME_S])
+		% [SP.design_speed_ms(100.0), SP.design_speed_ms(15.0),
+		SP.design_speed_ms(5.0), SP.design_speed_ms(1.0), SP.design_speed_ms(0.2),
+		worst_ratio * 100.0, worst_quad * 1000.0, worst_alt, 1.0 / SP.WORST_FRAME_S])
 	return failed
 
 
@@ -566,7 +639,7 @@ func _descent() -> int:
 	var earth := G.recipe_for({"name": "Earth"})
 	var s: TerrainSampler = G.terrain_sampler(earth)
 	var ceiling: float = G.band_ceiling_km(s)
-	var patch = SP.new()
+	var patch := SP.new()
 	patch._ready()
 	var lat := deg_to_rad(20.5)
 	var lon := deg_to_rad(-17.0)
@@ -586,6 +659,13 @@ func _descent() -> int:
 		travelled += 0.0018          # 108 m/s at 60 fps
 		var pos: Vector3 = (base * EARTH_R + north * travelled).normalized() * (EARTH_R + alt)
 		patch.update_for(pos, "Earth", true, EARTH_R, alt, 0.02, ceiling, earth, s)
+		# update_for only DISPATCHES a rebuild (WorkerThreadPool) now; this test
+		# is about per-ALTITUDE-STEP consistency (mixed scales, missing rings,
+		# rescale count), not real-time frame pacing - that is covered
+		# separately (NEEDS-YOUR-EYES.md #4). force_ready() makes each step
+		# deterministic; it is a no-op whenever this step did not need a
+		# rebuild, so most of these 6000 iterations cost nothing extra.
+		patch.force_ready()
 		var rep: Dictionary = patch.report()
 		var bases: Array = rep.ring_bases
 		var b0 := float(bases[0])
@@ -629,16 +709,18 @@ func _kill() -> int:
 	var contact := 0.02
 
 	# The whole point: the same altitude is lethal over Everest and safe over the
-	# Pacific. Everest samples 8915 m here (8848 from the DEM plus detail), so the
-	# probe altitude has to sit UNDER that, not at a round 9 km.
-	var probe_alt := 8.5
+	# Pacific. 2026-09-09 8k rg16 re-wiring: Everest samples ~6924 m here (the
+	# map's own 7198.3 m global-max texel, area-averaged further at this exact
+	# probe coordinate + detail, see docs/research/2026-09-09-dem-ingest.md),
+	# so the probe altitude has to sit UNDER that, not at the old map's 8.5 km.
+	var probe_alt := 6.5
 	failed += _check("everest_stands_above_the_probe_altitude",
 		e_ground > EARTH_R + probe_alt)
 	failed += _check("the_pacific_does_not", p_ground < EARTH_R + 1.0)
 	failed += _check("same_altitude_kills_over_everest",
 		s.alt_above_ground_km(everest * (EARTH_R + probe_alt), EARTH_R) <= contact)
 	failed += _check("same_altitude_is_clear_over_the_pacific",
-		s.alt_above_ground_km(pacific * (EARTH_R + probe_alt), EARTH_R) > 8.0)
+		s.alt_above_ground_km(pacific * (EARTH_R + probe_alt), EARTH_R) > probe_alt - 1.0)
 
 	failed += _check("contact_fires_at_the_mountain",
 		s.swept_contact(everest * (e_ground + 0.5), everest * (e_ground + 0.01),

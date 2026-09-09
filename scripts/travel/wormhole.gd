@@ -10,6 +10,10 @@ extends Node3D
 # Sol. Each portal is a glowing ring with a floating "→ <destination>" label,
 # floating-origin tracked. Fly near any portal, press F, and a tunnel sequence
 # plays for ~ (ly × SEC_PER_LY) seconds, then main swaps to that portal's system.
+#
+# Portal positions are ABSOLUTE and static; every query below asks the ship for
+# the render-space vector (Ship.rel_to) rather than subtracting its position, so
+# a Sol portal stays exact whatever body the ship is anchored to (docs/adr/0002).
 
 const PORTAL_RANGE := 110.0   # F-window around a portal — generous so it's easy to dive in
 const MAX_PORTALS := 6                  # pool size (Interstellar hub uses 5; systems use 1)
@@ -101,16 +105,16 @@ func set_portals(defs: Array) -> void:
 
 # Render-space offset of the KNOWN wormhole that leads to `dest` (for the nav guide).
 # Vector3.ZERO if that wormhole isn't currently present.
-func portal_rel_for(dest: String, ship_pos: Vector3) -> Vector3:
+func portal_rel_for(dest: String, flyer: Ship) -> Vector3:
 	for p in _portals:
 		if p.active and p.dest_id == dest:
-			return p.pos - ship_pos
+			return flyer.rel_to(p.pos)
 	return Vector3.ZERO
 
 
 # True if the ship is within F-range of ANY portal; remembers the nearest one so
 # start_transit / the HUD know which destination it is.
-func in_range(ship_pos: Vector3) -> bool:
+func in_range(flyer: Ship) -> bool:
 	if transiting:
 		return false
 	_active = -1
@@ -119,7 +123,7 @@ func in_range(ship_pos: Vector3) -> bool:
 		var p = _portals[i]
 		if not p.active:
 			continue
-		var d: float = (p.pos - ship_pos).length()
+		var d: float = flyer.rel_to(p.pos).length()
 		if d < best:
 			best = d
 			_active = i
@@ -132,22 +136,22 @@ func in_range(ship_pos: Vector3) -> bool:
 
 # Every active portal as { rel, dest } in render space (for the minimap — all wormholes,
 # live). Empty inside a system with no known links.
-func portals_rel(ship_pos: Vector3) -> Array:
+func portals_rel(flyer: Ship) -> Array:
 	var out := []
 	for p in _portals:
 		if p.active:
-			out.append({ "rel": p.pos - ship_pos, "dest": p.dest_id })
+			out.append({ "rel": flyer.rel_to(p.pos), "dest": p.dest_id })
 	return out
 
 
 # Render-space position of the nearest portal (for the navigator marker).
-func portal_rel(ship_pos: Vector3) -> Vector3:
+func portal_rel(flyer: Ship) -> Vector3:
 	var best := INF
 	var rel := Vector3.ZERO
 	for p in _portals:
 		if not p.active:
 			continue
-		var r: Vector3 = p.pos - ship_pos
+		var r: Vector3 = flyer.rel_to(p.pos)
 		var d := r.length()
 		if d < best:
 			best = d
@@ -156,13 +160,13 @@ func portal_rel(ship_pos: Vector3) -> Vector3:
 
 
 # Nearest active portal as { rel, name } (for the HUD objective guide). {} if none.
-func nearest_portal(ship_pos: Vector3) -> Dictionary:
+func nearest_portal(flyer: Ship) -> Dictionary:
 	var best := INF
 	var out := {}
 	for p in _portals:
 		if not p.active:
 			continue
-		var r: Vector3 = p.pos - ship_pos
+		var r: Vector3 = flyer.rel_to(p.pos)
 		var d := r.length()
 		if d < best:
 			best = d
@@ -177,14 +181,14 @@ const WH_SLOW_RANGE := 750.0   # start easing down within this of the nearest po
 const WH_EDGE_SPEED := 850.0   # cap as you enter the slow zone (drops you out of warp)
 const WH_MIN_SPEED := 40.0     # gentle crawl right at the mouth — easy to settle + press F
 
-func slow_limit(ship_pos: Vector3) -> float:
+func slow_limit(flyer: Ship) -> float:
 	if transiting:
 		return INF
 	var best := INF
 	for p in _portals:
 		if not p.active:
 			continue
-		best = minf(best, (p.pos - ship_pos).length())
+		best = minf(best, flyer.rel_to(p.pos).length())
 	if best >= WH_SLOW_RANGE:
 		return INF
 	# Ease firmly from WH_EDGE_SPEED at the zone's rim down to a WH_MIN_SPEED crawl at the
@@ -195,14 +199,14 @@ func slow_limit(ship_pos: Vector3) -> float:
 
 # Nearest dockable platform as { pos, name, range } (absolute scene pos, for main's dock
 # logic — the hub has many). {} when none are present (e.g. inside a star system).
-func nearest_station(ship_pos: Vector3) -> Dictionary:
+func nearest_station(flyer: Ship) -> Dictionary:
 	var best := INF
 	var out := {}
 	for p in _portals:
 		if not p.active or not p.station:
 			continue
 		var sp: Vector3 = p.pos + STATION_OFFSET
-		var d := (sp - ship_pos).length()
+		var d := flyer.rel_to(sp).length()
 		if d < best:
 			best = d
 			out = { "pos": sp, "name": "%s Platform" % SystemDB.display_name(p.dest_id), "range": STATION_DOCK_RANGE }
@@ -250,7 +254,7 @@ func transit_remaining() -> float:
 
 
 # Returns true on the frame the transit finishes (main then swaps the system).
-func update(ship_pos: Vector3, delta: float) -> bool:
+func update(flyer: Ship, delta: float) -> bool:
 	if transiting:
 		_t += delta
 		# Rings glide past at a measured pace and the tube swirls slowly — dark + ominous,
@@ -278,7 +282,7 @@ func update(ship_pos: Vector3, delta: float) -> bool:
 	for p in _portals:
 		if not p.active:
 			continue
-		var rel: Vector3 = p.pos - ship_pos
+		var rel: Vector3 = flyer.rel_to(p.pos)
 		p.node.visible = true
 		p.node.position = rel
 		p.node.rotate_z(0.6 * delta)
@@ -290,7 +294,7 @@ func update(ship_pos: Vector3, delta: float) -> bool:
 		# Distance-cull the GLB mesh (heavy) so only nearby platforms draw — at full
 		# discovery there can be ~25 of them, and you only ever dock at the close one.
 		if p.station and p.station_node != null:
-			var srel: Vector3 = (p.pos + STATION_OFFSET) - ship_pos
+			var srel: Vector3 = flyer.rel_to(p.pos + STATION_OFFSET)
 			var near: bool = srel.length() < STATION_CULL
 			p.station_node.visible = near
 			if near:

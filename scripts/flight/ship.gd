@@ -3,6 +3,7 @@ extends Node3D
 
 const WEDGE_DESIGN := preload("res://scripts/flight/wedge_fighter.gd")
 const _FM := preload("res://scripts/flight/flight_mode.gd")
+const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # Player ship: loads a swappable GLB/OBJ (see SHIP_MODELS — the Class II cruiser
 # is the default), with speed-reactive authored propulsion meshes and arcade 6DOF
 # flight. If a .glb can't be loaded it falls back to a primitive fighter so the
@@ -10,8 +11,13 @@ const _FM := preload("res://scripts/flight/flight_mode.gd")
 #
 # N.O.V.A.-style feel: simple to fly, momentum that eases to a stop, the hull
 # banks into turns. Floating origin means we never move this node — it stays at
-# (0,0,0) and only rotates; forward motion accumulates into `true_pos` and the
-# world is rendered around it.
+# (0,0,0) and only rotates; the world is rendered around it.
+#
+# The physical state is ANCHORED (docs/adr/0002): (anchor_name, anchor_off) — the
+# nearest body and the ship's offset from its centre in km. `true_pos` is still
+# here as a property so legacy readers/writers keep working, but it is a lossy
+# 32-bit view: near Venus its ULP is ~14 km, which swallowed a whole substep of
+# motion. Physics touches anchor_off only.
 #
 # fly(delta) is called by main.gd (explicit order); mouse look is read in _input.
 
@@ -169,9 +175,15 @@ const CAM_LAG := 6.0
 # the hull and only its BASIS lags, via CAM_LAG above.
 # Free-look (hold RMB or T): mouse orbits the camera instead of steering; the ship
 # holds its heading and flies on. Released, the view eases back behind the ship.
-const LOOK_YAW_LIMIT := 2.7     # how far around the ship the view can swing (rad)
+# Yaw is UNBOUNDED — the player can orbit all the way around — wrapped into
+# [-PI, PI] for continuity, never clamped to a limit.
 const LOOK_PITCH_LIMIT := 1.2   # how far up/down (rad)
 const LOOK_RETURN := 8.0        # how fast the view snaps to target / eases back home
+# A per-call mouse-delta backlog (focus blip, cursor re-centre, a hitch) used to
+# flick free-look to the opposite angle in one frame. Rate-limit the per-call
+# step (rad/s, not a flat per-frame cap) so any fps sweeps at the same angular
+# speed and only a genuine backlog spike gets absorbed instead of presented at once.
+const LOOK_MAX_RATE_RAD_S := 12.0   # ~690 deg/s
 const FOV_BASE := 70.0
 const FOV_KICK := 14.0        # extra FOV at full speed (sense of speed) — gentle
 
@@ -195,7 +207,25 @@ const HULL_FILL_PITCH_DEG := -24.0       # - = from above, shining down onto the
 
 # --- State ---
 var velocity := Vector3.ZERO
-var true_pos := Vector3.ZERO   # absolute position in game units (floating origin)
+var anchor_name := "Earth"     # body the physical state is measured from
+var anchor_off := Vector3.ZERO # km from that body's centre — the real position
+# Exclusion-shell edge state (docs/adr/0002 finding 2): the entry handshake
+# fires on an exact outside->inside transition, tracked here, never on
+# break_at_exclusion's own (tolerance-swallowed) `dropped` flag.
+var _was_outside_shell := true
+var _shell_edge_known := false   # false until the first substep reads a real state (no boot false-fire)
+# A ship-internal debug anchor switch (F7 park) can't reach main/combat directly
+# (Ship holds no ref to main — see CLAUDE.md's direct-call architecture); main
+# polls this once per frame and forwards it to combat.shift_frame, same as
+# _anchor_ship does for every other reanchor.
+var pending_frame_shift := Vector3.ZERO
+# Earth-centred absolute position. Derived, 32-bit, and only exact near Earth;
+# boot / arrival / respawn / save write through it, physics never does.
+var true_pos: Vector3:
+	get:
+		return _AF.absolute(anchor64(), anchor_off)
+	set(value):
+		anchor_off = _AF.decompose(value, anchor64())
 var speed_limit := INF         # set by main from PlanetSystem; eases us down near a body
 # The nearest body's shared height function, assigned by main each frame. The SAME
 # instance the ground rings and the contact kill use - three readers, one function.
@@ -213,6 +243,13 @@ var star_field_dist := 0.0     # distance to this system's star; set by main (FT
 var struct_limit := INF        # strict sublight cap near stations/probes; set by main from props
 var gravity := Vector3.ZERO    # set by main from PlanetSystem; pull toward bodies
 var newton := false            # Sol 1:1: real GM/r², no arcade cancel, no vacuum damp
+# Entry-intensity state, refreshed once per fly() frame. Wind audio and the HUD
+# G/Vspd/Mach/Load readout key off these so they always agree with each other and
+# with the drag that's actually slowing the ship.
+var air_load := 0.0            # FlightMode.air_load: 0 in vacuum, saturates near 1
+var mach_number := 0.0         # FlightMode.mach(speed); only meaningful in Sol km/s
+var last_newton_g := Vector3.ZERO      # true-space g vector, for the HUD G readout
+var last_thrust_accel := Vector3.ZERO  # true-space thrust accel this frame
 var time_rate := 1.0           # Sol coast warp (1 / 5 / 10 / 50 / 100 / 1000)
 var debug_toast := ""          # one-shot note for the HUD (F6/F7/F9 snaps)
 var dev_speed := false         # Sol debug: fat engines + burn-warp so GEO is reachable
@@ -260,7 +297,7 @@ var is_boosting := false               # true while boost is actually engaged (c
 var boost_blocked := false             # true when Shift pressed in a slow-zone (boost unavailable)
 var auto_cruise := false        # Num Lock: hold W+Shift hands-free (forward thrust + boost)
 var autopilot := false          # hands-off cinematic flight to autopilot_target (M-map)
-var autopilot_target := Vector3.ZERO   # world position to fly to
+var autopilot_target := Vector3.ZERO   # anchor-frame position to fly to (main keeps it current)
 var autopilot_name := ""        # body the autopilot is bound to (main refreshes the target)
 const AP_ARRIVE := 600.0        # stop autopilot within this distance of the target
 const AP_TURN := 2.5            # autopilot turn rate toward the target
@@ -270,7 +307,7 @@ var muzzle_drop := 0.0         # how far BELOW the nose bolts emerge (set per hu
 # (the cap = MAX_SPEED·warp is just a ceiling and isn't reached) — so, with 1 ly = 6.32M units,
 # time per ly ≈ UNITS_PER_LY·DAMPING / (THRUST·warp) = 2874.6 / warp seconds (W-cruise, no boost;
 # Shift/auto-cruise boost ×3 is ~3× faster). Each authored hull supplies its own `warp` value.
-const HYPERSONIC_SPEED := 15000.0   # above this a warp ship is "hypersonic" (no combat)
+const HYPERSONIC_SPEED := 150000.0   # above this a warp ship is "hypersonic" (no combat)
 const WARP_FLOOR := 1.0        # zero-charge = calm sublight; holding W spools up to warp
 # FTL gate: warp can only spool up once you're beyond the system star's gravity field.
 # Inside this radius you fly normal sublight cruise no matter the hull.
@@ -300,7 +337,13 @@ const NEWTON_BALLISTIC := 0.005
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g
-const DEV_THRUST_MULT := 100000000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 1000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+# Entry handshake (2026-09-09): the shell crossing itself is softened, not flight
+# speed in general — "no hard cap in flight" stays true once you're inside the air.
+const ENTRY_SPEED_MAX_KMS := 3.0
+# Per-substep drag clamp: at most this fraction of current speed removed in one
+# _newton_atmo_drag call, so drag is continuous and can never zero velocity outright.
+const DRAG_MAX_DV_FRAC := 0.25
 
 # True when a warp ship is blazing fast — combat + crosshair are disabled.
 func is_hypersonic() -> bool:
@@ -317,19 +360,61 @@ func in_open_space() -> bool:
 	return is_inf(speed_limit) and is_inf(struct_limit)
 
 
+# --- Anchored frame (docs/adr/0002) -----------------------------------------
+func anchor64() -> PackedFloat64Array:
+	if anchor_name == "":
+		return _AF.ZERO64
+	return Ephemeris.pos64(anchor_name)   # Earth's own pos64 is already ZERO64
+
+
+# Move the physical state onto another body without moving the ship. Returns the
+# frame shift (new anchor minus old) so main can carry combat's entities with it;
+# Vector3.ZERO means nothing changed. Craft (Voyager 1/2) are never anchorable —
+# they drift, so clamping the ship to one would freeze it at a moving point
+# while the render drifts away (docs/adr/0002 finding 3).
+func set_anchor(new_name: String) -> Vector3:
+	if new_name == "" or new_name == anchor_name or not Ephemeris.is_anchorable(new_name):
+		return Vector3.ZERO
+	var shift := Ephemeris.rel_km(new_name, anchor_name)
+	anchor_off -= shift
+	autopilot_target -= shift
+	anchor_name = new_name
+	_shell_edge_known = false   # new anchor's shell geometry is unrelated to the old edge state
+	return shift
+
+
+# Render-space vector to a body, in the anchor frame end to end.
+func to_body(body_name: String) -> Vector3:
+	return Ephemeris.rel_km(body_name, anchor_name) - anchor_off
+
+
+# Render-space vector to an absolute (Earth-centred) point — portals, docks, the
+# probes. Replaces every `something.pos - ship.true_pos`.
+func rel_to(abs_pos: Vector3) -> Vector3:
+	return _AF.rel_to(abs_pos, anchor64(), anchor_off)
+
+
+func anchor_radius_km() -> float:
+	return Ephemeris.body_radius_km(anchor_name)
+
+
+func anchor_alt_km() -> float:
+	return anchor_off.length() - anchor_radius_km()
+
+
 func _debug_circularize() -> void:
-	var r := true_pos.length()
-	var min_r := Ephemeris.EARTH_RADIUS_KM + HULL_KM + 50.0
+	var r := anchor_off.length()
+	var min_r := anchor_radius_km() + HULL_KM + 50.0
 	if r < min_r:
 		debug_toast = "F6  too low to circle"
 		return
-	var radial := true_pos / r
+	var radial := anchor_off / r
 	var tang: Vector3 = velocity - radial * velocity.dot(radial)
 	if tang.length_squared() < 0.0001:
 		tang = radial.cross(Vector3.UP)
 	if tang.length_squared() < 0.0001:
 		tang = radial.cross(Vector3.RIGHT)
-	var v_c := sqrt(Ephemeris.GM_EARTH / r)
+	var v_c := sqrt(maxf(Ephemeris.gm(anchor_name), 1.0) / r)
 	velocity = tang.normalized() * v_c
 	_time_idx = 0
 	time_rate = 1.0
@@ -337,9 +422,10 @@ func _debug_circularize() -> void:
 
 
 func _debug_geo_park() -> void:
-	true_pos = Ephemeris.geo_start_pos()
+	pending_frame_shift += set_anchor("Earth")
+	anchor_off = Ephemeris.geo_start_pos()
 	velocity = Vector3.ZERO
-	face_toward(-true_pos)
+	face_toward(-anchor_off)
 	_kill_turn_rates()
 	_time_idx = 0
 	time_rate = 1.0
@@ -351,18 +437,25 @@ func _debug_toggle_dev_speed() -> void:
 	if dev_speed:
 		debug_toast = "F9  DEV on  ×%.0f engines" % DEV_THRUST_MULT
 	else:
+		_FM.dev_fast_air = false
 		debug_toast = "F9  DEV off"
+
+
+func _debug_toggle_dev_fast_air() -> void:
+	_FM.dev_fast_air = not _FM.dev_fast_air
+	debug_toast = "\\  FASTAIR on  ×%.0f weaker drag" % (1.0 / _FM.DEV_AIR_DRAG_MULT) \
+		if _FM.dev_fast_air else "\\  FASTAIR off"
 
 
 func _debug_face_earth() -> void:
 	var look := nearest_dir
 	var who := nearest_name
 	if look.length_squared() < 0.0001:
-		if true_pos.length_squared() < 0.001:
+		if anchor_off.length_squared() < 0.001:
 			debug_toast = "F10  no body"
 			return
-		look = -true_pos
-		who = "Earth"
+		look = -anchor_off
+		who = anchor_name
 	face_toward(look)
 	_kill_turn_rates()
 	velocity = Vector3.ZERO
@@ -371,16 +464,16 @@ func _debug_face_earth() -> void:
 
 func _footprint_tick(delta: float, w_on: bool, s_on: bool) -> void:
 	_fp_t += delta
-	var r := true_pos.length()
-	var earth := (-true_pos / r) if r > 0.001 else Vector3.FORWARD
-	var rdot := velocity.dot(true_pos / r) if r > 0.001 else 0.0
+	var r := anchor_off.length()
+	var earth := (-anchor_off / r) if r > 0.001 else Vector3.FORWARD
+	var rdot := velocity.dot(anchor_off / r) if r > 0.001 else 0.0
 	var nose := (-transform.basis.z).dot(earth)
 	var cam_dot := 0.0
 	if camera != null:
 		cam_dot = (-camera.global_transform.basis.z).dot(earth)
 	_fp.append({
 		"t": snappedf(_fp_t, 0.01),
-		"alt": snappedf(r - Ephemeris.EARTH_RADIUS_KM, 0.1),
+		"alt": snappedf(r - anchor_radius_km(), 0.1),
 		"rdot": snappedf(rdot, 0.001),
 		"nose": snappedf(nose, 0.001),
 		"cam": snappedf(cam_dot, 0.001),
@@ -429,8 +522,8 @@ func _clamp_time_warp(thrusting: bool, is_braking: bool) -> void:
 		time_rate = 1.0
 		flight_mode = _FM.LOCAL
 		return
-	var who := nearest_name if nearest_name != "" else "Earth"
-	var dist := nearest_dist if nearest_name != "" and nearest_dist < INF else true_pos.length()
+	var who := nearest_name if nearest_name != "" else anchor_name
+	var dist := nearest_dist if nearest_name != "" and nearest_dist < INF else anchor_off.length()
 	var zone := Ephemeris.flight_zone(who, dist)
 	var rad: float = nearest_radius if nearest_radius > 1.0 else Ephemeris.body_radius_km(who)
 	var ez: float = _FM.exclusion_from_center(rad, Ephemeris.atmo_top_km(who), _nearest_is_star())
@@ -458,7 +551,7 @@ func _nearest_is_star() -> bool:
 
 
 func _exclusion_who() -> String:
-	return nearest_name if nearest_name != "" else "Earth"
+	return nearest_name if nearest_name != "" else anchor_name
 
 
 func _exclusion_km() -> float:
@@ -467,72 +560,110 @@ func _exclusion_km() -> float:
 	return _FM.exclusion_from_center(rad, Ephemeris.atmo_top_km(who), _nearest_is_star())
 
 
-func _exclusion_center() -> Vector3:
+# Centre of the exclusion shell IN THE ANCHOR FRAME, for the whole upcoming
+# _newton_advance call — NOT recomputed per substep. nearest_dir/nearest_dist
+# are frozen for the frame while anchor_off advances across substeps; computing
+# `anchor_off + nearest_dir*nearest_dist` inside the substep loop made the
+# shell centre translate right along with the ship, so a crossing was only
+# ever visible on substep 1 (docs/adr/0002 finding 1). When the nearest body IS
+# the anchor, the centre is exactly the anchor's own origin — no drift-prone
+# reconstruction needed.
+func _exclusion_center_off() -> Vector3:
+	if _exclusion_who() == anchor_name:
+		return Vector3.ZERO
 	if nearest_dir.length_squared() < 0.0001 or nearest_dist >= INF:
 		return Vector3.ZERO
-	return true_pos + nearest_dir.normalized() * nearest_dist
+	return anchor_off + nearest_dir.normalized() * nearest_dist
 
 
 func _cruise_ok_now() -> bool:
 	var who := _exclusion_who()
-	var dist := nearest_dist if nearest_name != "" and nearest_dist < INF else true_pos.length()
+	var dist := nearest_dist if nearest_name != "" and nearest_dist < INF else anchor_off.length()
 	return _FM.can_cruise(Ephemeris.flight_zone(who, dist), dist, _exclusion_km())
 
 
+# Below this mu/d² (km/s²) a body's pull is not worth a sqrt/normalize — cheap
+# to test before doing either. gravity_bodies() is ~31 entries now (was 11);
+# this and MAX_SUBSTEPS below are the two levers on _newton_g's per-frame cost.
+const NEWTON_G_SKIP_THRESHOLD := 1.0e-12
+
+# Every world with real mass — planets AND the 1:1 moons, matching the mu sum
+# PlanetSystem.refresh already does. Each pull is measured in the anchor frame.
 func _newton_g() -> Vector3:
 	var g := Vector3.ZERO
-	for p in Ephemeris.PLANETS:
-		if p.get("craft", false):
+	var a64 := anchor64()   # hoisted: this runs per substep, over ~31 bodies
+	for p in Ephemeris.gravity_bodies():
+		var rel: Vector3 = _AF.sub64(Ephemeris.pos64(str(p.name)), a64) - anchor_off
+		var d2 := rel.length_squared()
+		if d2 <= 1.0e-6:
 			continue
-		var mu: float = Ephemeris.gm(str(p.name))
-		if mu <= 0.0:
+		var mu: float = float(p.mu)
+		if mu / d2 < NEWTON_G_SKIP_THRESHOLD:
 			continue
-		var bpos: Vector3 = Vector3.ZERO if p.get("fixed", false) else Ephemeris.scene_pos(str(p.name))
-		var rel: Vector3 = bpos - true_pos
-		var d := rel.length()
-		if d > 0.001:
-			g += (rel / d) * (mu / (d * d))
+		var d := sqrt(d2)
+		g += rel * (mu / (d2 * d))
 	return g
 
 
+# Perf cap (docs/adr/0002 finding 6): at extreme time-warp (1e5×) `sim` can
+# demand thousands of substeps in one call. Past this budget, absorb whatever
+# is left into one enlarged final substep instead of iterating it out —
+# coarser at that one frame, but bounded cost instead of a linear blow-up.
+const MAX_SUBSTEPS := 64
+
 func _newton_advance(sim: float) -> void:
+	var arad := anchor_radius_km()
+	var aair := Ephemeris.atmo_top_km(anchor_name)
+	# Computed ONCE for the whole call — see _exclusion_center_off.
+	var ez_km: float = _exclusion_km()
+	var ez_center := _exclusion_center_off()
 	var left := sim
+	var substeps := 0
 	while left > 0.00001:
-		var alt := true_pos.length() - Ephemeris.EARTH_RADIUS_KM
-		var in_air := alt < Ephemeris.EARTH_ATMO_TOP_KM
+		var alt := anchor_off.length() - arad
+		var in_air := aair > 0.0 and alt < aair
 		if in_air:
 			_time_idx = 0
 			time_rate = 1.0
+		substeps += 1
 		var dt := minf(left, 0.05 if in_air else 0.25)
-		# Dump to the band cap for the shell's own altitude rather than to a dead
-		# stop, so crossing an exclusion shell reads as entering atmosphere instead
-		# of hitting a wall. See FlightMode.break_at_exclusion.
-		var ez_km: float = _exclusion_km()
-		var ez_who := _exclusion_who()
-		var ez_rad: float = nearest_radius if nearest_radius > 1.0 \
-			else Ephemeris.body_radius_km(ez_who)
-		var shell_alt: float = maxf(ez_km - ez_rad, 0.2)
-		var hit: Dictionary = _FM.break_at_exclusion(
-			true_pos, velocity, dt, _exclusion_center(), ez_km,
-			_FM.band_speed_cap_units(shell_alt))
+		if substeps >= MAX_SUBSTEPS:
+			dt = left
+		# Snap onto the exclusion shell exactly on crossing (velocity is kept
+		# as-is, no cap) so an interplanetary-speed step can't land arbitrarily
+		# deep past the shell before this reads it as a crossing.
+		var hit: Dictionary = _FM.break_at_exclusion(anchor_off, velocity, dt, ez_center, ez_km)
+		var step_dt := dt
 		if bool(hit.dropped):
-			true_pos = hit.pos
+			anchor_off = hit.pos
 			velocity = hit.vel
+			step_dt = dt - float(hit.t)   # already advanced to the crossing; don't double-count it
+		velocity += _newton_g() * step_dt
+		_newton_atmo_drag(step_dt)
+		anchor_off += velocity * step_dt
+		_newton_ground()
+		_newton_corotate(step_dt)
+		# Entry handshake fires on the exact outside->inside EDGE, tracked here —
+		# never on break_at_exclusion's own tolerance-swallowed `dropped` flag
+		# (docs/adr/0002 finding 2). Exact comparison, no eps: this is a state
+		# transition, not a boundary-tolerance question.
+		var now_outside: bool = (anchor_off - ez_center).length() > ez_km
+		if _shell_edge_known and _was_outside_shell and not now_outside:
+			var v_spd := velocity.length()
+			if v_spd > ENTRY_SPEED_MAX_KMS:
+				velocity = velocity * (ENTRY_SPEED_MAX_KMS / v_spd)
 			_time_idx = 0
 			time_rate = 1.0
 			drop_flash = DROP_FLASH_SECS
-			break
-		velocity += _newton_g() * dt
-		_newton_atmo_drag(dt)
-		true_pos += velocity * dt
-		_newton_ground()
-		_newton_corotate(dt)
+		_was_outside_shell = now_outside
+		_shell_edge_known = true
 		left -= dt
 
 
 func _newton_atmo_drag(delta: float) -> void:
-	var r := true_pos.length()
-	var alt := r - Ephemeris.EARTH_RADIUS_KM
+	if not _FM.has_drag_model(anchor_name):
+		return
+	var alt := anchor_off.length() - Ephemeris.EARTH_RADIUS_KM
 	if alt >= Ephemeris.EARTH_ATMO_TOP_KM or alt < 0.0:
 		return
 	var rho := Ephemeris.RHO0 * exp(-alt / Ephemeris.EARTH_ATMO_H_KM)
@@ -540,7 +671,14 @@ func _newton_atmo_drag(delta: float) -> void:
 	if spd < 1e-8:
 		return
 	var acc := 500.0 * NEWTON_BALLISTIC * rho * spd * spd
-	velocity = velocity.move_toward(Vector3.ZERO, acc * delta)
+	if _FM.dev_fast_air:
+		acc *= _FM.DEV_AIR_DRAG_MULT
+	# Continuous, never a dead stop in one substep: move_toward(ZERO, acc*dt) can
+	# zero the velocity outright if acc*dt overshoots spd (a coarse dt at high rho/
+	# spd). Clamp the removed delta-v to at most DRAG_MAX_DV_FRAC of the CURRENT
+	# speed instead, so drag can only ever take a fraction of speed per substep.
+	var dv := minf(acc * delta, DRAG_MAX_DV_FRAC * spd)
+	velocity = velocity.move_toward(Vector3.ZERO, dv)
 
 
 func reset_mesh_pose() -> void:
@@ -549,22 +687,32 @@ func reset_mesh_pose() -> void:
 
 
 func _newton_corotate(dt: float) -> void:
-	# Inside the air the ship rides with Earth. You should not see the ground race.
-	var alt := true_pos.length() - Ephemeris.EARTH_RADIUS_KM
-	if alt >= Ephemeris.EARTH_ATMO_TOP_KM:
+	# Inside the air the ship rides with the body. You should not see the ground
+	# race. Vector3.UP is the celestial pole, so this is exact for Earth and a
+	# known approximation elsewhere — Ephemeris carries a spin RATE, not an axis.
+	# Gated on has_drag_model with air_load/mach/drag (finding 5): no body-shaped
+	# behaviour should fire somewhere that has no body model backing it yet.
+	if not _FM.has_drag_model(anchor_name):
 		return
-	var ang := Ephemeris.spin_rad_s("Earth") * dt
+	var air := Ephemeris.atmo_top_km(anchor_name)
+	if air <= 0.0:
+		return
+	if anchor_off.length() - anchor_radius_km() >= air:
+		return
+	var ang := Ephemeris.spin_rad_s(anchor_name) * dt
 	if absf(ang) < 1.0e-12:
 		return
-	true_pos = true_pos.rotated(Vector3.UP, ang)
+	anchor_off = anchor_off.rotated(Vector3.UP, ang)
 	velocity = velocity.rotated(Vector3.UP, ang)
 	rotate(Vector3.UP, ang)
 	_cam_basis = _cam_basis.rotated(Vector3.UP, ang)
 
 
 func _newton_ground() -> void:
-	# Only Earth is at the origin. Other bodies use main's body-local sweep.
-	if not nearest_name.is_empty() and nearest_name != "Earth":
+	# anchor_off is measured from the anchor's centre, so this clamp is the
+	# anchor's — on any world, not just Earth. When the nearest body is something
+	# else, main's body-local sweep owns the kill instead.
+	if not nearest_name.is_empty() and nearest_name != anchor_name:
 		return
 	# Backstop so a physics substep can never put the hull INSIDE the rock. This
 	# used to pin at a flat 6400 km from Earth's centre, which is 29 km altitude -
@@ -574,22 +722,20 @@ func _newton_ground() -> void:
 	# impact latch in main._update_skin_kill sees contact and fires, even when
 	# projection rounds the final position just above the contact threshold.
 	#
-	# true_pos is Earth-centred (Earth is the origin anchor), so this clamp is
-	# Earth's. Other bodies are handled by the kill itself, which works in each
-	# body's own frame.
-	var r := true_pos.length()
-	if r < 0.001:
+	var rad := anchor_radius_km()
+	var r := anchor_off.length()
+	if rad <= 0.0 or r < 0.001:
 		return
-	var n := true_pos / r
-	var contact: float = Ephemeris.surface_kill_km("Earth")
-	var min_r: float = Ephemeris.EARTH_RADIUS_KM + contact
+	var n := anchor_off / r
+	var contact: float = Ephemeris.surface_kill_km(anchor_name)
+	var min_r: float = rad + contact
 	if terrain != null:
-		min_r = terrain.ground_radius_km(terrain_basis.inverse() * n, Ephemeris.EARTH_RADIUS_KM) + contact
+		min_r = terrain.ground_radius_km(terrain_basis.inverse() * n, rad) + contact
 	if r >= min_r:
 		return
 	# Preserve the impact before projection/rotation can round it into clear air.
 	surface_impact = true
-	true_pos = n * min_r
+	anchor_off = n * min_r
 	var inward := velocity.dot(n)
 	if inward < 0.0:
 		velocity -= n * inward
@@ -688,6 +834,8 @@ func _input(event: InputEvent) -> void:
 			_debug_geo_park()
 		elif event.keycode == KEY_F9:
 			_debug_toggle_dev_speed()
+		elif event.keycode == KEY_BACKSLASH and dev_speed:
+			_debug_toggle_dev_fast_air()
 		elif event.keycode == KEY_F10:
 			_debug_face_earth()
 		elif event.keycode == KEY_F4:
@@ -701,6 +849,13 @@ func add_touch_look(v: Vector2) -> void:
 
 
 # Called every frame by main.gd, before the world is rebuilt around the ship.
+func _clear_air_fx() -> void:
+	air_load = 0.0
+	mach_number = 0.0
+	last_thrust_accel = Vector3.ZERO
+	last_newton_g = Vector3.ZERO
+
+
 func fly(delta: float) -> void:
 	# Wormhole transit: motion held, view locked forward, streaks at full tilt.
 	if transiting:
@@ -722,6 +877,7 @@ func fly(delta: float) -> void:
 		var wob := Time.get_ticks_msec() * 0.001
 		_mesh_root.rotation = Vector3(
 			sin(wob * 0.7) * 0.012, PI, sin(wob * 0.5) * 0.018)
+		_clear_air_fx()
 		_update_authored_propulsion(0.4, delta) # engines low — calm, not hypersonic
 		_update_streaks(SUBLIGHT_MAX * 0.7)     # restrained streaks — dark, not warp-busy
 		_update_camera(delta)
@@ -744,6 +900,7 @@ func fly(delta: float) -> void:
 			_mesh_root.rotate_y(2.6 * delta)
 			_mesh_root.rotate_x(1.5 * delta)
 			_mesh_root.rotate_z(0.9 * delta)
+		_clear_air_fx()
 		_update_authored_propulsion(0.15, delta)
 		_update_streaks(0.0)
 		_update_camera(delta)
@@ -766,6 +923,7 @@ func fly(delta: float) -> void:
 		_bank = 0.0
 		_lean = 0.0
 		_mesh_root.rotate_y(DOCK_SPIN * delta)
+		_clear_air_fx()
 		_update_authored_propulsion(0.0, delta)
 		_update_streaks(0.0)   # docked — no motion streaks
 		_update_camera(delta)
@@ -796,8 +954,7 @@ func fly(delta: float) -> void:
 		_steer = Vector2.ZERO
 		_yaw_rate = 0.0
 		_pitch_rate = 0.0
-		_look_yaw -= md.x * mouse_sens
-		_look_pitch = clampf(_look_pitch - md.y * mouse_sens, -LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT)
+		_apply_free_look(md, delta)
 	else:
 		# Heading steering with inertia: mouse motion winds a turn rate (so it has weight and curves),
 		# but when you STOP moving, the rate eases back to 0 — the ship SETTLES on its heading instead
@@ -924,6 +1081,7 @@ func fly(delta: float) -> void:
 		t_side *= DEV_THRUST_MULT
 	var local_accel := Vector3(_strafe * t_side, _lift * t_side, fwd * t_fwd) * eff_warp
 	var g_thrusting := local_accel.length_squared() > 0.0001
+	last_thrust_accel = (transform.basis * local_accel) * boost if g_thrusting else Vector3.ZERO
 	if local_accel.length_squared() > 0.0001:
 		velocity += (transform.basis * local_accel) * boost * delta
 
@@ -941,7 +1099,23 @@ func fly(delta: float) -> void:
 		var sim: float = delta * time_rate
 		_newton_advance(sim)
 		_footprint_tick(delta, fwd < 0.0, fwd > 0.0)
+		last_newton_g = _newton_g()
+		# Gated together with drag/corotate (finding 5): Earth's RHO0/scale-height
+		# curve is the only one that exists, so Mach/Load/wind-audio must stay
+		# silent anywhere that curve doesn't apply (Venus/Titan) rather than fire
+		# Earth numbers against no matching drag — backlog is a real density table.
+		if _FM.has_drag_model(anchor_name):
+			var air_top := Ephemeris.atmo_top_km(anchor_name)
+			var alt_now := anchor_off.length() - anchor_radius_km()
+			air_load = _FM.air_load(alt_now, velocity.length(), air_top) if air_top > 0.0 else 0.0
+			mach_number = _FM.mach(velocity.length())
+		else:
+			air_load = 0.0
+			mach_number = 0.0
 	else:
+		air_load = 0.0
+		mach_number = 0.0
+		last_newton_g = Vector3.ZERO
 		if not g_thrusting and velocity.length() < GRAVITY_IDLE_SPEED:
 			g = Vector3.ZERO                        # idle + slow → released; you settle to a stop
 		elif g.length() > 0.01 and g_thrusting:
@@ -1005,7 +1179,7 @@ func fly(delta: float) -> void:
 	# Safe now: every hull translates at its own warp (bounded coordinate rate), and the core
 	# voyage looms separately instead of flying real distance — so this never balloons.
 	if not newton:
-		true_pos += velocity * delta
+		anchor_off += velocity * delta
 
 	# --- Cosmetic banking (on the mesh only, so the camera stays steady) ---
 	var target_bank := clampf(-turn * BANK_GAIN - _strafe * 0.35, -BANK_ANGLE, BANK_ANGLE)
@@ -1070,6 +1244,7 @@ func fly(delta: float) -> void:
 		var ship_name: String = SHIP_MODELS[_current_model].name
 		# During the leap, force the boost voice so you HEAR the push.
 		audio.update_engine(ship_name, thrusting, clampf(throttle, 0.0, 1.0), boost > 1.0 or flipping, _engine_pitch, delta)
+		audio.update_air(air_load, mach_number, delta)
 	if _engine_mat:  # fallback ship only
 		var e := 2.0 + throttle * 4.0
 		_engine_mat.emission_energy_multiplier = lerpf(
@@ -1176,6 +1351,20 @@ func _ensure_hull_fill() -> void:
 	camera.add_child(_hull_fill)
 
 
+# Free-look target angles: yaw is UNBOUNDED (orbit freely around the ship, wrapped
+# into [-PI, PI] for continuity — never clamped) and pitch stays clamped to
+# LOOK_PITCH_LIMIT. The per-call step is rate-limited to LOOK_MAX_RATE_RAD_S per
+# SECOND (not a flat per-frame degree cap) so 60 fps and 30 fps sweep at the same
+# angular speed, and only a genuine backlog spike (far above any human flick) gets
+# absorbed rather than presented in one frame.
+func _apply_free_look(md: Vector2, delta: float) -> void:
+	var max_step := LOOK_MAX_RATE_RAD_S * delta
+	var dyaw := clampf(-md.x * mouse_sens, -max_step, max_step)
+	var dpitch := clampf(-md.y * mouse_sens, -max_step, max_step)
+	_look_yaw = wrapf(_look_yaw + dyaw, -PI, PI)
+	_look_pitch = clampf(_look_pitch + dpitch, -LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT)
+
+
 func _update_camera(delta: float) -> void:
 	if camera == null:
 		return
@@ -1186,8 +1375,13 @@ func _update_camera(delta: float) -> void:
 	# Free-look orbit: ease the applied angles toward target (0 = straight behind).
 	# Rotating the whole chase rig keeps the ship framed, so at 0 it's the usual cam.
 	var lk := clampf(LOOK_RETURN * delta, 0.0, 1.0)
-	_look_yaw_s = lerpf(_look_yaw_s, _look_yaw, lk)
-	_look_pitch_s = lerpf(_look_pitch_s, _look_pitch, lk)
+	# lerp_angle, not lerpf: _look_yaw wraps at +-PI (full 360 deg orbit), so a
+	# plain lerpf between +179 deg and -179 deg swings the SMOOTHED value the
+	# long way through 0 (a ~358 deg spin over a few frames). lerp_angle always
+	# takes the shorter arc. Wrap the result back so it stays a valid angle for
+	# the next frame's own shortest-arc comparison, same as _look_yaw itself.
+	_look_yaw_s = wrapf(lerp_angle(_look_yaw_s, _look_yaw, lk), -PI, PI)
+	_look_pitch_s = lerpf(_look_pitch_s, _look_pitch, lk)   # clamped range, no wrap risk
 	# CAM_VIEW_PITCH orbits the rig (position + aim together) so the ship is seen from slightly below.
 	var basis := _cam_basis * Basis(Vector3.RIGHT, deg_to_rad(CAM_VIEW_PITCH_DEG)) \
 		* (Basis(Vector3.UP, _look_yaw_s) * Basis(Vector3.RIGHT, _look_pitch_s))
@@ -1215,13 +1409,13 @@ func _set_capture(c: bool) -> void:
 	Input.set_mouse_mode(Input.MOUSE_MODE_CAPTURED if c else Input.MOUSE_MODE_VISIBLE)
 
 
-# World position of the gun muzzle, tracking the hull's COSMETIC bank so bolts always
+# Anchor-frame position of the gun muzzle, tracking the hull's COSMETIC bank so bolts always
 # leave the visible nose (slightly below centre) instead of drifting sideways when you
 # bank into a turn or strafe with A/D. The forward offset sits on the roll axis (so it's
 # unaffected); the small downward drop is rolled with the hull to stay glued to the gun.
-func muzzle_world() -> Vector3:
+func muzzle_off() -> Vector3:
 	var local_off := Basis.from_euler(Vector3(0.0, 0.0, _bank * MUZZLE_BANK_FOLLOW)) * Vector3(0.0, -muzzle_drop, -muzzle)
-	return true_pos + transform.basis * local_off
+	return anchor_off + transform.basis * local_off
 
 
 # ----------------------------------------------------------------------------
@@ -1609,7 +1803,7 @@ func _autopilot_steer(delta: float) -> void:
 			or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_CTRL):
 		autopilot = false
 		return
-	var to := autopilot_target - true_pos
+	var to := autopilot_target - anchor_off
 	if to.length() < AP_ARRIVE:
 		autopilot = false
 		return

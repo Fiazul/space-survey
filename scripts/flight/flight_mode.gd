@@ -10,53 +10,69 @@ const AIR := "AIR"
 const STAR_CHROMOSPHERE_KM := 2500.0   # real chromosphere; corona is visual, not a cruise wall
 const AIRLESS_EZ_KM := 10.0            # dump before the skin; vacuum has no 25% fake air
 
-
-# --- Skin-band speed cap ---
-# Contact kill compares the hull against terrain every frame. Unbounded, MAX_SPEED
-# is 10,000 units/s and 1 unit = 1 km, so 10,000 km/s - at 60 fps that is 166 km
-# per frame, and the hull steps over whole mountain ranges between samples. The cap
-# is therefore a CORRECTNESS requirement of contact kill, not flight polish.
-#
-# Read it as: the closer you are to rock, the less you may move per frame.
-# Presented in-world as an atmospheric flight limit, not an invisible wall.
-const BAND_CAP_ANCHORS := [
-	[100.0, 2000.0],
-	[15.0, 600.0],
-	[5.0, 300.0],
-	[1.0, 150.0],
-	[0.2, 60.0],
-]
-# The frame time the anti-tunnelling bound is PROVEN against. 20 fps, not 60: the
-# bound has to hold when the frame rate dips, which is exactly the moment a
-# point-sampled contact test would miss a mountain.
-const WORST_FRAME_S := 0.05
+const SPEED_OF_SOUND_KMS := 0.34
+# q_ref (kg/m^3 * km^2/s^2) picks the entry-intensity curve's knee. At sea level
+# (rho=1.225) this saturates hard by ~5 km/s, matching the hypersonic dive speeds
+# the ship actually reaches inside the 100 km Earth skin.
+const AIR_LOAD_Q_REF := 5.0
+# Onset floor on dynamic pressure (kg/m^3 * km^2/s^2). Below this q, air_load is
+# HARD zero — not just numerically tiny. Without it, alt=90-100 km (where rho is
+# ~1e-5..1e-6 of sea level) still returns a nonzero-but-imperceptible air_load for
+# any real entry speed, which is wrong: nothing should be felt that high. Picked so
+# 2 km/s at ~70 km (rho ~= 3.25e-4 kg/m^3, q = rho*4 ~= 1.3e-3) is the FIRST felt
+# buffet — the number the player actually asked for.
+const AIR_LOAD_Q_FLOOR := 0.0013
 
 
-# Speed ceiling in METRES PER SECOND at this height above LOCAL GROUND.
-static func band_speed_cap_ms(alt_above_ground_km: float) -> float:
-	var a: Array = BAND_CAP_ANCHORS
-	var last: int = a.size() - 1
-	if alt_above_ground_km >= float(a[0][0]):
-		return float(a[0][1])
-	if alt_above_ground_km <= float(a[last][0]):
-		return float(a[last][1])
-	for i in range(last):
-		var hi: Array = a[i]
-		var lo: Array = a[i + 1]
-		if alt_above_ground_km <= float(hi[0]) and alt_above_ground_km >= float(lo[0]):
-			var t: float = (alt_above_ground_km - float(lo[0])) / (float(hi[0]) - float(lo[0]))
-			return lerpf(float(lo[1]), float(hi[1]), t)
-	return float(a[last][1])
+# Dynamic-pressure-derived entry intensity, 0..1. Reuses Ephemeris.RHO0 /
+# EARTH_ATMO_H_KM — the SAME curve _newton_atmo_drag uses for drag — so heat FX
+# and the drag that actually slows you always agree. PlanetGenerator.air_density_at
+# is a second, independent curve (sky-opacity scale height, not drag's); mixing it
+# in here would let the glow and the deceleration disagree.
+static func air_load(alt_km: float, spd_kms: float, atmo_top_km: float) -> float:
+	if atmo_top_km <= 0.0 or alt_km >= atmo_top_km or alt_km < 0.0 or spd_kms <= 0.0:
+		return 0.0
+	var rho: float = Ephemeris.RHO0 * exp(-alt_km / Ephemeris.EARTH_ATMO_H_KM)
+	var q := rho * spd_kms * spd_kms
+	var q_eff := maxf(q - AIR_LOAD_Q_FLOOR, 0.0)
+	if q_eff <= 0.0:
+		return 0.0
+	return 1.0 - exp(-q_eff / AIR_LOAD_Q_REF)
 
 
-# The same cap in UNITS PER SECOND, which is what ship.speed_limit consumes.
-#
-# THIS DIVISION IS THE WHOLE POINT OF THIS FUNCTION EXISTING. 1 unit = 1 km in
-# Sol, so a 600 m/s cap is 0.6. Handing 600.0 to speed_limit means 600 km/s: every
-# "the cap is applied" assertion still passes and the anti-tunnelling guarantee is
-# silently void. Convert here and nowhere else.
-static func band_speed_cap_units(alt_above_ground_km: float) -> float:
-	return band_speed_cap_ms(alt_above_ground_km) / 1000.0
+static func mach(spd_kms: float) -> float:
+	return spd_kms / SPEED_OF_SOUND_KMS
+
+
+# --- Skin-band speed cap: removed 2026-09-08 as a flight limiter (player
+# decision, see NEEDS-YOUR-EYES.md and docs/ROADMAP.md "Feel - atmospheric
+# flight model"). Contact kill compares the hull against terrain every frame;
+# unbounded, MAX_SPEED is 10,000 units/s and 1 unit = 1 km, so 10,000 km/s -
+# at 60 fps that is 166 km per frame, and the hull can step over whole
+# mountain ranges between samples. That anti-tunnelling gap is now an
+# accepted, tracked known limitation rather than a hard-capped speed - a real
+# game doesn't clamp you. The design-speed anchor table this cap used lived
+# on here only because tools/test_earth_terrain.gd still read it for
+# ring-quad sizing, not for anything flight-side; it moved to
+# `SurfacePatch.design_speed_ms`/`DESIGN_SPEED_ANCHORS`/`WORST_FRAME_S` the
+# same day, and nothing under scripts/ or tools/ calls a band_speed_cap_*
+# function any more.
+
+
+# DEV-only tour aid (F9 dev-speed engines' atmosphere counterpart): there is no
+# hard speed cap in air (2026-09-08, see docs/ROADMAP.md "Feel - atmospheric
+# flight model"), so the only lever left for a fast Earth tour is weaker drag.
+# _newton_atmo_drag reads this; nothing else should.
+static var dev_fast_air := false
+const DEV_AIR_DRAG_MULT := 0.01
+
+
+# The only body with a modelled density profile so far (Earth's RHO0 + scale
+# height). Gates air_load/mach/drag/co-rotation together so the HUD, the wind
+# audio and the deceleration that actually happens always agree (ship.gd:242-
+# 244) — a per-body table is backlog, not a silent Earth default elsewhere.
+static func has_drag_model(body_name: String) -> bool:
+	return body_name == "Earth"
 
 
 static func exclusion_from_center(radius: float, air_top: float, is_star: bool) -> float:
@@ -87,27 +103,44 @@ static func must_drop(zone: String, time_rate: float, dist: float, exclusion: fl
 	return time_rate > 1.001 and not can_cruise(zone, dist, exclusion)
 
 
-# If a step starts outside EZ and would enter or punch through, sit on the shell
-# and dump speed. Already inside: leave it (air drag / skin kill own that).
-#
-# `dump_speed` (units/s) is what you keep, along your existing heading. It used to
-# be a hard zero, which stopped you dead on the shell every single approach. That
-# read as hitting a wall rather than entering atmosphere, and it got worse once the
-# band became somewhere you want to fly: the Moon's shell is at 10 km and its band
-# ceiling is 5.27 km, so you would come to a full stop and then have to
-# re-accelerate into a capped band. Pass the band cap for that altitude instead.
-# Zero is still accepted, and still means a dead stop.
+# If a step starts outside EZ and would enter or punch through, sit exactly on
+# the shell rather than wherever a coarse dt happens to land. Position only —
+# velocity is returned unchanged (2026-09-08: no hard cap). Purely geometric:
+# without this snap, an interplanetary-speed straight-line step could land
+# arbitrarily deep past the shell before the caller ever notices the crossing.
+# Ship no longer relies on `dropped` to fire the entry handshake (that's an
+# exact outside->inside edge tracked on the ship itself, docs/adr/0002 finding
+# 2) — this return value is now purely "did the snap have to move you".
+
+# Real_t is 32-bit (real_t = float), ULP ~ |value| * 1.19e-7. ENTRY uses a tight
+# multiple so a genuine crossing is never misread as "already inside" (that
+# swallowed ~40% of entries at Earth's shell before ship-side edge tracking
+# existed). SNAP stays generous so the post-snap position reads reliably
+# inside next call (anti-re-fire) even after a substep of float noise.
+const SHELL_ENTRY_EPS_ULP_MULT := 2.0
+const SHELL_EPS_ULP_MULT := 32.0
+
 static func break_at_exclusion(pos: Vector3, vel: Vector3, dt: float, center: Vector3,
-		ez: float, dump_speed: float) -> Dictionary:
-	var miss := { "pos": pos, "vel": vel, "dropped": false }
+		ez: float) -> Dictionary:
+	var miss := { "pos": pos, "vel": vel, "dropped": false, "t": 0.0 }
 	if dt <= 0.0 or ez <= 0.0:
 		return miss
 	var w: Vector3 = pos - center
 	var r0 := w.length()
-	if r0 <= ez:
+	var mag := maxf(maxf(pos.length(), center.length()), ez)
+	var eps := maxf(mag * 1.19e-7 * SHELL_ENTRY_EPS_ULP_MULT, 0.001)
+	if r0 <= ez + eps:
 		return miss
 	var a := vel.length_squared()
 	if a < 1.0e-16:
+		return miss
+	# Direction-blind was the bug: this used to cap on distance-to-shell alone,
+	# so climbing away got dumped the same as diving in. d(t)^2 = |w + vel*t|^2
+	# is a convex parabola in t; if the radial component (vel.dot(w)) is already
+	# outward at t=0, it is provably increasing for every t>0, so an outbound
+	# ship can never re-cross the shell within this straight-line step. Gate on
+	# it explicitly rather than relying on that proof holding forever.
+	if vel.dot(w) >= 0.0:
 		return miss
 	var b := 2.0 * vel.dot(w)
 	var c := r0 * r0 - ez * ez
@@ -126,9 +159,7 @@ static func break_at_exclusion(pos: Vector3, vel: Vector3, dt: float, center: Ve
 	if n.length_squared() < 1.0e-12:
 		n = w
 	n = n.normalized()
-	# Keep the heading, clamp the magnitude. Never speed anyone UP: a ship already
-	# slower than the cap keeps its own speed.
-	var kept := Vector3.ZERO
-	if dump_speed > 0.0 and vel.length_squared() > 1.0e-16:
-		kept = vel.normalized() * minf(vel.length(), dump_speed)
-	return { "pos": center + n * ez, "vel": kept, "dropped": true }
+	# Snap a hair INSIDE the shell (generous SNAP eps, not ENTRY's tight one) so
+	# the next call reads it as inside with margin to spare — anti-re-fire.
+	var snap_eps := maxf(maxf(center.length(), ez) * 1.19e-7 * SHELL_EPS_ULP_MULT, 0.001)
+	return { "pos": center + n * (ez - snap_eps), "vel": vel, "dropped": true, "t": t }

@@ -1,5 +1,9 @@
 # Autoload singleton (registered as `Ephemeris` in project.godot). class_name dropped per ADR-0001.
 extends Node
+# Preloaded rather than referenced as the global class `AnchorFrame`: autoloads
+# resolve before the editor's class cache is guaranteed to be current, and the
+# headless test runs have no cache at all.
+const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # REAL positions for Cold Light. Earth is the anchor at the scene origin (0,0,0) —
 # every coordinate here is GEOCENTRIC, the frame NASA RA/Dec are measured in.
 #
@@ -185,7 +189,11 @@ const _HOST := "https://ssd.jpl.nasa.gov/api/horizons.api"
 
 # Live geocentric eq-AU positions, keyed by name. Seeded from the verified
 # fallback so the scene is correct from frame 1; patched as Horizons replies.
-var _pos := {}
+# Live positions in 64-bit km, scene axes (see rel_km / docs/adr/0002). Vector3 is
+# 32-bit in this engine build, so every cross-body subtraction reads THIS, never
+# scene_pos(): at Saturn's ~1.4e9 km a Vector3 ULP is ~170 km.
+var _pos64 := {}
+var _gravity_bodies := []   # [{ name, mu }] for every world with real mass (craft excluded)
 var _today := ""
 var _idx := 0           # which catalog body we're currently fetching
 var _http: HTTPRequest
@@ -214,15 +222,17 @@ func _catalog_num(body_name: String, key: String, fallback: float) -> float:
 func _ready() -> void:
 	_catalog = live_worlds()
 	for p in PLANETS:
-		_pos[p.name] = p.eq
+		_store_pos(str(p.name), p.eq.x, p.eq.y, p.eq.z)
 	for m in PHYSICAL_MOONS:
-		_pos[m.name] = _fallback_moon_eq(m)
+		var me := _fallback_moon_eq(m)
+		_store_pos(str(m.name), me[0], me[1], me[2])
 		_mu_extra[m.name] = float(m.get("mu", 0.0))
 		_spin_extra[m.name] = float(m.get("spin", 0.0))
 		_radius_extra[m.name] = float(m.radius)
 	_radius_extra["Pluto"] = 1188.3
 	_mu_extra["Pluto"] = 869.6
 	_spin_extra["Pluto"] = 1.1386e-5
+	_build_gravity_bodies()
 	var d := Time.get_date_dict_from_system()
 	_today = "%04d-%02d-%02d" % [d.year, d.month, d.day]
 
@@ -232,7 +242,7 @@ func _ready() -> void:
 	_fetch_all()
 
 
-func _fallback_moon_eq(m: Dictionary) -> Vector3:
+func _fallback_moon_eq(m: Dictionary) -> PackedFloat64Array:
 	var parent_eq := Vector3.ZERO
 	var parent := str(m.get("parent", ""))
 	for p in PLANETS:
@@ -241,13 +251,66 @@ func _fallback_moon_eq(m: Dictionary) -> Vector3:
 			break
 	var au := float(m.get("sma_km", 0.0)) / KM_PER_AU
 	var phase := float(str(m.name).hash() % 1000) * 0.0062832
-	return parent_eq + Vector3(cos(phase) * au, sin(phase) * au * 0.15, sin(phase) * au)
+	return PackedFloat64Array([
+		parent_eq.x + cos(phase) * au,
+		parent_eq.y + sin(phase) * au * 0.15,
+		parent_eq.z + sin(phase) * au])
+
+
+# One write point for a body's position. Input is geocentric equatorial AU.
+func _store_pos(name: String, au_x: float, au_y: float, au_z: float) -> void:
+	_pos64[name] = PackedFloat64Array([
+		au_x * KM_PER_AU, au_z * KM_PER_AU, au_y * KM_PER_AU])   # eq(x,y,z) -> scene(x,z,y)
+
+
+func _build_gravity_bodies() -> void:
+	_gravity_bodies.clear()
+	for p in _catalog:
+		if p.get("craft", false):
+			continue
+		var mu := gm(str(p.name))
+		if mu > 0.0:
+			_gravity_bodies.append({ "name": str(p.name), "mu": mu })
+
+
+# Every world that actually pulls, with its mu resolved once. Ship._newton_g runs
+# this list per substep, so it must not allocate or re-scan the catalog.
+func gravity_bodies() -> Array:
+	return _gravity_bodies
 
 
 # --- public: real geocentric position in SCENE units (Y-up) -----------------
 func scene_pos(name: String) -> Vector3:
-	var eq: Vector3 = _pos.get(name, Vector3.ZERO)
-	return Vector3(eq.x, eq.z, eq.y) * AU_TO_UNITS   # eq(x,y,z) -> scene(x,z,y)
+	var a: PackedFloat64Array = _pos64.get(name, _AF.ZERO64)
+	return Vector3(a[0], a[1], a[2])
+
+
+# The 64-bit scene-km position of a body. Ship/PlanetSystem anchor arithmetic
+# goes through this, never through scene_pos (see docs/adr/0002).
+func pos64(name: String) -> PackedFloat64Array:
+	return _pos64.get(name, _AF.ZERO64)
+
+
+func has_pos(name: String) -> bool:
+	return _pos64.has(name)
+
+
+# True for a physical body the ship's Newton frame may anchor to. False for
+# craft (Voyager 1/2 drift at 5 km/s; anchoring there clamps the ship at a
+# moving point while the render drifts away — see docs/adr/0002 finding 3).
+func is_anchorable(name: String) -> bool:
+	if not has_pos(name):
+		return false
+	for p in _catalog:
+		if str(p.name) == name:
+			return not p.get("craft", false)
+	return true
+
+
+# `body` seen from `anchor`'s centre, in km. Subtracted in doubles, then packed —
+# the ONE sanctioned way to ask where one Sol body is relative to another.
+func rel_km(body_name: String, anchor: String) -> Vector3:
+	return _AF.sub64(pos64(body_name), pos64(anchor))
 
 
 # Star direction*radius on the backdrop shell (real RA/Dec, fixed radius).
@@ -361,12 +424,20 @@ func sweet_spot(body_name: String = "") -> Vector3:
 		return geo_start_pos()
 	# Park clear of the BAND, not clear of the old 29 km bubble. kill * 4 would now
 	# be 80 m, which would respawn you inside the terrain you just died on.
+	return bpos + sweet_spot_off(body_name)
+
+
+# The same park as sweet_spot(), expressed as an offset from that body's centre —
+# the form the ship's anchored state actually wants (docs/adr/0002).
+func sweet_spot_off(body_name: String) -> Vector3:
+	var rad := body_radius_km(body_name)
+	if rad <= 0.0:
+		return Vector3.ZERO
 	var park := rad + maxf(atmo_top_km(body_name) * 1.5, 120.0)
-	var sun := scene_pos("Sun")
-	var out: Vector3 = bpos - sun
+	var out: Vector3 = -rel_km("Sun", body_name)
 	if out.length_squared() < 0.0001:
 		out = Vector3(1.0, 0.0, 0.0)
-	return bpos + out.normalized() * park
+	return out.normalized() * park
 
 
 func body_radius_km(body_name: String) -> float:
@@ -484,7 +555,8 @@ func _on_reply(_result: int, code: int, _headers: PackedStringArray, body: Packe
 	if code == 200:
 		var eq = _parse_vectors(body.get_string_from_utf8())
 		if eq != null and _idx < _catalog.size():
-			_pos[_catalog[_idx].name] = eq
+			_store_pos(str(_catalog[_idx].name), eq[0], eq[1], eq[2])
+			_build_gravity_bodies()
 			live = true
 	_idx += 1
 	_fetch_next()
@@ -506,7 +578,8 @@ func _parse_vectors(text: String):
 	var m := re.search(block)
 	if m == null:
 		return null
-	return Vector3(float(m.get_string(1)), float(m.get_string(2)), float(m.get_string(3)))
+	return PackedFloat64Array([
+		float(m.get_string(1)), float(m.get_string(2)), float(m.get_string(3))])
 
 
 # --- date-stamped cache so a potato doesn't re-fetch 8 bodies every launch ---
@@ -522,8 +595,9 @@ func _load_cache() -> bool:
 	for name in data.get("bodies", {}):
 		var a = data["bodies"][name]
 		if a is Array and a.size() == 3:
-			_pos[name] = Vector3(a[0], a[1], a[2])
+			_store_pos(str(name), float(a[0]), float(a[1]), float(a[2]))
 			_cached_names[name] = true
+	_build_gravity_bodies()
 	return true
 
 
@@ -538,9 +612,12 @@ func _cache_complete() -> bool:
 
 func _save_cache() -> void:
 	var bodies := {}
-	for name in _pos:
-		var v: Vector3 = _pos[name]
-		bodies[name] = [v.x, v.y, v.z]
+	for name in _pos64:
+		# Back to AU doubles: the cache is the only place these positions leave
+		# memory, and a Vector3 round-trip here would throw away the precision
+		# `_pos64` exists for.
+		var a: PackedFloat64Array = _pos64[name]
+		bodies[name] = [a[0] / KM_PER_AU, a[2] / KM_PER_AU, a[1] / KM_PER_AU]
 	var f := FileAccess.open(_CACHE_PATH, FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify({ "date": _today, "bodies": bodies }))

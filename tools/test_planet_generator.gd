@@ -54,27 +54,64 @@ func _initialize() -> void:
 		failed += _check("earth_cook_is_opaque", not sm.shader.code.contains("ALPHA ="))
 		failed += _check("earth_uses_map", float(sm.get_shader_parameter("has_albedo")) > 0.5)
 		failed += _check("earth_extras_lazy", float(sm.get_shader_parameter("has_clouds")) < 0.5)
-		G.ensure_close_maps(sm, painted.recipe)
+		G.ensure_close_maps(sm, painted.recipe, false)   # sync bind — no frame loop to poll here
 		failed += _check("earth_uses_clouds", float(sm.get_shader_parameter("has_clouds")) > 0.5)
 		failed += _check("earth_uses_night", float(sm.get_shader_parameter("has_night")) > 0.5)
 		failed += _check("earth_uses_air", float(sm.get_shader_parameter("air_amount")) > 0.5)
 		failed += _check("earth_uses_height", float(sm.get_shader_parameter("has_height")) > 0.5)
 		failed += _check("earth_uses_spec", float(sm.get_shader_parameter("has_spec")) > 0.5)
+		var earth_height_tex := sm.get_shader_parameter("height_tex") as Texture2D
+		failed += _check("earth_globe_binds_4k", earth_height_tex != null and str(earth_height_tex.resource_path).contains("earth_height_4k"))
+		failed += _check("earth_datum_bound", absf(float(sm.get_shader_parameter("height_datum")) - 0.598) < 0.01)
+		failed += _check("earth_signed_bound", float(sm.get_shader_parameter("height_signed")) > 0.5)
 	painted.sphere.free()
+
+	# globe_height_path(): one helper, every GPU height bind goes through it.
+	failed += _check("globe_height_path_prefers_override", G.globe_height_path(earth_r) == "res://assets/planets/earth_height_4k.png")
+	failed += _check("globe_height_path_falls_back", G.globe_height_path(mars) == str(mars.get("height", "")))
+	failed += _check("globe_height_path_no_map", G.globe_height_path(G.recipe_for({ "name": "Sun", "star": true })) == "")
+
+	var moon_r := G.recipe_for({ "name": "Moon" })
+	var moon_p := G.paint({ "name": "Moon", "physical": true, "radius": 4.0 }, 4.0)
+	if moon_p.mat is ShaderMaterial:
+		var msm := moon_p.mat as ShaderMaterial
+		G.ensure_close_maps(msm, moon_p.recipe, false)
+		var moon_height_tex := msm.get_shader_parameter("height_tex") as Texture2D
+		failed += _check("moon_binds_own_height", moon_height_tex != null and str(moon_height_tex.resource_path).contains("moon_height_4k"))
+		failed += _check("moon_datum_bound", absf(float(msm.get_shader_parameter("height_datum")) - float(moon_r.get("height_datum", 0.0))) < 0.001)
+	moon_p.sphere.free()
+
+	var mars_p := G.paint({ "name": "Mars", "physical": true, "radius": 3.4 }, 3.4)
+	if mars_p.mat is ShaderMaterial:
+		var mrsm := mars_p.mat as ShaderMaterial
+		G.ensure_close_maps(mrsm, mars_p.recipe, false)
+		var mars_height_tex := mrsm.get_shader_parameter("height_tex") as Texture2D
+		failed += _check("mars_binds_own_height", mars_height_tex != null and str(mars_height_tex.resource_path).contains("mars_height_4k"))
+		failed += _check("mars_datum_bound", absf(float(mrsm.get_shader_parameter("height_datum")) - float(mars.get("height_datum", 0.0))) < 0.001)
+	mars_p.sphere.free()
 
 	var sun_r := G.recipe_for({ "name": "Sun", "star": true })
 	failed += _check("sun_star", sun_r.kind == "star")
 	failed += _check("sun_map", G.has_map(sun_r))
 	var sun_p := G.paint({ "name": "Sun", "star": true, "physical": true, "radius": 20.0 }, 20.0)
 	if sun_p.mat is ShaderMaterial:
-		failed += _check("sun_kind3", int((sun_p.mat as ShaderMaterial).get_shader_parameter("kind")) == 3)
-		failed += _check("sun_uses_map", float((sun_p.mat as ShaderMaterial).get_shader_parameter("has_albedo")) > 0.5)
+		var sun_sm := sun_p.mat as ShaderMaterial
+		failed += _check("sun_kind3", int(sun_sm.get_shader_parameter("kind")) == 3)
+		failed += _check("sun_uses_map", float(sun_sm.get_shader_parameter("has_albedo")) > 0.5)
+		G.ensure_close_maps(sun_sm, sun_r, false)
+		failed += _check("sun_binds_no_height", float(sun_sm.get_shader_parameter("has_height")) < 0.5)
 	sun_p.sphere.free()
 
 	var sat := G.recipe_for({ "name": "Saturn" })
 	failed += _check("saturn_rings", G.has_rings(sat))
 	var rmat := G.make_ring_material(sat)
 	failed += _check("ring_mat", rmat != null and rmat.albedo_texture != null)
+	var sat_p := G.paint({ "name": "Saturn", "physical": true, "radius": 9.0 }, 9.0)
+	if sat_p.mat is ShaderMaterial:
+		var sat_sm := sat_p.mat as ShaderMaterial
+		G.ensure_close_maps(sat_sm, sat, false)
+		failed += _check("gas_binds_no_height", float(sat_sm.get_shader_parameter("has_height")) < 0.5)
+	sat_p.sphere.free()
 
 	for nm in ["Io", "Europa", "Titan", "Enceladus", "Phobos", "Ganymede", "Callisto", "Mimas", "Tethys", "Dione", "Rhea", "Iapetus", "Miranda", "Ariel", "Umbriel", "Titania", "Oberon", "Triton", "Pluto", "Charon"]:
 		var rec := G.recipe_for({ "name": nm })

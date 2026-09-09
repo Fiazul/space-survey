@@ -30,6 +30,8 @@ func _ready() -> void:
 	failed += _camera_angle()
 	failed += _fill_light()
 	failed += _layer_tagging()
+	failed += _boost_no_hop()
+	failed += _free_look_no_flip()
 	if failed == 0:
 		print("chase_rig: OK")
 		get_tree().quit(0)
@@ -134,6 +136,131 @@ func _audit_counts(node: Node) -> Dictionary:
 		out.missing += sub.missing
 		out.lost_default += sub.lost_default
 	return out
+
+
+# Reported bug (pre-2026-09-09): pressing Shift (boost) made the camera "hop" via
+# a camera g-sag term reading last_thrust_accel with no smoothing. The whole g-sag/
+# buffet visual layer was removed 2026-09-09 as unreachable in controlled flight
+# (see NEEDS-YOUR-EYES.md #6) — _update_camera no longer reads last_thrust_accel at
+# all, so stepping it (exactly as ship.gd's boost multiply does) must produce ZERO
+# camera movement now. Kept as a regression guard against that coupling coming back.
+func _boost_no_hop() -> int:
+	var failed := 0
+	var ship := ShipScript.new()
+	add_child(ship)
+	ship.camera = Camera3D.new()
+	add_child(ship.camera)
+	ship._hull_km = 0.08
+	var dt := 1.0 / 60.0
+	var base_accel := Vector3(0.0, 0.0, -0.01962)   # ~2g NEWTON_THRUST
+	ship.last_newton_g = Vector3(0.0, -0.0098, 0.0)  # ~1g, constant throughout
+	ship.last_thrust_accel = base_accel
+	ship.air_load = 0.0
+	for _priming in 60:   # let the low-pass fully settle before measuring
+		ship._update_camera(dt)
+	var prev_pos := ship.camera.global_position
+	var max_delta := 0.0
+	for _frame in 60:
+		ship.last_thrust_accel = base_accel * ShipScript.BOOST_MULT   # the exact step ship.gd takes
+		ship._update_camera(dt)
+		var pos: Vector3 = ship.camera.global_position
+		max_delta = maxf(max_delta, pos.distance_to(prev_pos))
+		prev_pos = pos
+	failed += _check("boost_toggle_no_camera_hop", max_delta < 0.003)
+	print("chase_rig: boost toggle max per-frame camera delta %.6f km" % max_delta)
+	ship.queue_free()
+	return failed
+
+
+# Reported bug: free-look "flicked to the opposite angle" while T was still held.
+# _look_yaw had no ceiling AND no per-call step limit, so a mouse-delta backlog (a
+# hitch queuing several frames' worth of relative motion before the next _process,
+# or a capture blip) could swing it by any amount in one call. Now yaw is UNBOUNDED
+# (never clamped) and the per-call step is rate-limited (rad/s), not a flat per-frame
+# cap — a 60 fps and a 30 fps sweep must move at the same angular speed, and a
+# backlog spike must still be bounded to at most LOOK_MAX_RATE_RAD_S * delta.
+func _free_look_no_flip() -> int:
+	var failed := 0
+	var ship := ShipScript.new()
+	add_child(ship)
+	# A full 360-degree sweep at 60 fps and at 30 fps: both must cover the same
+	# angular distance per second (i.e. the rate limit, not a flat frame-count cap).
+	# _look_yaw wraps into [-PI, PI] (never clamped), so raw before/after subtraction
+	# spuriously reads a huge jump every time the sweep crosses the wrap boundary —
+	# wrapf the DIFFERENCE itself back into [-PI, PI] to read the true per-call step.
+	var dt60 := 1.0 / 60.0
+	var deg_per_s_60 := 0.0
+	for _f in 720:
+		var before: float = ship._look_yaw
+		ship._apply_free_look(Vector2(400.0, 0.0), dt60)
+		var step := wrapf(ship._look_yaw - before, -PI, PI)
+		deg_per_s_60 = maxf(deg_per_s_60, rad_to_deg(absf(step)) / dt60)
+	ship._look_yaw = 0.0
+	var dt30 := 1.0 / 30.0
+	var deg_per_s_30 := 0.0
+	for _f in 360:
+		var before2: float = ship._look_yaw
+		ship._apply_free_look(Vector2(400.0, 0.0), dt30)
+		var step2 := wrapf(ship._look_yaw - before2, -PI, PI)
+		deg_per_s_30 = maxf(deg_per_s_30, rad_to_deg(absf(step2)) / dt30)
+	failed += _check("free_look_60fps_30fps_same_deg_per_s",
+		absf(deg_per_s_60 - deg_per_s_30) < 1.0)
+	failed += _check("free_look_rate_at_cap",
+		absf(deg_per_s_60 - rad_to_deg(ShipScript.LOOK_MAX_RATE_RAD_S)) < 1.0)
+	# A 4000 px spike at dt=1/60 (a hitch-sized backlog in one call) must be bounded
+	# to at most LOOK_MAX_RATE_RAD_S/60 rad, not presented all at once.
+	ship._look_yaw = 0.0
+	var before_yaw: float = ship._look_yaw
+	ship._apply_free_look(Vector2(4000.0, 0.0), dt60)
+	var spike_step := absf(ship._look_yaw - before_yaw)
+	var cap_step := ShipScript.LOOK_MAX_RATE_RAD_S * dt60
+	failed += _check("free_look_spike_bounded_to_rate_cap", spike_step <= cap_step + 1.0e-6)
+	print("chase_rig: free-look 60fps %.2f deg/s, 30fps %.2f deg/s, spike step %.5f rad (cap %.5f rad)"
+		% [deg_per_s_60, deg_per_s_30, spike_step, cap_step])
+	# Reported bug: orbiting past +-180 deg spun the CAMERA a full turn. _look_yaw
+	# itself was already rate-limited above; the flip was in _update_camera's
+	# SMOOTHING (_look_yaw_s = lerpf(...)), which has no notion of the wrap — when
+	# the target crossed from +179 to -179 deg the smoothed value eased the LONG
+	# way through 0 (a ~358 deg swing over a few frames). Drive the target steadily
+	# across the wrap boundary (several times) while calling _update_camera and
+	# assert the SMOOTHED yaw's own per-frame step never blows past the same rate
+	# cap the target itself is held to.
+	ship.camera = Camera3D.new()
+	add_child(ship.camera)
+	ship._look_yaw = 0.0
+	ship._look_yaw_s = 0.0
+	for _f in 30:                     # let the smoother settle at rest first
+		ship._update_camera(dt60)
+	var max_cam_step := 0.0
+	for _f in 120:
+		ship._apply_free_look(Vector2(-10000.0, 0.0), dt60)   # saturates the rate cap every frame
+		var before_s: float = ship._look_yaw_s
+		ship._update_camera(dt60)
+		var cam_step := absf(wrapf(ship._look_yaw_s - before_s, -PI, PI))
+		max_cam_step = maxf(max_cam_step, cam_step)
+	failed += _check("free_look_camera_yaw_never_exceeds_rate_cap_across_wrap",
+		max_cam_step <= ShipScript.LOOK_MAX_RATE_RAD_S * dt60 + 1.0e-3)
+	print("chase_rig: free-look camera yaw max per-frame step across wrap %.5f rad (cap %.5f rad)"
+		% [max_cam_step, ShipScript.LOOK_MAX_RATE_RAD_S * dt60 + 1.0e-3])
+	# Releasing from near the boundary (T key up snaps the TARGET straight to 0,
+	# main.gd's various `_look_yaw = 0.0` resets) is not itself a wrap crossing —
+	# the short way from +-170 deg to 0 is <=170 deg total, same as a plain lerp
+	# would take. Regression guard on lerp_angle picking the same short arc here.
+	for start_deg in [170.0, -170.0]:
+		ship._look_yaw = 0.0
+		ship._look_yaw_s = deg_to_rad(start_deg)
+		var traveled := 0.0
+		var prev: float = ship._look_yaw_s
+		for _f in 200:
+			ship._update_camera(dt60)
+			traveled += absf(wrapf(ship._look_yaw_s - prev, -PI, PI))
+			prev = ship._look_yaw_s
+			if absf(ship._look_yaw_s) < 0.0005:
+				break
+		failed += _check("free_look_release_from_%d_deg_takes_short_path" % int(start_deg),
+			rad_to_deg(traveled) <= 170.5)
+	ship.queue_free()
+	return failed
 
 
 func _check(name: String, ok: bool) -> int:

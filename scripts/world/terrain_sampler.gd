@@ -34,6 +34,29 @@ const DEM_HAS_BATHYMETRY := false
 # Metres per unit of DEM sample above sea level.
 const DEM_SCALE_M := DEM_PEAK_M / maxf(DEM_PEAK_VALUE - DEM_SEA_LEVEL, 0.0001)
 
+# --- Per-recipe DEM calibration ---
+# The five constants above are EARTH's numbers, kept as the fallback default so
+# Earth's own behaviour never moves. Mars/Moon carry real per-body calibration
+# (docs/research/2026-09-09-dem-ingest.md, assets/planets/SOURCES.txt) on their
+# own RECIPES entry instead of a second set of hardcoded constants here — see
+# CLAUDE.md's "never hardcode if body_name == X" rule. All four fields describe
+# the DECODED sample value space (0..1, same space _bilinear_bytes already
+# returns), not raw digital numbers:
+#   height_datum        sample value at 0 m
+#   height_m_per_unit    metres per unit of sample value (the whole 0..1 span)
+#   height_max           highest sample value the file can produce (upper bound
+#                         for max_height_km(), not necessarily reached)
+#   height_signed        true when a sample below datum is a real depth
+#                         (Mars/Moon basins); false when negative is clamped to
+#                         0 because the map does not model an ocean floor
+#                         (Earth — DEM_HAS_BATHYMETRY's old name/meaning)
+var _dem_datum := DEM_SEA_LEVEL
+var _dem_m_per_unit := DEM_SCALE_M
+var _dem_max := DEM_MAX_VALUE
+var _dem_signed := DEM_HAS_BATHYMETRY
+# RG16 byte-pack (R*256+G)/65535 vs plain R8 value/255 — see _load_gray/_texel.
+var _h_stride := 1
+
 # Elevation scale for a world with NO height map. Keeps the 3.2 lift constant
 # surface_patch._vert already used, so airless relief does not change character.
 const NOISE_RELIEF_KM := 3.2
@@ -96,6 +119,27 @@ const DETAIL_SLOPE_CEIL := 0.55
 # mirror planet_cook.gdshader exactly.
 const DETAIL_OCTAVES := 4
 const NOISE_WORLD_SLOPE := 0.35    # a noise world is already rugged at every scale
+# Octave 0's own wavelength, MEASURED (see the comment above DETAIL_FREQ: 11000
+# gives 3643/1760/850/411 m across the four octaves; each further octave is
+# /2.07 of the one before, matching ridged3()'s own q *= 2.07 per step). Used to
+# band-limit each octave against the local mesh sample spacing - see
+# SurfaceRecipe._band_weight for why an unlimited high-frequency octave reads as
+# a different texture on either side of a ring boundary (reported at moon_7km).
+const DETAIL_BASE_KM := 3.643
+# MEASURED (tools/probe_amplitude.gd, see PLANET_GENERATOR.md): over a 3x3 km
+# Moon patch, generic detail's mean |offset| is 19.3 m (range -30.8..+48.8 m) -
+# the SAME order of magnitude as the geology pass's own craters (mean |offset|
+# 21.2 m), even though detail's wavelength (411 m - 3.6 km) is several times a
+# small crater's diameter (45-90 m, cell 0.15 km). Two independent noise fields
+# of comparable amplitude sum into whichever one is least structured winning
+# visually - reported as "rolling hills + primitive rocks, zero bowls" at
+# moon_200m even with 1562 craters actually present in the height field over
+# three 160x160 km patches (test_surface_recipes.gd's own crater-encounter
+# count). Detail is generic roughness filler for wherever there is nothing more
+# specific to show; a world whose geology pass already draws named craters
+# should not have them buried under it, so detail is turned down (not off -
+# still real roughness between craters) wherever craters exist at all.
+const DETAIL_GEOLOGY_DAMPEN := 0.2
 
 # Maps are cached as RAW SINGLE-CHANNEL BYTES, not as Images.
 # Image.get_pixel() from GDScript costs an Object call per texel, and one
@@ -119,14 +163,20 @@ var _seed := 0.0                   # the SAME seed the cook material got
 var _land := 1.0                   # recipe land_amount, the water cut with no mask
 var _has_map := false
 var _crust_color := Color(0.5, 0.5, 0.5)
+var _ocean_color := Color(0.5, 0.5, 0.5)
 
 
 func _init(recipe: Dictionary) -> void:
 	surface = SurfaceRecipe.resolve(recipe)
-	var hm := _load_gray(str(recipe.get("height", "")))
+	_h_stride = 2 if str(recipe.get("height_encoding", "r8")) == "rg16" else 1
+	var hm := _load_gray(str(recipe.get("height", "")), _h_stride)
 	_h_bytes = hm.bytes
 	_h_w = hm.w
 	_h_h = hm.h
+	_dem_datum = float(recipe.get("height_datum", DEM_SEA_LEVEL))
+	_dem_m_per_unit = float(recipe.get("height_m_per_unit", DEM_SCALE_M))
+	_dem_max = float(recipe.get("height_max", DEM_MAX_VALUE))
+	_dem_signed = bool(recipe.get("height_signed", DEM_HAS_BATHYMETRY))
 	var wm := _load_gray(str(recipe.get("specular", "")))
 	_s_bytes = wm.bytes
 	_s_w = wm.w
@@ -141,16 +191,25 @@ func _init(recipe: Dictionary) -> void:
 	_seed = float(recipe.get("seed", 0.0))
 	_land = float(recipe.get("land_amount", 1.0))
 	_crust_color = recipe.get("color_a", Color(0.5, 0.5, 0.5))
+	_ocean_color = recipe.get("color_ocean", PlanetGenerator.DEFAULT_COLOR_OCEAN)
 	_has_map = _h_w > 0
 
 
 # Metres above sea level at a point on the crust. `dir` is an outward unit vector
 # in MODEL space — the same vector the cook shader calls `n`.
-func height_m(dir: Vector3) -> float:
+func height_m(dir: Vector3, detail_km: float = 0.0) -> float:
 	var base := base_height_m(dir)
-	if _has_map and base <= 0.0 and not DEM_HAS_BATHYMETRY:
+	if _has_map and base <= 0.0 and not _dem_signed:
 		return 0.0                 # ocean floor is not modelled; sea level is the floor
-	var ground := base + _detail_m(dir, base) + geology_height_m(dir)
+	var ground := base + _detail_m(dir, base, detail_km) + geology_height_m(dir, detail_km)
+	if _has_map and _dem_signed and float(surface.liquid_amount) > 0.0 and is_water(dir):
+		# Bathymetry-carrying map (Earth): the real seafloor depth is decoded
+		# (base_height_m/slope01/etc. all see it), but the water plate sits at
+		# the liquid datum (0 m) - clamp ONLY where the mask says ocean, so
+		# masked land below sea level (Dead Sea) keeps its real negative depth.
+		# Recipe-driven via liquid_amount + the existing water mask, never an
+		# `if body_name == "Earth"` branch.
+		ground = maxf(ground, 0.0)
 	if not _has_map and float(surface.liquid_amount) > 0.0:
 		# Procedural seas need a level datum too, not water painted up hillsides.
 		var dry := 1.0 - water01(dir)
@@ -158,8 +217,10 @@ func height_m(dir: Vector3) -> float:
 	return ground
 
 
-func geology_height_m(dir: Vector3) -> float:
-	return SurfaceRecipe.height_offset_m(dir, surface)
+# `detail_km` is the LOCAL sample spacing at this point (0.0 = full detail,
+# every caller except SurfacePatch's mesh builder). See SurfaceRecipe._band_weight.
+func geology_height_m(dir: Vector3, detail_km: float = 0.0) -> float:
+	return SurfaceRecipe.height_offset_m(dir, surface, detail_km)
 
 
 func lava01(dir: Vector3) -> float:
@@ -170,11 +231,22 @@ func lava01(dir: Vector3) -> float:
 # is separately testable: without this seam an assertion about "detail varies the
 # ground" passes on bilinear interpolation of the DEM alone, which is what it did
 # on the first draft of tools/test_earth_terrain.gd.
+# TEST HOOK. The bilinear-decoded 0..1 sample with no elevation scale applied
+# yet - exactly what planet_cook.gdshader's sample_height()/decode_height()
+# compute on the GPU. tools/test_dem_calibration.gd's mirror check calls this
+# to prove the CPU and GPU decodes agree; no other caller needs it (every real
+# consumer wants metres, i.e. base_height_m()).
+func raw_sample01(dir: Vector3) -> float:
+	if not _has_map:
+		return 0.0
+	return _bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir), _h_stride)
+
+
 func base_height_m(dir: Vector3) -> float:
 	if _has_map:
-		var mapped := (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir)) - DEM_SEA_LEVEL) \
-			* DEM_SCALE_M
-		return maxf(mapped, 0.0) if not DEM_HAS_BATHYMETRY else mapped
+		var mapped := (_bilinear_bytes(_h_bytes, _h_w, _h_h, _dir_uv(dir), _h_stride) - _dem_datum) \
+			* _dem_m_per_unit
+		return maxf(mapped, 0.0) if not _dem_signed else mapped
 	# CENTRED on the datum, and deliberately NOT clamped: negative is a basin, not
 	# an ocean. An airless world has no sea level, and clamping here would flatten
 	# half the Moon into a plate sitting exactly on the sphere.
@@ -182,7 +254,7 @@ func base_height_m(dir: Vector3) -> float:
 
 
 # Ruggedness between DEM samples, scaled by how steep the DEM already is here.
-func _detail_m(dir: Vector3, base_m: float) -> float:
+func _detail_m(dir: Vector3, base_m: float, detail_km: float = 0.0) -> float:
 	# Water flatness has THREE independent guards, and mutation testing showed the
 	# load-bearing one is not either of the explicit checks: over open ocean the DEM
 	# is flat, so slope01() is exactly 0 and the amplitude below vanishes on its own.
@@ -198,11 +270,33 @@ func _detail_m(dir: Vector3, base_m: float) -> float:
 	# ridgeline instead of a dune, and it gets that structure without paying for
 	# more octaves.
 	var slope := lerpf(DETAIL_SLOPE_FLOOR, DETAIL_SLOPE_CEIL, slope01(dir))
-	var n: float = PlanetGenerator.ridged3(
-		dir * DETAIL_FREQ + Vector3(_seed, _seed, _seed), DETAIL_OCTAVES)
+	# Reimplements PlanetGenerator.ridged3's own loop (q *= 2.07, a *= 0.5 per
+	# octave) rather than calling it, so each octave can be band-limited against
+	# `detail_km` individually - ridged3() itself is shared with no other caller
+	# that would need this. An octave whose wavelength (cell_km) cannot span the
+	# local mesh sample spacing is dropped from BOTH the sum and its normalizer,
+	# so the remaining octaves keep their existing relative weight instead of the
+	# whole result dimming as octaves cut out (mirrors SurfaceRecipe's crater
+	# octaves, which are additive and need no such renormalization).
+	var q := dir * DETAIL_FREQ + Vector3(_seed, _seed, _seed)
+	var a := 0.5
+	var s := 0.0
+	var norm := 0.0
+	var cell_km := DETAIL_BASE_KM
+	for _i in DETAIL_OCTAVES:
+		var w := SurfaceRecipe._band_weight(cell_km, detail_km)
+		if w > 0.0:
+			var oct_n: float = PlanetGenerator._noise3(q)
+			s += a * (1.0 - absf(2.0 * oct_n - 1.0)) * w
+			norm += a * w
+		q *= 2.07
+		a *= 0.5
+		cell_km /= 2.07
+	var n := s / maxf(norm, 0.0001)
 	# Ridged noise is 0..1 with its mass toward 1, so centre it before scaling or
 	# it becomes a uniform lift rather than relief.
-	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope
+	var dampen: float = DETAIL_GEOLOGY_DAMPEN if float(surface.crater_density) > 0.0 else 1.0
+	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope * dampen
 
 
 # 0..1 steepness from the DEM's own neighbourhood. Public because surface_color()
@@ -212,16 +306,16 @@ func slope01(dir: Vector3) -> float:
 		return NOISE_WORLD_SLOPE
 	var uv := _dir_uv(dir)
 	var e := 1.0 / float(_h_w)
-	var dx := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(e, 0.0)) \
-		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(e, 0.0))
-	var dy := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(0.0, e)) \
-		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(0.0, e))
+	var dx := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(e, 0.0), _h_stride) \
+		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(e, 0.0), _h_stride)
+	var dy := _bilinear_bytes(_h_bytes, _h_w, _h_h, uv + Vector2(0.0, e), _h_stride) \
+		- _bilinear_bytes(_h_bytes, _h_w, _h_h, uv - Vector2(0.0, e), _h_stride)
 	return clampf(sqrt(dx * dx + dy * dy) * 22.0, 0.0, 1.0)
 
 
 # Distance from the body's centre to the ground at `dir`, in km.
-func ground_radius_km(dir: Vector3, body_radius_km: float) -> float:
-	return body_radius_km + height_m(dir) / 1000.0
+func ground_radius_km(dir: Vector3, body_radius_km: float, detail_km: float = 0.0) -> float:
+	return body_radius_km + height_m(dir, detail_km) / 1000.0
 
 
 # Height of `pos` above the ground DIRECTLY BELOW IT, in km. Measuring from the
@@ -256,12 +350,36 @@ func water01(dir: Vector3) -> float:
 		# interpolation reaches over mountains.
 		var fade: float = 1.0 - smoothstep(SEA_LEVEL_TOL_M, SEA_LEVEL_TOL_M * 8.0,
 			base_height_m(dir))
-		return clampf(smoothstep(0.35, 0.65, mask) * fade, 0.0, 1.0)
+		var wet := clampf(smoothstep(0.35, 0.65, mask) * fade, 0.0, 1.0)
+		return wet * (1.0 - ice01(dir))
 	if _has_map:
 		return 1.0 - smoothstep(0.0, SEA_LEVEL_TOL_M, height_m(dir))
 	var edge := 1.0 - _land
 	var h: float = PlanetGenerator.fbm3(dir * 2.1 + Vector3(_seed, _seed, _seed))
 	return clampf(1.0 - smoothstep(edge - 0.05, edge + 0.05, h), 0.0, 1.0)
+
+
+# NASA's water mask marks permanent/sea ice as water (spec=255) even though it
+# reflects like snow, not ocean — measured on earth_spec_2k.png / earth_2k.jpg:
+# open ocean albedo is (30,59,117), luma 0.223; Ross Ice Shelf and Arctic sea ice
+# sample mask=water at luma 0.56-0.85. 0.45 sits with margin above the former and
+# below the latter (tools/probe run against the real PNGs, not guessed). Mirrored
+# in terrain_tile.gdshader as ICE_ALBEDO_LUM_MIN, converted for its linear-space
+# texture sample.
+const ICE_ALBEDO_LUM_MIN := 0.45
+
+
+# 0..1: does the mask say water here while the albedo reads bright like ice? Only
+# meaningful where a mask AND an albedo map both exist (noise/no-map worlds have no
+# per-texel ice case, they classify water from geometry alone).
+func ice01(dir: Vector3) -> float:
+	if _s_w <= 0 or _a_w <= 0:
+		return 0.0
+	if _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) <= 0.5:
+		return 0.0
+	var c := albedo_color(dir)
+	var lum := c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+	return smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.15, lum)
 
 
 func is_water(dir: Vector3) -> bool:
@@ -271,6 +389,8 @@ func is_water(dir: Vector3) -> bool:
 		return false
 	if _s_w > 0:
 		if _bilinear_bytes(_s_bytes, _s_w, _s_h, _dir_uv(dir)) <= 0.5:
+			return false
+		if ice01(dir) > 0.5:
 			return false
 		# The mask says water; the ELEVATION has to agree. Ocean cannot be 7 km up.
 		return base_height_m(dir) <= SEA_LEVEL_TOL_M
@@ -288,7 +408,8 @@ func is_water(dir: Vector3) -> bool:
 func max_height_km() -> float:
 	var geology_bound := SurfaceRecipe.max_offset_m(surface) / 1000.0
 	if _has_map:
-		return (DEM_MAX_VALUE * DEM_SCALE_M + DETAIL_MAX_M) / 1000.0 + geology_bound
+		var top_m := (_dem_max - _dem_datum) * _dem_m_per_unit
+		return (top_m + DETAIL_MAX_M) / 1000.0 + geology_bound
 	# Centred, so the peak ABOVE the datum is only the half-range.
 	return (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0 + geology_bound
 
@@ -344,7 +465,6 @@ const PALETTE_GRASS := Color(0.16, 0.30, 0.09)
 const PALETTE_ROCK := Color(0.40, 0.36, 0.32)
 const PALETTE_DIRT := Color(0.38, 0.28, 0.16)
 const PALETTE_ICE := Color(0.86, 0.89, 0.93)
-const PALETTE_OCEAN := Color(0.06, 0.22, 0.32)
 
 
 # Kilometres of ground per albedo texel on a body this size.
@@ -383,14 +503,21 @@ func land_color(dir: Vector3, _body_radius_km: float) -> Color:
 	return proc.lerp(PALETTE_ROCK, slope * 0.65)
 
 
+# UNREACHABLE as of 2026-09-09 (grepped: no caller anywhere in scripts/ or
+# tools/) — surface_patch._color_at() bakes vertex COLOR from land_color()
+# ALONE and leaves the ocean blend entirely to terrain_tile.gdshader's own
+# fragment-side `wet` mix (see that function's comment: baking ocean in here
+# would quantise the shoreline to the vertex spacing). This function's
+# ocean-ward lerp is still routed through the recipe's real _ocean_color
+# rather than a hardcoded palette colour, for whichever future caller re-wires
+# it — it does not affect the globe/ring colour parity bug, which is fixed in
+# terrain_tile.gdshader's fragment() (ocean_base_color()) instead.
 func surface_color(dir: Vector3, plate_km: float, body_radius_km: float) -> Color:
 	var proc := land_color(dir, body_radius_km)
 	var w := map_weight(plate_km, body_radius_km)
 	if w > 0.0:
 		proc = proc.lerp(albedo_color(dir), w)
-	# Blend toward the ocean by CONTINUOUS wetness, so a shoreline is a gradient
-	# across vertices rather than a hard polygon edge between two meshes.
-	return proc.lerp(PALETTE_OCEAN, water01(dir))
+	return proc.lerp(_ocean_color, water01(dir))
 
 
 func report() -> Dictionary:
@@ -398,17 +525,33 @@ func report() -> Dictionary:
 		"height_source": "map" if _has_map else "noise",
 		"water_source": "mask" if _s_w > 0 else ("height" if _has_map else "noise"),
 		"max_height_km": max_height_km(),
-		"scale_m": DEM_SCALE_M,
+		"scale_m": _dem_m_per_unit,
 		"seed": _seed,
 	}
 
 
-# Load a map as one byte per texel. FORMAT_R8 so the red channel - the only one
-# height and water masks use - is contiguous and indexable without a stride.
-func _load_gray(path: String) -> Dictionary:
+# Load a map as `stride` bytes per texel. stride=1: FORMAT_R8, the red channel
+# - the only one water masks and Earth's height map use - contiguous and
+# indexable without a stride. stride=2: an RG16 byte-pack (value = R*256+G,
+# measured in tools/probe_dem16.gd - Godot flattens a real 16-bit grayscale PNG
+# to 8-bit on load, so Mars/Moon's height maps are stored as ordinary RGB8 with
+# R=high byte, G=low byte, B unused instead). Interleaved R,G per texel so
+# _texel() can decode without a second array lookup.
+func _load_gray(path: String, stride: int = 1) -> Dictionary:
 	var img := _img_of(path)
 	if img == null:
 		return { "bytes": PackedByteArray(), "w": 0, "h": 0 }
+	if stride == 2:
+		img.convert(Image.FORMAT_RGB8)
+		var src := img.get_data()
+		var w := img.get_width()
+		var h := img.get_height()
+		var out := PackedByteArray()
+		out.resize(w * h * 2)
+		for i in w * h:
+			out[i * 2] = src[i * 3]
+			out[i * 2 + 1] = src[i * 3 + 1]
+		return { "bytes": out, "w": w, "h": h }
 	img.convert(Image.FORMAT_R8)
 	return { "bytes": img.get_data(), "w": img.get_width(), "h": img.get_height() }
 
@@ -437,7 +580,7 @@ func _dir_uv(dir: Vector3) -> Vector2:
 # Indexes raw bytes rather than calling Image.get_pixel - identical arithmetic,
 # without ~20 Object calls per height_m(). tools/test_earth_terrain.gd's
 # mesh_matches_the_height_function is what proves the results did not move.
-func _bilinear_bytes(bytes: PackedByteArray, w: int, h: int, uv: Vector2) -> float:
+func _bilinear_bytes(bytes: PackedByteArray, w: int, h: int, uv: Vector2, stride: int = 1) -> float:
 	if w <= 0 or h <= 0:
 		return 0.0
 	var fx := fposmod(uv.x, 1.0) * float(w) - 0.5
@@ -450,8 +593,20 @@ func _bilinear_bytes(bytes: PackedByteArray, w: int, h: int, uv: Vector2) -> flo
 	var xb := posmod(x0 + 1, w)
 	var ra := clampi(y0, 0, h - 1) * w
 	var rb := clampi(y0 + 1, 0, h - 1) * w
-	var s00 := float(bytes[ra + xa])
-	var s10 := float(bytes[ra + xb])
-	var s01 := float(bytes[rb + xa])
-	var s11 := float(bytes[rb + xb])
-	return lerpf(lerpf(s00, s10, tx), lerpf(s01, s11, tx), ty) / 255.0
+	var s00 := _texel(bytes, (ra + xa) * stride, stride)
+	var s10 := _texel(bytes, (ra + xb) * stride, stride)
+	var s01 := _texel(bytes, (rb + xa) * stride, stride)
+	var s11 := _texel(bytes, (rb + xb) * stride, stride)
+	return lerpf(lerpf(s00, s10, tx), lerpf(s01, s11, tx), ty)
+
+
+# Decode one texel to 0..1, DECODED before the bilinear lerp above runs (linear
+# interpolation of the decoded value is identical to interpolating raw bytes
+# then decoding, since both are affine - but decoding first is what stride=2's
+# two-byte value needs, since a byte-wise lerp of R and G separately would not
+# reconstruct R*256+G at all). Mirrors planet_cook.gdshader's height_rg16
+# uniform branch in sample_height() - touch one, touch both.
+func _texel(bytes: PackedByteArray, i: int, stride: int) -> float:
+	if stride == 2:
+		return float(int(bytes[i]) * 256 + int(bytes[i + 1])) / 65535.0
+	return float(bytes[i]) / 255.0

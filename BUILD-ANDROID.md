@@ -11,7 +11,12 @@ SDK + a JDK + the export templates. This walks you through it end to end.
 
 ## What's already done (no action needed)
 - `rendering/renderer/rendering_method.mobile = "mobile"` (Vulkan) + `scaling_3d/scale.mobile = 0.75` (phone perf). Desktop is unchanged.
-- Landscape orientation (`window/handheld/orientation = 4`, sensor-landscape).
+- `window/handheld/orientation = 5` (Sensor Landscape) in `project.godot`, set 2026-09-09.
+  It was `4` (Sensor, all four rotations): in portrait the whole HUD, authored in a fixed
+  1280×720 top-left space, squeezed into the top quarter of the tall canvas because
+  `canvas_items`+`expand` only adds canvas height. The touch overlay itself is now
+  viewport-relative and does not overlap in any orientation (verified by capture); the rest
+  of the HUD is landscape-only by design.
 - Touch controls (`scripts/flight/touch_controls.gd`), auto-enabled on mobile. Drag empty space to steer; buttons: **THRUST** (toggle auto-fly), **BOOST**, **FIRE**, **CAP** (capture/survey, hold), **INTERACT** (F — wormholes/dock), **MAP** (M), **HOME** (H emergency return).
 - `Android` export preset (arm64-v8a, package `com.fiazul.astryx`, `builds/android/Astryx.apk`).
 
@@ -60,5 +65,16 @@ godot --headless --export-debug "Android" builds/android/Astryx.apk
 ## Tuning notes (on-device)
 - **Look sensitivity**: `LOOK_SENS` in `scripts/flight/touch_controls.gd`.
 - **Performance**: lower `scaling_3d/scale.mobile` (e.g. 0.6) if the frame rate drags; raise toward 1.0 if it's smooth.
-- **Button layout/size**: the `Rect2(...)` values in `touch.gd::_build()` (1280×720 reference space, auto-scaled).
+- **Button layout/size**: `touch_controls.gd::_add()` calls in `_build()` — each button is
+  described as a margin from the left or right true screen edge plus a distance up from
+  the true bottom edge (`_layout()` turns these into an actual `Rect2` from the current
+  viewport size, and re-runs on `get_viewport().size_changed`, e.g. a device rotation).
+  2026-09-09: this replaced fixed `Rect2(...)` values authored for a 1280×720 canvas,
+  which overlapped hud.gd's own bottom-left (KILLS/NAV/MAP/CODEX) and bottom-right
+  (TELEPORT EARTH) widgets and drifted off the true screen edges under the project's
+  `canvas_items`+`expand` stretch at non-16:9 aspect ratios (reported as "hud buttons
+  controller/joystick circle missing, everything missing or messed up").
+- A translucent joystick ring now draws at the finger's touch-down point while
+  steer-dragging (`TouchControls._draw_steer_ring`) — there was previously no visual at
+  all for the steer zone, only the invisible drag-to-look behavior.
 - None of the touch feel could be tested off-device — expect to adjust `LOOK_SENS` and button sizes after the first run.

@@ -23,6 +23,11 @@ var onboarding_done := {}      # set of completed beginner-quest step ids (event
 # Saved per-ship body colour and finish. Booster appearance is intentionally absent.
 var customization := {}
 
+# Cloud coverage the player wants to fly through: 0 Off, 1 Light (default), 2 Full.
+# Read by PlanetSystem._cloud_recipe() to scale a COPY of the body recipe's
+# cloud_amount before it reaches the deck (CloudLayer) or the fly-through fog.
+var cloud_quality := 1
+
 const CAPTURE_REWARD := 100
 const ARRIVAL_REWARD := 150    # coins granted the FIRST time you reach a new system
 const NAV_COST := 40           # coins to buy a navigator (map Navigate / Auto-pilot)
@@ -60,6 +65,7 @@ func load_from(cfg: ConfigFile) -> void:
 	onboarding_step = int(cfg.get_value("player", "onboarding_step", 0))
 	onboarding_done = _key_set(cfg.get_value("player", "onboarding_done", []))
 	customization = cfg.get_value("player", "customization", {})
+	cloud_quality = int(cfg.get_value("player", "cloud_quality", 1))
 
 func save_into(cfg: ConfigFile) -> void:
 	cfg.set_value("player", "coins", coins)
@@ -70,6 +76,7 @@ func save_into(cfg: ConfigFile) -> void:
 	cfg.set_value("player", "onboarding_step", onboarding_step)
 	cfg.set_value("player", "onboarding_done", onboarding_done.keys())
 	cfg.set_value("player", "customization", customization)
+	cfg.set_value("player", "cloud_quality", cloud_quality)
 
 # Clear to a brand-new-game state. REQUIRED on the no-save / Reset Progress path because this
 # autoload SURVIVES reload_current_scene() — its memory would otherwise keep stale values.
@@ -82,6 +89,7 @@ func reset() -> void:
 	onboarding_step = 0
 	onboarding_done = {}
 	customization = {}
+	cloud_quality = 1
 
 static func _key_set(keys) -> Dictionary:
 	var d := {}

@@ -12,6 +12,8 @@ extends Node3D
 # Deliberately holds no reference to any autoload (the kill line arrives as an
 # argument), so tools/test_surface_band.gd can run it under plain `--script`.
 
+const SurfaceRecipe := preload("res://scripts/world/surface_recipe.gd")
+
 # --- Nested rings ---
 # One plate cannot be both fine and far. 50 m triangles out to the horizon you see
 # from 10 km up (~350 km) is 49 million quads; a 36 km plate fine enough to fly
@@ -52,6 +54,11 @@ const SKIRT_QUADS := 1.0
 # ring grew a KILOMETRES-TALL VERTICAL WALL around itself. Four concentric
 # cliffs, which is what was reported three times as "cubes and boxes".
 const SKIRT_DROP_MAX_KM := 0.25
+# Fixed world step for the analytic per-vertex normal (see _analytic_normal),
+# as a fraction of ring 0's OWN quad size - not the calling ring's. Same value
+# for every ring in a batch, which is what makes ring i and ring i+1 agree on
+# normal wherever they evaluate the same world position.
+const NORMAL_STEP_FRAC := 0.5
 # Rebuild a ring after the hull has crossed this fraction of the ring's REACH,
 # not one of its quads. One quad meant ring 0 - which is 3.2 km wide - rebuilt
 # every 50 m: at 230 m/s that is 4.6 full rebuilds a second, and a rebuild
@@ -71,6 +78,39 @@ const PREBUILD_CEILINGS := 2.5
 # so vertex_error_km() is untouched.
 const WATER_LIFT_KM := 0.001
 const PROP_MAX := 220
+# Design bound, not a flight speed limiter - the hard air-speed cap was
+# removed 2026-09-08 (player decision, see NEEDS-YOUR-EYES.md); ship speed is
+# Newton + drag only now. Moved here the same day from
+# FlightMode.band_speed_cap_ms/BAND_CAP_ANCHORS, which this ring-quad-sizing
+# check (tools/test_earth_terrain.gd) was the only remaining caller of once
+# the flight-side cap itself was deleted. What this curve is FOR: one frame
+# of travel at this design speed, at a dipped frame rate (WORST_FRAME_S),
+# must be shorter than ring 0's quad at that altitude, or a swept contact
+# test can step over a mountain between samples.
+const DESIGN_SPEED_ANCHORS := [
+	[100.0, 2000.0],
+	[15.0, 600.0],
+	[5.0, 300.0],
+	[1.0, 150.0],
+	[0.2, 60.0],
+]
+# 20 fps, not 60: the bound has to hold when the frame rate dips, which is
+# exactly the moment a point-sampled contact test would miss a mountain.
+const WORST_FRAME_S := 0.05
+
+# --- Horizon shadow ---
+# Per-vertex cast shadow, not a Godot shadow map (the ground pipeline is
+# `unshaded` by design - see terrain_tile.gdshader's own header comment). For
+# each grid vertex, march toward the sun along the surface with the SAME
+# TerrainSampler height function every other vertex/contact-kill call uses,
+# and compare the tallest angle any sampled point subtends against the sun's
+# own elevation: taller means it blocks the sun from this vertex.
+const HORIZON_STEPS := 8
+const HORIZON_STEP_GROWTH := 1.7
+const HORIZON_MARGIN_DEG := 1.5
+# Ring 3 is far (its own quad is already kilometres); marching it too pays for
+# shadow precision nobody is close enough to see. Only rings 0-2 get it.
+const HORIZON_SHADOW_MAX_RING := 2
 
 var _ring_land: Array[MeshInstance3D] = []
 var _ring_water: Array[MeshInstance3D] = []
@@ -98,7 +138,26 @@ var _rim_stitched: Array[bool] = []  # per ring: was its rim snapped to the coar
 # The base quad each ring was last BUILT at. If two of these ever differ, the
 # rings are at mismatched scales and their boundaries are torn open.
 var _ring_base: Array[float] = []
+# Background rebuild: all four rings' geometry is computed off the main
+# thread (WorkerThreadPool), one ring per group-task element, and committed
+# atomically only once the whole set is ready - the old, still-seamless set
+# keeps showing for however many frames the compute takes. Cold arrival,
+# rescale and recenter all go through this same path now: a scale change
+# invalidates every ring's stitch assumptions at once, so there is never a
+# partial commit of some rings at the new scale/anchor and some at the old.
+var _thread_pending := false
+var _thread_group_id := -1
+var _thread_hit := Vector3.ZERO
+var _thread_base := 0.0
+var _thread_radius := 1.0
+var _thread_results: Array = []   # Dictionary per ring, from _compute_ring
 var _radius := 1.0             # the body's radius, for the colour palette's texel maths
+# The sun direction the ring last received via set_view(), reused by
+# _start_rebuild for the horizon-shadow march. Rebuild is dispatched
+# separately from set_view - both run once a frame from PlanetSystem - so a
+# batch can start a frame or two behind the sun's own update; the sun moves
+# too slowly for that lag to be visible (see _horizon_shadow).
+var _sun_dir := Vector3.ZERO
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -153,10 +212,22 @@ static func horizon_km(alt_km: float, radius_km: float) -> float:
 # happened EIGHT times, which in flight is continuous. Quantising means the scale
 # changes rarely and always by exactly 2x, and rescale_is_atomic below makes sure
 # the rings are never at two different scales at once.
-static func base_quad_km(alt_km: float, radius_km: float) -> float:
+# HYSTERESIS_UP/_DOWN keep a change of altitude that sits right on a doubling
+# boundary from flipping the bucket every frame. Altitude within a few percent
+# of a boundary is the common case near a plateau or a levelled-off climb, not
+# a rare edge - without a band, "want" landing a float epsilon either side of
+# an exact power of two rebuilds all four rings (a ~600 ms hitch measured on
+# this machine, tools/_probe_timing.gd) every single frame it stays there.
+const HYSTERESIS_UP := 1.06         # don't grow a bucket until want exceeds this * current
+const HYSTERESIS_DOWN := 0.47       # don't shrink a bucket until want falls below this * current
+
+
+static func base_quad_km(alt_km: float, radius_km: float, current: float = 0.0) -> float:
 	# Full width must cover BOTH sides of the horizon, with projection margin.
 	var want: float = clampf(2.4 * horizon_km(alt_km, radius_km) * (1.0 + maxf(alt_km, 0.0) / radius_km) / RING_SPAN,
 		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
+	if current > 0.0 and want <= current * HYSTERESIS_UP and want >= current * HYSTERESIS_DOWN:
+		return current
 	# CEIL, not round. Rounding to the nearest power of two can land 0.71x short
 	# of the horizon, which puts the body's bare 208 km-facet sphere back in the
 	# outer third of the view - the very fault the horizon-scaling fixed. Rounding
@@ -165,6 +236,29 @@ static func base_quad_km(alt_km: float, radius_km: float) -> float:
 	var steps: float = ceil(log(want / BASE_QUAD_MIN_KM) / log(2.0) - 0.0001)
 	return clampf(BASE_QUAD_MIN_KM * pow(2.0, steps),
 		BASE_QUAD_MIN_KM, BASE_QUAD_MAX_KM)
+
+
+# Design speed at this altitude above local ground, in m/s - see
+# DESIGN_SPEED_ANCHORS. Piecewise-linear between anchors, flat outside them.
+static func design_speed_ms(alt_above_ground_km: float) -> float:
+	var a: Array = DESIGN_SPEED_ANCHORS
+	var last: int = a.size() - 1
+	if alt_above_ground_km >= float(a[0][0]):
+		return float(a[0][1])
+	if alt_above_ground_km <= float(a[last][0]):
+		return float(a[last][1])
+	for i in range(last):
+		var hi: Array = a[i]
+		var lo: Array = a[i + 1]
+		if alt_above_ground_km <= float(hi[0]) and alt_above_ground_km >= float(lo[0]):
+			var t: float = (alt_above_ground_km - float(lo[0])) / (float(hi[0]) - float(lo[0]))
+			return lerpf(float(lo[1]), float(hi[1]), t)
+	return float(a[last][1])
+
+
+# The same design speed in UNITS PER SECOND (1 unit = 1 km in Sol).
+static func design_speed_units(alt_above_ground_km: float) -> float:
+	return design_speed_ms(alt_above_ground_km) / 1000.0
 
 
 # Quad size of a ring, km. Ring 0 is the fine one under the hull.
@@ -204,6 +298,9 @@ func bind_recipe(recipe: Dictionary) -> void:
 	_prop_mat.set_shader_parameter("air_amount", float(recipe.get("air_amount", 0.0)))
 	_prop_mat.set_shader_parameter("color_air", recipe.get("color_air", Color(0.3, 0.56, 1.0)))
 	_prop_mat.set_shader_parameter("ice_surface", _sampler.surface.ice_surface if _sampler != null else 0.0)
+	var exposure := _resolve_exposure(recipe)
+	for m in [_land_mat, _water_mat, _prop_mat]:
+		m.set_shader_parameter("exposure", exposure)
 	_props.material_override = _prop_mat
 	var kit: String = PlanetGenerator.surface_kit(recipe)
 	# Geometry colours are recipe-derived, so a Moon -> Mars switch must repaint
@@ -212,6 +309,38 @@ func bind_recipe(recipe: Dictionary) -> void:
 	_props.multimesh = _make_prop_multimesh(kit)
 	for i in RING_COUNT:
 		_ring_anchor[i] = Vector3.ZERO      # force every ring to rebuild
+
+
+# SurfaceRecipe.resolve()'s own `exposure` is colour-only (no sampler exists at
+# that call site for the globe's own material build - see PLANET_GENERATOR.md
+# "Exposure"). Here a real TerrainSampler is already bound, so measure the
+# ACTUAL mean of the same land_color() every ring vertex paints with (_vert)
+# instead of trusting the recipe's flat swatch, unless the recipe (or its
+# `surface` overrides) states an explicit figure of its own.
+const EXPOSURE_SAMPLE_GRID := 6
+
+func _resolve_exposure(recipe: Dictionary) -> float:
+	if recipe.has("exposure") or recipe.get("surface", {}).has("exposure"):
+		return float(_sampler.surface.get("exposure", 1.0)) if _sampler != null else 1.0
+	if _sampler == null or not bool(_sampler.surface.get("solid", true)):
+		return 1.0
+	var lum := _measured_mean_land_lum()
+	return clampf(SurfaceRecipe.EXPOSURE_TARGET_LUM / maxf(lum, 0.02),
+		1.0, SurfaceRecipe.EXPOSURE_GAIN_MAX)
+
+
+func _measured_mean_land_lum() -> float:
+	var sum := 0.0
+	var n := 0
+	for j in EXPOSURE_SAMPLE_GRID:
+		for i in EXPOSURE_SAMPLE_GRID:
+			var lon: float = (float(i) + 0.5) / float(EXPOSURE_SAMPLE_GRID) * TAU - PI
+			var lat: float = (float(j) + 0.5) / float(EXPOSURE_SAMPLE_GRID) * PI - PI * 0.5
+			var dir := Vector3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon))
+			var c: Color = _sampler.land_color(dir, _radius).srgb_to_linear()
+			sum += c.r * 0.299 + c.g * 0.587 + c.b * 0.114
+			n += 1
+	return sum / float(n) if n > 0 else SurfaceRecipe.EXPOSURE_TARGET_LUM
 
 
 func _img_of(path: String) -> Image:
@@ -230,6 +359,19 @@ func hush() -> void:
 	visible = false
 
 
+# True once ring 0 has committed real ground for the CURRENT body. `bind_recipe`
+# zeroes every `_ring_anchor` entry on every body switch (and only on a body
+# switch), so a non-zero anchor here can only be leftover ground from the body
+# this tile is bound to right now - never a stale render of whatever body it
+# showed before. planet_system keys the globe's hide on this, not on band
+# membership: a tile that has entered the band but not yet finished its first
+# background rebuild must show the globe underneath, or the body vanishes for
+# however many frames the compute takes (reported: Moon disappearing on
+# approach).
+func has_ground() -> bool:
+	return _ring_anchor[0] != Vector3.ZERO
+
+
 # `physical` is the 1u = 1 km truth flag. Without it an arcade system (1u = 0.01 AU,
 # radii boosted by VISUAL_SCALE) hands us an "altitude" of 0.1 that is really a
 # million kilometres, and a ground tile pops in deep space. main._update_skin_kill
@@ -241,6 +383,41 @@ static func should_show(body: String, physical: bool, alt: float, kill: float,
 	if not PlanetGenerator.has_surface(recipe):
 		return false
 	return PlanetGenerator.ground_stamp_ok(alt, kill, ceiling)
+
+
+# should_show() stays a pure boundary test - CloudLayer.should_show and
+# tools/test_cloud_layer.gd both assert it against exact edge values, so it
+# cannot grow state. A ship holding level flight exactly at the ceiling (both
+# Earth and Moon saturate to the same 35 km floor) or at the kill line can
+# still see `alt` cross that single line every frame from terrain noise alone,
+# which flips this tile AND the body's own globe (planet_system.gd hides the
+# globe whenever this is visible) on and off every frame - a strobe, not a
+# crossfade. This widens the OFF edges by BAND_HYSTERESIS once already
+# showing, so leaving the band takes a real margin, not a coin flip.
+const BAND_HYSTERESIS := 0.02
+var _was_in_band := false
+# The `in_band` value the last `update_for` call computed. `_finish_rebuild`
+# runs both from `_poll_rebuild` (mid-`update_for`, where `in_band` is a local)
+# and from `force_ready` (a test/tool-only entry outside `update_for` entirely),
+# so it needs this to recompute `visible` after a commit lands - otherwise a
+# caller that dispatches then force_ready()s without a second `update_for` sees
+# `visible` still false from the frame the tile was cold, even though
+# `has_ground()` just became true.
+var _last_in_band := false
+
+
+func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
+		ceiling: float, recipe: Dictionary) -> bool:
+	var nominal := should_show(body, physical, alt, kill, ceiling, recipe)
+	if nominal or not _was_in_band:
+		_was_in_band = nominal
+		return nominal
+	# Already showing and the nominal test just failed: stay shown unless alt
+	# has cleared either edge by the hysteresis margin too.
+	var held := should_show(body, physical, alt, kill * (1.0 - BAND_HYSTERESIS),
+		ceiling * (1.0 + BAND_HYSTERESIS), recipe)
+	_was_in_band = held
+	return held
 
 
 # `sampler` is the SHARED height function, passed in rather than constructed here.
@@ -256,37 +433,51 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		return
 	# PREBUILD: warm the rings while still approaching so they exist by the time
 	# the band opens, rather than hitching in on arrival.
-	var in_band := should_show(body, physical, alt, kill, ceiling, recipe)
+	var in_band := _in_band_hyst(body, physical, alt, kill, ceiling, recipe)
+	_last_in_band = in_band
 	var warming: bool = physical and not body.is_empty() \
 		and PlanetGenerator.has_surface(recipe) \
 		and alt > kill and alt < ceiling * PREBUILD_CEILINGS
 	if not in_band and not warming:
 		visible = false
+		# A brief blocking wait here (bounded by one ring-compute duration) is
+		# fine: this only runs on the rare frame the tile leaves the band or
+		# changes body, never in the steady-flight hot path.
+		_abandon_rebuild()
 		return
 	if _body != body or _sampler != sampler:
+		# Wait out any in-flight batch BEFORE rebinding - it still reads the
+		# OLD _sampler/_kit/_crust colours, and committing it after a rebind
+		# would paint one body's ground with another's palette for a frame.
+		_abandon_rebuild()
 		bind_body(recipe, sampler)
 		_body = body
 	_radius = radius
 	_land_mat.set_shader_parameter("body_radius_km", radius)
 	_water_mat.set_shader_parameter("body_radius_km", radius)
 	var hit: Vector3 = ship_pos.normalized() * radius
+	# Pick up a finished batch (if any) before deciding whether a new one is
+	# needed, so a rebuild that completed between frames is never held an
+	# extra frame past when it could have shown.
+	_poll_rebuild(hit)
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
-	# RESCALE IS ATOMIC. A scale change invalidates every ring, and rebuilding them
-	# one per frame left ring 0 at the new scale beside rings still at the old one -
-	# mismatched boundaries, so the mesh tore open for three frames every time.
-	# Rebuild them all in this one update instead: one bounded hitch, and the rings
-	# are never at two scales at once.
 	# AGL can be tiny above a mountain while the sea-level horizon is far away.
-	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius)
+	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius, _base_quad)
+	var cold: bool = _ring_anchor[0] == Vector3.ZERO
 	var rescaled: bool = not is_equal_approx(want_base, _base_quad)
-	var recentered := _ring_anchor[0] == Vector3.ZERO or hit.distance_to(_ring_anchor[0]) > ring_reach_km(0, want_base) * REBUILD_FRAC
-	if rescaled or recentered:
-		_base_quad = want_base
-		for i in RING_COUNT:
-			_build_ring(i, hit, radius)
-			_ring_anchor[i] = hit
-	# All rings share a tangent frame; independent recentering tears their seams.
-	visible = in_band
+	var recentered := cold or hit.distance_to(_ring_anchor[0]) > ring_reach_km(0, want_base) * REBUILD_FRAC
+	# Cold arrival, rescale and recenter all dispatch the SAME way: compute
+	# every ring off-thread, keep whatever is already showing (nothing, for a
+	# cold tile) until the whole set lands, THEN swap atomically. A scale
+	# change invalidates every ring's stitch at once, so partial commits are
+	# never safe regardless of which of the three triggered this.
+	if (cold or rescaled or recentered) and not _thread_pending:
+		_start_rebuild(hit, radius, want_base)
+	visible = in_band and has_ground()
+	_recount_tris()
+
+
+func _recount_tris() -> void:
 	_tris = 0
 	for m in _ring_land:
 		_tris += _tri_count(m)
@@ -302,25 +493,177 @@ func _tri_count(mi: MeshInstance3D) -> int:
 	return mi.mesh.surface_get_array_len(0) / 3
 
 
-func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
+# Dispatch every ring's geometry to WorkerThreadPool as one group task (one
+# element per ring). `hit`/`radius`/`base` are captured by the lambda, not
+# read from `self` at run time, so a later frame changing `_base_quad` etc.
+# cannot leak into a batch already in flight. `results` is likewise a local
+# alias to a FRESH array, so a stale batch that finishes after being
+# abandoned writes into an array nobody reads any more, not into whatever
+# `_thread_results` points at by then.
+func _start_rebuild(hit: Vector3, radius: float, base: float) -> void:
+	_thread_pending = true
+	_thread_hit = hit
+	_thread_radius = radius
+	_thread_base = base
+	_thread_results = []
+	_thread_results.resize(RING_COUNT)
+	var results := _thread_results
+	var sun_dir := _sun_dir
+	_thread_group_id = WorkerThreadPool.add_group_task(
+		func(ring: int) -> void: results[ring] = _compute_ring(ring, hit, radius, base, sun_dir),
+		RING_COUNT, -1, false, "surface_patch_ring_rebuild")
+
+
+# Non-blocking: only collects and commits a batch that has already finished.
+# `update_for` calls this every frame, so the frame that happens to be the one
+# where the last ring lands pays for the (cheap) mesh commit; every other
+# frame pays only for the `is_group_task_completed` check.
+func _poll_rebuild(hit: Vector3) -> void:
+	if not _thread_pending:
+		return
+	if not WorkerThreadPool.is_group_task_completed(_thread_group_id):
+		return
+	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+	# The ship may have moved far enough while this batch was computing that
+	# its anchor is no longer good enough to show - drop it rather than
+	# commit stale ground, and let the next update_for call see `recentered`
+	# (or `rescaled`) still true and dispatch a fresh batch from where the
+	# ship actually is now.
+	#
+	# EXCEPT when nothing is committed yet (cold tile): dropping every batch
+	# forever is exactly the starvation that hid the Moon at speed - a fast
+	# enough approach re-triggers `recentered` before each fresh dispatch
+	# ever lands, so the body stayed invisible until the ship left the band.
+	# Some ground at a slightly stale anchor beats none; commit it, and the
+	# very next `update_for` frame still sees `recentered` true (the anchor
+	# lags the ship) and dispatches the next batch from the ship's new spot.
+	if hit.distance_to(_thread_hit) > ring_reach_km(0, _thread_base) * REBUILD_FRAC \
+			and _ring_anchor[0] != Vector3.ZERO:
+		_thread_pending = false
+		return
+	_finish_rebuild()
+
+
+# Test/tool hook: block until any in-flight batch completes and commit it,
+# so a deterministic test gets a fully-built tile without guessing how many
+# frames a real background job needs. Production code never calls this -
+# `update_for` only polls, so a live frame never waits on the compute.
+func force_ready() -> void:
+	if not _thread_pending:
+		return
+	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+	_finish_rebuild()
+
+
+func _finish_rebuild() -> void:
+	_thread_pending = false
+	_base_quad = _thread_base
+	for i in RING_COUNT:
+		_commit_ring(i, _thread_results[i], _thread_hit)
+		_ring_anchor[i] = _thread_hit
+	visible = _last_in_band and has_ground()
+	_recount_tris()
+
+
+# The rare frame this tile leaves the band, or changes body: wait out
+# whatever batch is in flight (bounded by one ring-compute duration - this
+# is not the per-frame hot path) and drop it without committing, since it
+# was computed against a sampler/recipe we are about to stop using.
+func _abandon_rebuild() -> void:
+	if not _thread_pending:
+		return
+	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+	_thread_pending = false
+
+
+# Freeing the node while a batch is in flight must not leave an uncollected
+# WorkerThreadPool group task behind - Godot's shutdown/cleanup can hang or
+# error waiting on a task nobody ever called wait_for_group_task_completion
+# on. Observed directly: an ad-hoc script that created a patch, dispatched a
+# rebuild and exited without collecting it hung past its timeout.
+func _exit_tree() -> void:
+	_abandon_rebuild()
+
+
+# Write one already-computed ring into its live mesh nodes. The ONLY place
+# that touches RenderingServer resources (ArrayMesh, MultiMesh) for a ring -
+# `_compute_ring` produces plain arrays instead, precisely so it can run on a
+# background thread. Always called from the main thread (`_finish_rebuild`/
+# `force_ready`, both driven by `update_for` or a test).
+func _commit_ring(ring: int, r: Dictionary, hit: Vector3) -> void:
+	_rim_stitched[ring] = r.stitch
+	_ring_base[ring] = _base_quad
+	_ring_land[ring].mesh = _mesh_from_buffer(r.land_buf)
+	_ring_land[ring].material_override = _land_mat
+	# The water mesh is retired - one surface now - but the node stays so the
+	# report and the error walk keep a stable shape.
+	_ring_water[ring].mesh = null
+	_ring_skirt[ring].mesh = _mesh_from_buffer(r.skirt_buf) if r.skirt_buf != null else null
+	_ring_skirt[ring].material_override = _land_mat
+	if ring == 0:
+		_place_props(r.prop_xforms, hit, r.east, r.north)
+
+
+func _mesh_from_buffer(buf: Dictionary) -> ArrayMesh:
+	if buf == null or (buf.v as PackedVector3Array).is_empty():
+		return null
+	var arrays: Array = []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = buf.v
+	arrays[Mesh.ARRAY_NORMAL] = buf.n
+	arrays[Mesh.ARRAY_COLOR] = buf.c
+	arrays[Mesh.ARRAY_TEX_UV] = buf.uv
+	arrays[Mesh.ARRAY_TEX_UV2] = buf.uv2
+	var m := ArrayMesh.new()
+	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return m
+
+
+func _tri_buffer() -> Dictionary:
+	return {
+		"v": PackedVector3Array(), "n": PackedVector3Array(),
+		"c": PackedColorArray(), "uv": PackedVector2Array(), "uv2": PackedVector2Array(),
+	}
+
+
+# Pure geometry pass for one ring at one anchor/scale - no scene-tree or
+# RenderingServer writes (no SurfaceTool.commit(), no ArrayMesh), so it is
+# safe to run on a WorkerThreadPool thread. Reads only `_sampler` (immutable
+# byte arrays, loaded once in TerrainSampler._init) and recipe-bound fields
+# that `update_for` guarantees are frozen for the whole time a batch is in
+# flight (see `_abandon_rebuild`).
+func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
+		sun_dir: Vector3) -> Dictionary:
 	var up := hit.normalized()
 	var east := up.cross(Vector3.UP)
 	if east.length_squared() < 0.0001:
 		east = up.cross(Vector3.RIGHT)
 	east = east.normalized()
 	var north := east.cross(up).normalized()
-	var quad := ring_quad_km(ring, _base_quad)
-	var half := ring_reach_km(ring, _base_quad) * 0.5
+	var quad := ring_quad_km(ring, base_quad)
+	var half := ring_reach_km(ring, base_quad) * 0.5
 	# A donut: skip the ground the finer ring inside already owns.
-	var hole := 0.0 if ring == 0 else ring_reach_km(ring - 1, _base_quad) * 0.5
-	var land_st := SurfaceTool.new()
-	var wat_st := SurfaceTool.new()
-	var skirt_st := SurfaceTool.new()
-	land_st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	wat_st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	skirt_st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var hole := 0.0 if ring == 0 else ring_reach_km(ring - 1, base_quad) * 0.5
+	var land_buf := _tri_buffer()
+	var skirt_buf := _tri_buffer()
 	var skirted := false
 	var prop_xforms: Array[Transform3D] = []
+	# ANALYTIC NORMALS, from central finite differences of the height function
+	# itself at a FIXED WORLD STEP - the same step regardless of which ring is
+	# being built. Replaces per-mesh cross-product normals, which sampled
+	# neighbours at the CALLING ring's own quad size: ring i and ring i+1
+	# agreed on POSITION at their shared boundary (that is what the stitch/
+	# skirt machinery below guarantees) but disagreed on NORMAL, because a
+	# fine ring's neighbour-derived normal reflects a ~50 m slope while a
+	# coarse ring's reflects a multi-km one at the exact same spot - a real,
+	# visible shading crease along every ring boundary (reported at
+	# himalaya_9km and as a rectangular step at moon_7km). Two normals
+	# computed by the SAME function at the SAME world position now always
+	# agree, so ring i and ring i+1 land on the same normal at every vertex
+	# they actually share. Costs 4 extra height-function calls per vertex
+	# (was "free" when derived from already-sampled neighbours); acceptable
+	# now that ring compute runs off the main thread (see _start_rebuild).
+	var normal_step: float = ring_quad_km(0, base_quad) * NORMAL_STEP_FRAC
 	# Sample every unique grid point ONCE. Quads share corners, so emitting
 	# per-quad called _vert four times for the same position: 16,384 calls where
 	# 65x65 = 4,225 points exist. The height function costs ~10 us a call (fbm3
@@ -330,32 +673,22 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	grid.resize(side * side)
 	for j in side:
 		for i in side:
-			grid[j * side + i] = _vert(hit, up, east, north, radius,
-				-half + quad * float(i), -half + quad * float(j))
-	# SMOOTH VERTEX NORMALS, from the grid's own neighbours. Free: the perf pass
-	# already samples every unique point once, so the cross-products cost no extra
-	# height calls. Face normals made every 50 m quad a visible facet, which was
-	# tolerable while the terrain was unlit and is not once light lands.
-	# Positions are NOT touched here - vertex_error_km() is what proves shading
-	# data did not leak into geometry.
-	for j in side:
-		for i in side:
-			var c: Dictionary = grid[j * side + i]
-			var pe: Vector3 = (grid[j * side + mini(i + 1, side - 1)] as Dictionary).p \
-				- (grid[j * side + maxi(i - 1, 0)] as Dictionary).p
-			var pn: Vector3 = (grid[mini(j + 1, side - 1) * side + i] as Dictionary).p \
-				- (grid[maxi(j - 1, 0) * side + i] as Dictionary).p
-			var nrm: Vector3 = pn.cross(pe)
-			# Degenerate at a pole or a flat duplicate: fall back to the radial.
-			if nrm.length_squared() < 1.0e-12:
-				nrm = (c.p as Vector3).normalized()
+			var off_e := -half + quad * float(i)
+			var off_n := -half + quad * float(j)
+			var v := _vert(hit, up, east, north, radius, off_e, off_n)
+			v["n"] = _analytic_normal(hit, east, north, radius, off_e, off_n, normal_step)
+			if ring <= HORIZON_SHADOW_MAX_RING:
+				var vh: float = (v.p as Vector3).length() - radius
+				# FIXED step, same reasoning as normal_step above: ring i and
+				# ring i+1 must march the SAME first-step distance at a shared
+				# boundary vertex or they read different shadow there (the
+				# exact bug normal_step already fixes for normals - see
+				# tools/test_horizon_shadow.gd's ring-boundary case).
+				v["shadow"] = _horizon_shadow(hit, up, east, north, radius, off_e, off_n,
+					vh, sun_dir, _detail_km_at(off_e, off_n), normal_step)
 			else:
-				nrm = nrm.normalized()
-			# A normal must never point into the ground: an inverted one lights the
-			# terrain from underneath and the whole tile reads inside-out.
-			if nrm.dot((c.p as Vector3).normalized()) < 0.0:
-				nrm = -nrm
-			c["n"] = nrm
+				v["shadow"] = 1.0
+			grid[j * side + i] = v
 	# STITCH THE OUTER RIM to the next ring's grid.
 	#
 	# Every ring samples the same height function, but ring N+1 does it on a 4x
@@ -375,8 +708,6 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 	# vertex_error_km() already excludes - keeping the land mesh exactly on the
 	# function. The outermost ring has nothing beyond it and is left alone.
 	var stitch: bool = ring < RING_COUNT - 1
-	_rim_stitched[ring] = stitch
-	_ring_base[ring] = _base_quad
 	if stitch:
 		var step := int(RING_STEP)
 		for k in range(0, side, step):
@@ -415,28 +746,36 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 			# a material change on the boundary so the step could not soften.
 			# Wetness is now a vertex colour that interpolates.
 			var wet: float = (float(p00.w) + float(p10.w) + float(p01.w) + float(p11.w)) * 0.25
-			var st: SurfaceTool = land_st
+			var buf: Dictionary = land_buf
 			# A quad touching the stitched rim goes into the skirt mesh, because its
 			# rim corners were moved off the height function to meet the neighbour.
 			var on_rim: bool = i == 0 or j == 0 or i == RING_SEGS - 1 or j == RING_SEGS - 1
 			if stitch and on_rim:
-				st = skirt_st
+				buf = skirt_buf
 				skirted = true
-			_tri(st, p00, p10, p11)
-			_tri(st, p00, p11, p01)
+			_tri_arr(buf, p00, p10, p11)
+			_tri_arr(buf, p00, p11, p01)
 			# Skirt the ring's outer rim so the seam to the next ring cannot show.
-			var drop: float = minf(quad * SKIRT_QUADS, SKIRT_DROP_MAX_KM)
+			# CAP scales the wall to a worst case (one quad); the ACTUAL gap most
+			# terrain needs bridged is far smaller (reported: a wide, visibly
+			# shaded band at grazing angles, e.g. moon_7km - a 160 m wall at 7 km
+			# alt/0.16 km quad, when the true disagreement there is a few metres).
+			# Measure the real gap at THESE two rim points (their placed height
+			# vs. the height function's own answer at the same direction - the
+			# gap `_snap` created, or zero on an unstitched/true-height corner)
+			# and size the drop to that, never more than the old worst-case cap.
+			var cap: float = minf(quad * SKIRT_QUADS, SKIRT_DROP_MAX_KM)
 			if i == 0:
-				_skirt(skirt_st, p01, p00, up, drop)
+				_skirt_arr(skirt_buf, p01, p00, up, _skirt_drop(p01, p00, radius, cap))
 				skirted = true
 			if i == RING_SEGS - 1:
-				_skirt(skirt_st, p10, p11, up, drop)
+				_skirt_arr(skirt_buf, p10, p11, up, _skirt_drop(p10, p11, radius, cap))
 				skirted = true
 			if j == 0:
-				_skirt(skirt_st, p00, p10, up, drop)
+				_skirt_arr(skirt_buf, p00, p10, up, _skirt_drop(p00, p10, radius, cap))
 				skirted = true
 			if j == RING_SEGS - 1:
-				_skirt(skirt_st, p11, p01, up, drop)
+				_skirt_arr(skirt_buf, p11, p01, up, _skirt_drop(p11, p01, radius, cap))
 				skirted = true
 			# Props ride ring 0 only this slice; slice D revisits density per ring.
 			if ring == 0:
@@ -454,21 +793,29 @@ func _build_ring(ring: int, hit: Vector3, radius: float) -> void:
 					# a full scale made floating, building-sized lunar boulders.
 					t.origin = p00.p - stand * sc * 0.08
 					prop_xforms.append(t)
-	_ring_land[ring].mesh = land_st.commit()
-	_ring_land[ring].material_override = _land_mat
-	# The water mesh is retired - one surface now - but the node stays so the
-	# report and the error walk keep a stable shape.
-	_ring_water[ring].mesh = null
-	_ring_skirt[ring].mesh = skirt_st.commit() if skirted else null
-	_ring_skirt[ring].material_override = _land_mat
-	if ring == 0:
-		_place_props(prop_xforms, hit, east, north)
+	return {
+		"land_buf": land_buf,
+		"skirt_buf": skirt_buf if skirted else null,
+		"stitch": stitch,
+		"prop_xforms": prop_xforms,
+		"east": east,
+		"north": north,
+	}
 
 
 # Move one rim vertex onto the straight line between the two coarse-grid vertices
 # that bracket it, so this ring's edge traces the same polyline the next ring out
 # does. Colour and water flag are interpolated too, or the stitch band would
 # change material halfway along.
+#
+# Normal is left UNTOUCHED here (no longer lerped): it is already the analytic
+# normal computed at this vertex's true (pre-snap) direction, which is exactly
+# what the actually-SHARED coarse-grid vertices (t=0 and t=step, never touched
+# by this function) already carry - those are the only vertices this ring and
+# the next one both truly have, and the boundary-normal-agreement test checks
+# exactly those. The intermediate, moved vertices have no counterpart in the
+# next ring at all, so there is nothing for their normal to agree with; keeping
+# the true local slope there is more correct than lerping toward a neighbour.
 func _snap(grid: Array, side: int, x: int, y: int, ax: int, ay: int,
 		bx: int, by: int, f: float) -> void:
 	var v: Dictionary = grid[y * side + x]
@@ -477,12 +824,23 @@ func _snap(grid: Array, side: int, x: int, y: int, ax: int, ay: int,
 	v["p"] = (a.p as Vector3).lerp(b.p as Vector3, f)
 	v["c"] = (a.c as Color).lerp(b.c as Color, f)
 	v["w"] = lerpf(float(a.w), float(b.w), f)
-	v["n"] = ((a.n as Vector3).lerp(b.n as Vector3, f)).normalized()
+
+
+# The true gap this specific edge needs bridged: how far the point currently
+# sits from the height function's own answer at the same direction (zero for
+# a true, un-snapped corner; whatever `_snap` moved it by for an interpolated
+# one). A 1.6x margin covers the fact that the neighbour's OWN edge - drawn at
+# its coarser rate - can wander a little further before the next shared vertex.
+const SKIRT_DROP_MIN_KM := 0.002        # never collapse to an invisible sliver
+func _skirt_drop(a: Dictionary, b: Dictionary, radius: float, cap: float) -> float:
+	var a_gap: float = absf((a.p as Vector3).length() - _sampler.ground_radius_km((a.p as Vector3).normalized(), radius))
+	var b_gap: float = absf((b.p as Vector3).length() - _sampler.ground_radius_km((b.p as Vector3).normalized(), radius))
+	return clampf(maxf(a_gap, b_gap) * 1.6, SKIRT_DROP_MIN_KM, cap)
 
 
 # Two triangles hanging straight down from a rim edge, hiding the gap where this
 # ring's edge and the next ring's edge sampled the same ground at different rates.
-func _skirt(st: SurfaceTool, a: Dictionary, b: Dictionary, up: Vector3, drop: float) -> void:
+func _skirt_arr(buf: Dictionary, a: Dictionary, b: Dictionary, up: Vector3, drop: float) -> void:
 	var a_lo: Dictionary = a.duplicate()
 	var b_lo: Dictionary = b.duplicate()
 	a_lo["p"] = a.p - up * drop
@@ -500,8 +858,8 @@ func _skirt(st: SurfaceTool, a: Dictionary, b: Dictionary, up: Vector3, drop: fl
 	b_w["n"] = nrm
 	a_lo["n"] = nrm
 	b_lo["n"] = nrm
-	_tri(st, a_w, b_w, b_lo)
-	_tri(st, a_w, b_lo, a_lo)
+	_tri_arr(buf, a_w, b_w, b_lo)
+	_tri_arr(buf, a_w, b_lo, a_lo)
 
 
 # Where a kit prop is allowed to stand. Placement rules, not just a recolour:
@@ -532,6 +890,24 @@ func _prop_aspect(seedn: float) -> float:
 			return 1.0
 
 
+# The local mesh sample spacing at a point (off_e, off_n) from the ring centre,
+# km - a CONTINUOUS function of distance from the hull, not of which ring is
+# asking. Ring i's own quad is dist/32 at its outer edge and dist/8 at its
+# inner edge (RING_SEGS=64 verts span a reach of quad*64, and the next ring in
+# already owns everything inside quad*8); the geometric mean of those two
+# extremes, 16, keeps every ring's actual sample spacing within a factor of 2
+# of this estimate across its whole span. Two rings meeting at a shared rim
+# vertex are call this with the SAME (off_e, off_n), so they get the IDENTICAL
+# detail_km and therefore the identical band-limited height - see
+# SurfaceRecipe._band_weight for what this fixes (a texture-change band at
+# every ring boundary, reported at moon_7km).
+const DETAIL_KM_DIVISOR := 16.0
+
+
+static func _detail_km_at(off_e: float, off_n: float) -> float:
+	return sqrt(off_e * off_e + off_n * off_n) / DETAIL_KM_DIVISOR
+
+
 # Vertex at a metric offset (km, east/north) from the ring's centre. Height comes
 # from the SHARED sampler — the same call main's contact kill makes — so mesh and
 # lethality cannot disagree. Do NOT sample a height map directly here.
@@ -539,17 +915,84 @@ func _vert(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
 		radius: float, off_e: float, off_n: float) -> Dictionary:
 	var dir: Vector3 = (hit + east * off_e + north * off_n).normalized()
 	var uv := _dir_uv(dir)
-	var gr: float = _sampler.ground_radius_km(dir, radius)
+	var gr: float = _sampler.ground_radius_km(dir, radius, _detail_km_at(off_e, off_n))
 	var wet: float = _sampler.water01(dir)
 	# 0..1 of this world's own relief, for prop placement and colour banding.
 	var h: float = clampf((gr - radius) / maxf(_sampler.max_height_km(), 0.001), 0.0, 1.0)
-	# "n" starts radial and is replaced by the grid's smooth normal in _build_ring.
-	# Skirt vertices keep this radial one, which is correct for a vertical wall.
+	# "n" starts radial; the grid loop in _compute_ring overwrites it with the
+	# analytic normal (_analytic_normal). Skirt walls set their own after, via
+	# _skirt_arr.
 	# Shader textures tagged source_color are linearized by Godot; vertex colours
 	# are not. Match that space before blending or close terrain washes out.
 	var col: Color = _color_at(dir, uv, h).srgb_to_linear()
 	col.a = wet          # the shader reads wetness from COLOR.a as its fallback
 	return { "p": dir * gr, "h": h, "w": wet, "n": dir, "c": col, "uv": uv, "lava": _sampler.lava01(dir) }
+
+
+# Surface normal at (off_e, off_n) from central finite differences of the
+# SAME height function every vertex already samples - not the mesh's own
+# neighbouring vertices, whose spacing (hence apparent slope) changes with
+# the ring's quad size. `step_km` is fixed per rebuild (ring_quad_km(0, ...)
+# scaled by NORMAL_STEP_FRAC), the SAME value for every ring in the batch, so
+# any two rings evaluating this at the same world position get the same
+# answer regardless of which ring's grid they belong to.
+func _analytic_normal(hit: Vector3, east: Vector3, north: Vector3, radius: float,
+		off_e: float, off_n: float, step_km: float) -> Vector3:
+	var detail_km := _detail_km_at(off_e, off_n)
+	var d_e_hi: Vector3 = (hit + east * (off_e + step_km) + north * off_n).normalized()
+	var d_e_lo: Vector3 = (hit + east * (off_e - step_km) + north * off_n).normalized()
+	var d_n_hi: Vector3 = (hit + east * off_e + north * (off_n + step_km)).normalized()
+	var d_n_lo: Vector3 = (hit + east * off_e + north * (off_n - step_km)).normalized()
+	var pe: Vector3 = d_e_hi * _sampler.ground_radius_km(d_e_hi, radius, detail_km) \
+		- d_e_lo * _sampler.ground_radius_km(d_e_lo, radius, detail_km)
+	var pn: Vector3 = d_n_hi * _sampler.ground_radius_km(d_n_hi, radius, detail_km) \
+		- d_n_lo * _sampler.ground_radius_km(d_n_lo, radius, detail_km)
+	var nrm: Vector3 = pn.cross(pe)
+	var center_dir: Vector3 = (hit + east * off_e + north * off_n).normalized()
+	# Degenerate at a pole or a flat duplicate: fall back to the radial.
+	if nrm.length_squared() < 1.0e-12:
+		return center_dir
+	nrm = nrm.normalized()
+	# A normal must never point into the ground: an inverted one lights the
+	# terrain from underneath and the whole tile reads inside-out.
+	if nrm.dot(center_dir) < 0.0:
+		nrm = -nrm
+	return nrm
+
+
+# Horizon-shadow factor at one vertex, [0,1]: 1 = full sun, 0 = a taller
+# feature between here and the sun blocks it. Marches the SAME sampler height
+# function every mesh vertex already reads (never a second height source) at
+# HORIZON_STEPS samples, growing geometrically from one ring-quad's own
+# spacing, along the sun's direction projected flat onto this vertex's local
+# tangent plane. The classic horizon-angle self-shadow test: the sun is
+# blocked once some sampled point's rise-over-run angle from this vertex
+# exceeds the sun's own elevation above the local horizontal, soft-edged over
+# HORIZON_MARGIN_DEG so a rim does not snap between lit and shadowed.
+func _horizon_shadow(hit: Vector3, up: Vector3, east: Vector3, north: Vector3,
+		radius: float, off_e: float, off_n: float, v_height_km: float,
+		sun_dir: Vector3, detail_km: float, step0_km: float) -> float:
+	if sun_dir.length_squared() < 0.0001:
+		return 1.0
+	var sun_elev := asin(clampf(sun_dir.dot(up), -1.0, 1.0))
+	if sun_elev <= 0.0:
+		return 1.0   # night side: `day`/`night_fill` in the shader already darken it
+	var sun_tan: Vector3 = sun_dir - up * sun_dir.dot(up)
+	if sun_tan.length_squared() < 1.0e-10:
+		return 1.0   # sun straight overhead: no meaningful horizon direction
+	sun_tan = sun_tan.normalized()
+	var step_e := sun_tan.dot(east)
+	var step_n := sun_tan.dot(north)
+	var max_angle := 0.0
+	var s: float = maxf(step0_km, 0.0001)
+	for i in HORIZON_STEPS:
+		var dir: Vector3 = (hit + east * (off_e + step_e * s) + north * (off_n + step_n * s)).normalized()
+		var gr: float = _sampler.ground_radius_km(dir, radius, detail_km)
+		var h_here: float = gr - radius
+		max_angle = maxf(max_angle, atan2(h_here - v_height_km, s))
+		s *= HORIZON_STEP_GROWTH
+	var margin := deg_to_rad(HORIZON_MARGIN_DEG)
+	return 1.0 - smoothstep(sun_elev - margin, sun_elev + margin, max_angle)
 
 
 # Ground colour. Albedo map where the world has one, else the recipe's crust
@@ -570,13 +1013,31 @@ func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
 
 
 # Per-VERTEX normals, so a ridge shades as a curve instead of as 50 m facets.
-func _tri(st: SurfaceTool, a: Dictionary, b: Dictionary, c: Dictionary) -> void:
+# Appends into plain PackedArrays rather than a SurfaceTool, so this (and
+# _compute_ring as a whole) never touches RenderingServer and can run on a
+# WorkerThreadPool thread; _mesh_from_buffer does the actual mesh commit,
+# always on the main thread.
+func _tri_arr(buf: Dictionary, a: Dictionary, b: Dictionary, c: Dictionary) -> void:
+	# Packed*Array is a COW VALUE type: `buf.v.append(...)` would mutate a
+	# temporary copy pulled out of the Dictionary and never write it back,
+	# silently leaving `buf` empty. Pull each array out once, mutate the
+	# local, then write it back.
+	var vv: PackedVector3Array = buf.v
+	var nn: PackedVector3Array = buf.n
+	var cc: PackedColorArray = buf.c
+	var uu: PackedVector2Array = buf.uv
+	var u2: PackedVector2Array = buf.uv2
 	for v in [a, b, c]:
-		st.set_normal(v.n)
-		st.set_color(v.c)
-		st.set_uv(v.uv)
-		st.set_uv2(Vector2(float(v.get("lava", 0.0)), 0.0))
-		st.add_vertex(v.p)
+		vv.append(v.p)
+		nn.append(v.n)
+		cc.append(v.c)
+		uu.append(v.uv)
+		u2.append(Vector2(float(v.get("lava", 0.0)), float(v.get("shadow", 1.0))))
+	buf.v = vv
+	buf.n = nn
+	buf.c = cc
+	buf.uv = uu
+	buf.uv2 = u2
 
 
 func _dir_uv(dir: Vector3) -> Vector2:
@@ -799,6 +1260,7 @@ func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 		return
 	var d: Vector3 = sun_dir.normalized() if sun_dir.length_squared() > 0.0001 \
 		else Vector3(0.72, 0.28, 0.63)
+	_sun_dir = d
 	var density: float = PlanetGenerator.haze_density_at(alt_km, atmo_top_km)
 	for m in [_land_mat, _water_mat]:
 		m.set_shader_parameter("sun_dir", d)
@@ -933,6 +1395,17 @@ func vertex_error_km(radius: float) -> Dictionary:
 	var over := 0.0
 	var under := 0.0
 	for ring in RING_COUNT:
+		var hit: Vector3 = _ring_anchor[ring]
+		if hit == Vector3.ZERO:
+			continue
+		# SAME basis _compute_ring built this ring from, so off_e/off_n (hence
+		# detail_km) can be recovered exactly rather than approximated.
+		var up := hit.normalized()
+		var east := up.cross(Vector3.UP)
+		if east.length_squared() < 0.0001:
+			east = up.cross(Vector3.RIGHT)
+		east = east.normalized()
+		var north := east.cross(up).normalized()
 		# Skirts are excluded STRUCTURALLY (their own mesh), not by tolerance, so
 		# this can be asserted at float32 precision instead of at a slack value
 		# big enough to swallow a real error.
@@ -945,7 +1418,15 @@ func vertex_error_km(radius: float) -> Dictionary:
 				var d := v.length()
 				if d < 0.0001:
 					continue
-				var want: float = _sampler.ground_radius_km(v / d, radius)
+				var dir: Vector3 = v / d
+				# Exact inverse of _vert's (hit + east*off_e + north*off_n).normalized():
+				# dir.dot(up) = radius_of_hit / |pre-normalize vector|, so off_e/off_n
+				# fall out without ever needing the (circular) height itself.
+				var up_dot: float = maxf(dir.dot(up), 0.0001)
+				var pre_len: float = hit.length() / up_dot
+				var off_e: float = dir.dot(east) * pre_len
+				var off_n: float = dir.dot(north) * pre_len
+				var want: float = _sampler.ground_radius_km(dir, radius, _detail_km_at(off_e, off_n))
 				var err := d - want
 				if err > over:
 					over = err

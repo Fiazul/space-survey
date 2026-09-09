@@ -19,6 +19,12 @@ const RENDER_LABELS := ["200%  (Ultra)", "150%", "100%", "75%", "50%"]
 # together so the player can jump straight to the highest settings ("Ultra").
 const QUALITY := ["Ultra", "High", "Balanced", "Performance"]
 
+# Clouds are optional (player feedback: low-altitude fog read as flying
+# underwater). Off/Light/Full maps directly to GameState.cloud_quality, which
+# PlanetSystem._cloud_recipe() reads to scale cloud_amount before it reaches
+# the deck and the fly-through fog.
+const CLOUD_LABELS := ["Off", "Light", "Full"]
+
 var ship: Ship
 var env: Environment
 var hud: HUD                 # set by main, for the "Edit HUD Layout" button
@@ -147,6 +153,14 @@ func _build() -> void:
 	_rs_option.item_selected.connect(_on_render_scale)
 	col.add_child(_row("Render Scale", _rs_option))
 
+	# --- Clouds (Off / Light / Full) ---
+	var clouds := OptionButton.new()
+	for lbl in CLOUD_LABELS:
+		clouds.add_item(lbl)
+	clouds.selected = clampi(GameState.cloud_quality, 0, CLOUD_LABELS.size() - 1)
+	clouds.item_selected.connect(_on_clouds)
+	col.add_child(_row("Clouds", clouds))
+
 	# --- Fullscreen ---
 	_fs_check = CheckButton.new()
 	_fs_check.button_pressed = _is_fullscreen()
@@ -255,6 +269,11 @@ func _on_quality(idx: int) -> void:
 			_rs_option.selected = ri
 	if _glow_check != null:
 		_glow_check.button_pressed = env != null and env.glow_enabled
+
+func _on_clouds(idx: int) -> void:
+	GameState.cloud_quality = idx
+	if main != null and main.has_method("_save_profile"):
+		main._save_profile()
 
 func _is_fullscreen() -> bool:
 	var m := get_window().mode

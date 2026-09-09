@@ -49,3 +49,203 @@ Re-fetch: python3 tools/fetch_planet_maps.py
 Ingest:    python3 tools/ingest_planet_maps.py
 
 Credit in-game and in CREDITS.md: Solar System Scope / NASA / USGS.
+
+Real global topography (16-bit-precision height maps, public domain):
+  mars_height_2k.png, moon_height_2k.png — 2048x1024 equirectangular, RGB8
+  PNG, value = R*256 + G (R=high byte, G=low byte, B unused). Godot 4.6.3
+  flattens a single-channel 16-bit PNG to 8-bit on load (measured,
+  tools/probe_dem16.gd); this two-channel byte-pack round-trips exactly
+  through Image.load() (same probe) and is stored with the texture importer's
+  compress/mode=0 ("Lossless") like every other file in this folder, so no
+  VRAM-compression quantization is introduced either.
+
+  Longitude convention: column 0 = lon 0E in the raw PDS3 files (verified:
+  Mars argmax sample 21134 m lands within 1px of Olympus Mons at 18.65N
+  226.2E). mars_2k.jpg / moon_2k.jpg instead put lon 0 at the image's
+  HORIZONTAL CENTER (verified against known maria/albedo contrast — see
+  docs/research/2026-09-09-dem-ingest.md for the numbers) — the DEMs are
+  rolled by half the source width before resampling so they line up with the
+  existing albedo maps texel-for-texel.
+
+  Mars — Mars MGS MOLA DEM, 4 pixels/degree (MEGDR "megt90n000cb"),
+  1440x720, MSB_INTEGER 16-bit, unit = meter, datum = areoid (Goddard Mars
+  potential model GMM3/mgm1025), no scaling factor (DN is metres directly).
+  Source: NASA MGS/MOLA team via PDS Geosciences Node,
+  https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg004/megt90n000cb.img
+  (label: .../megt90n000cb.lbl). Public domain (US government work).
+  sha256 (raw .img, /tmp/planet_maps_raw/mars_mola_4ppd.img):
+    25f16fb7aaf857898dcf98bc4f841341a24f8b9f7e98453ca083bc45d897ca2c
+  sha256 (mars_height_2k.png):
+    c535e5d05dcaa683cbe8162150cca7e933e99cc997e659dd8be10dbdddec2a41
+  Calibration (resized 2048x1024, after longitude roll):
+    min_m = -7941.6   (raw 4ppd file min = -8068.0)
+    max_m = 21083.6   (raw 4ppd file max = 21134.0)
+    decode: elevation_m = raw16/65535 * (max_m - min_m) + min_m, raw16 = R*256+G
+    datum (0 m) -> raw16 = 17931
+    Olympus Mons summit (18.65N, 226.2E): sampled 19774.0 m
+      (known real summit elevation ~21229 m; 4 ppd = ~14.8 km/px undersamples the peak)
+    Hellas Planitia floor (42.4S, 70.5E): sampled -6136.8 m
+      (known real deepest-point elevation ~ -8200 m; same undersampling caveat)
+
+  Moon — LRO LOLA global shape map, 4 pixels/degree (LOLA GDR "ldem_4"),
+  1440x720, LSB_INTEGER 16-bit DN, HEIGHT_m = DN * 0.5 (SCALING_FACTOR),
+  relative to a 1737.4 km reference SPHERE (OFFSET; not a geoid — the label
+  calls the sphere-relative height "PLANETARY_RADIUS - OFFSET"). Source:
+  LRO LOLA team via PDS Geosciences Node,
+  https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/img/ldem_4.img
+  (label: .../ldem_4.lbl). Public domain (US government work).
+  sha256 (raw .img, /tmp/planet_maps_raw/moon_lola_4ppd.img):
+    c04632eba6449af49e3108ed7c25b3b1c450600abd3690df4fc815853a1af476
+  sha256 (moon_height_2k.png):
+    dec76762dd6359178cdd7b98dc81702bc3091f95d9b1f8a2629b5bb9a1d18cfa
+  Calibration (resized 2048x1024, after longitude roll):
+    min_m = -8585.2   (raw 4ppd file min = -8878.5)
+    max_m = 10356.6   (raw 4ppd file max = 10504.0)
+    decode: elevation_m = raw16/65535 * (max_m - min_m) + min_m, raw16 = R*256+G
+    datum (0 m) -> raw16 = 29703
+    Selenean summit, the Moon's highest point (Smith et al. 2010: 5.4N,
+    158.6 WEST = 201.4E; this dataset's own global argmax at 4ppd is 5.4N,
+    201.4E, +10504 m — same location, confirms the east/west sign):
+      sampled 10356.6 m (known ~10786 m; matches well within the 4ppd smoothing)
+    Tycho floor (43.3S, 348.6E): sampled -2267.5 m (no confident published
+      absolute-elevation figure to cross-check against; Tycho's ~85 km
+      diameter is only ~11 px at the native 7.5 km/px resolution before the
+      2048x1024 resample, so the floor dip is likely blurred toward the rim —
+      flagged, not asserted as calibration-grade)
+
+2026-09-09 later: 16 ppd Mars/Moon (4096x2048) + 8k Earth (ETOPO 2022)
+
+  Mars — same MGS MOLA MEGDR product, 16 pixels/degree ("megt90n000eb"),
+  5760x2880, MSB_INTEGER 16-bit, unit = meter, datum = areoid (same GMM3/mgm1025
+  model), no scaling factor. Source: NASA MGS/MOLA team via PDS Geosciences
+  Node,
+  https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img
+  (label: .../megt90n000eb.lbl). Public domain (US government work).
+  sha256 (raw .img, /tmp/planet_maps_raw/mars_mola_16ppd.img):
+    d18d9b9ab8c5516d02e157dd2cde0f1d0d160c21940e953ba22391269a545e7b
+  Calibration (resampled 4096x2048, BOX area-average downsample from 5760x2880,
+  after longitude roll):
+    min_m = -8163.0   (raw 16ppd file min = -8177.0, matches label's stated
+                       dataset min exactly)
+    max_m = 21171.0   (raw 16ppd file max = 21171.0, matches label's stated
+                       dataset max exactly)
+    decode: elevation_m = raw16/65535 * (max_m - min_m) + min_m, raw16 = R*256+G
+    datum (0 m) -> raw16 = 18237
+    recipe fields: height_encoding=rg16 height_datum=0.27827776641439966
+      height_m_per_unit=29334.0 height_max=1.0 height_signed=true
+      height_texel_km = (2*pi*3396)/4096 = 5.20940 km
+    Olympus Mons summit (18.65N, 226.2E): sampled 19963.5 m (known ~21229 m;
+      raw file's own global argmax sits at 17.375N 226.9375E = 21171 m, ~1.3px
+      from the real summit coordinate — the fixed-landmark point sample still
+      misses the true peak pixel even at 16ppd, same caveat as the 4ppd table,
+      but the FILE's own min/max now sit within ~60 m / ~30 m of the published
+      dataset extremes)
+    Hellas Planitia floor (42.4S, 70.5E): sampled -6072.0 m (known ~-8200 m;
+      raw file's own global argmin sits at -32.8125N 62.1875E = -8177.0 m,
+      ~10 deg from the fixed landmark coordinate — same "named point isn't the
+      extremum pixel" caveat, not a resolution regression)
+
+  Moon — same LRO LOLA GDR product, 16 pixels/degree ("ldem_16"), 5760x2880,
+  LSB_INTEGER 16-bit DN, HEIGHT_m = DN * 0.5, relative to the same 1737.4 km
+  reference sphere. Source: LRO LOLA team via PDS Geosciences Node,
+  https://pds-geosciences.wustl.edu/lro/lro-l-lola-3-rdr-v1/lrolol_1xxx/data/lola_gdr/cylindrical/img/ldem_16.img
+  (label: .../ldem_16.lbl). Public domain (US government work).
+  sha256 (raw .img, /tmp/planet_maps_raw/moon_lola_16ppd.img):
+    a511e40d7a3ea3275945b4da2a1df377133264fab0be94b7434b1cf8907254cb
+  Calibration (resampled 4096x2048, BOX area-average downsample from 5760x2880,
+  after longitude roll):
+    min_m = -8981.5   (raw 16ppd file min = -8981.5)
+    max_m = 10622.0   (raw 16ppd file max = 10685.5)
+    decode: elevation_m = raw16/65535 * (max_m - min_m) + min_m, raw16 = R*256+G
+    datum (0 m) -> raw16 = 30025
+    recipe fields: height_encoding=rg16 height_datum=0.45815798199301144
+      height_m_per_unit=19603.5 height_max=1.0 height_signed=true
+      height_texel_km = (2*pi*1737.4)/4096 = 2.66514 km
+    Selenean summit (5.4N, 201.4E): sampled 10622.0 m (known ~10786 m; closer
+      than the 2k table's 10356.6 m, as expected from finer native resolution)
+    Tycho floor (43.3S, 348.6E): sampled -1954.0 m (still no confident
+      published absolute-elevation figure to check against; flagged
+      non-calibration-grade same as the 2k entry)
+
+  Earth — ETOPO 2022 global relief model, 60 arc-second, "surface" (ice-sheet
+  surface elevation over Greenland/Antarctica, i.e. NOT bedrock) grid, NOAA
+  NCEI, public domain (US government work).
+  https://www.ngdc.noaa.gov/thredds/fileServer/global/ETOPO2022/60s/60s_surface_elev_netcdf/ETOPO_2022_v1_60s_N90W180_surface.nc
+  sha256 (raw .nc, /tmp/planet_maps_raw/etopo_2022_60s_surface.nc):
+    74bbc5c23e85188d93f0beba8116babf69e1a8f160e8dc9f053bf8df01b197b6
+  sha256 (earth_height_8k.png):
+    9513678f4f9d61c4ab7efcde1fb0b0cb2b33a38e277a218b1bf209f72483ccaa
+  Grid, verified directly from the netCDF (no assumption): lat runs
+  -89.99..89.99 (south-to-north, row 0 was south -- flipped to north-at-row-0
+  before resampling), lon runs -179.99..179.99 (column 0 = lon -180, i.e.
+  ALREADY the "lon 0 at horizontal center" convention this repo's other
+  albedo/height maps use -- no longitude roll applied, unlike the Mars/Moon
+  PDS files).
+  Calibration (resampled 8192x4096, BOX area-average downsample from
+  21600x10800):
+    min_m = -10708.2   (raw 60 arc-sec file min = -10752.1)
+    max_m = 7198.3     (raw 60 arc-sec file max = 8157.4)
+    decode: elevation_m = raw16/65535 * (max_m - min_m) + min_m, raw16 = R*256+G
+    datum (0 m) -> raw16 = 39190
+    recipe fields: height_encoding=rg16 height_datum=0.5980075212736995
+      height_m_per_unit=17906.5 height_max=1.0 height_signed=true
+      height_texel_km = (2*pi*6371)/8192 = 4.88579 km
+      (signed/bathymetry-carrying — Earth's CURRENT recipe entry is unsigned/
+      clamped; wiring this in means either flipping height_signed for Earth or
+      keeping the sampler's existing sea-level clamp and letting the signed
+      range only matter above 0 m — see note below)
+    Landmark checks (all correctly signed/located, verified against the
+    resampled 8192x4096 array):
+      Everest (27.99N, 86.93E): sampled 7198.3 m, EXACTLY the array's own
+        global max, at row/col (1411,6074) -> decoded lat/lon (27.99N,
+        86.92E) -- matches the real coordinate to within 0.01 degree
+        (known ~8849 m; 4.89 km/px area-averages the summit down, expected,
+        not a longitude/quantization bug)
+      Denali (63.07N, -151.01E / 208.99E): sampled 5667.4 m (known ~6190 m)
+      Kilimanjaro (-3.07N, 37.35E): sampled 4890.6 m (known ~5895 m; isolated
+        volcanic cone, most diluted by area-averaging of the five landmarks)
+      Dead Sea shore (31.5N, 35.5E): sampled -427.0 m (known ~-430 m,
+        closest match of the five -- flat regional low, not a sharp feature)
+      Mariana Trench / Challenger Deep (11.35N, 142.2E): sampled -10057.2 m
+        (known ~-10935 m; narrow trench, undersampled at 4.89 km/px, same
+        caveat as the summits)
+      Global min of the resampled array is NOT at Mariana: it's -10708.2 m
+        at row/col (2577,119) -> decoded lat/lon (-23.25, -174.77), i.e. the
+        Kermadec-Tonga trench system (real Horizon Deep ~-10820 m) -- Earth's
+        single deepest point per ETOPO 2022's own 60 arc-sec grid, correctly
+        negative and correctly located, just not the point this brief named.
+      Greenland ice sheet (72N, -40E): sampled 3098.9 m -- bright/high as
+        expected (ice-sheet surface elevation, "surface" product, not bedrock).
+  2026-09-09 wiring: Earth's RECIPES entry now points "height" at
+  earth_height_8k.png (rg16, signed, this table's numbers) for the CPU
+  TerrainSampler (full 8k precision, no VRAM cost — read as raw bytes, never
+  bound as a GPU texture). "earth_height.jpg" stays on disk but is no longer
+  referenced by any recipe.
+
+  earth_height_4k.png — BOX-downsampled from the SAME resampled 8192x4096
+  array the 8k file was written from (not re-derived from the raw netCDF),
+  produced for the distant-globe material only (VRAM budget: an 8k rg16-in-
+  RGB8 PNG imports lossless and would bind as an 8192x4096x4-byte RGBA8
+  texture = 128 MB if used for `height_tex`; the 4k version is 4096x2048x4 =
+  32 MB, a 96 MB saving). sha256 (first 16 hex): see below. Recipe field
+  `height_globe` added pointing at this file — NOT YET CONSUMED by
+  `PlanetGenerator._cook_material`/`ensure_close_maps` (out of this task's
+  file ownership; whoever owns those functions needs to bind `height_globe`
+  (falling back to `height`) instead of always binding `height` for the far
+  globe's `height_tex`, or the 8k file keeps getting bound and this saving
+  is inert). Own calibration (from the netCDF, independently resampled to
+  4096x2048, matches the 8k table's method exactly):
+    min_m = -10361.2 max_m = 6406.9 datum(0m)->raw16 = 40495
+    height_datum=0.6179117908252798 height_m_per_unit=16768.14794921875
+    height_texel_km = (2*pi*6371)/4096 = 9.77157 km
+    Everest sampled 6406.9 m (4k's own array max, coarser than 8k's 7198.3 m,
+    expected — half the pixels/degree area-averages the summit down further).
+  sha256 (earth_height_4k.png): b225e93291b581c09844c7bbab0b4c36060533e2d64193fb7a01a5ab43c6fc8
+
+Re-fetch (raw DEMs): see docs/research/2026-09-09-dem-ingest.md for the exact URLs
+Ingest:    python3 tools/ingest_dem.py mars --ppd 4  --size 2048x1024 --out mars_height_2k.png
+           python3 tools/ingest_dem.py mars --ppd 16 --size 4096x2048 --out mars_height_4k.png
+           python3 tools/ingest_dem.py moon --ppd 4  --size 2048x1024 --out moon_height_2k.png
+           python3 tools/ingest_dem.py moon --ppd 16 --size 4096x2048 --out moon_height_4k.png
+           python3 tools/ingest_dem.py earth --size 8192x4096 --out earth_height_8k.png
+           python3 tools/ingest_dem.py earth --size 4096x2048 --out earth_height_4k.png

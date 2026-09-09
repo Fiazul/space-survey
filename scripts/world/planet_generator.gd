@@ -23,6 +23,12 @@ const NIGHT_FILL := 0.06
 # 204.8 km rim to 95% (hiding the LOD boundary) while leaving the first 20 km at
 # 25%. See the swept table in the light-and-air spec.
 const HAZE_KM := 70.0
+# ONE default deep-water tint, used by the globe cook, the ring material, and
+# TerrainSampler's CPU-side vertex bake. A recipe that omits color_ocean used
+# to silently diverge here — cook_material() defaulted to (0.03,0.09,0.22),
+# terrain_material()/TerrainSampler.PALETTE_OCEAN to (0.06,0.22,0.32) — which
+# reproduced the globe/ring ocean-colour jump even with color_ocean unset.
+const DEFAULT_COLOR_OCEAN := Color(0.03, 0.09, 0.22)
 
 # Named Sol recipes. albedo is the evidence slot. Missing files fall through
 # to colour so a world still cooks. extras bind on approach (ensure_close_maps).
@@ -43,9 +49,27 @@ const RECIPES := {
 		"albedo": "res://assets/planets/earth_2k.jpg",
 		"clouds": "res://assets/planets/earth_clouds_2k.jpg",
 		"night": "res://assets/planets/earth_night_2k.jpg",
-		"height": "res://assets/planets/earth_height.jpg",
+		"height": "res://assets/planets/earth_height_8k.png",
+		# Distant-globe material only (VRAM budget - see PLANET_GENERATOR.md/
+		# SOURCES.txt): 4k downsample of the SAME array "height" decodes, not a
+		# separate source. Optional key, defaults to "height" if unread.
+		"height_globe": "res://assets/planets/earth_height_4k.png",
 		"specular": "res://assets/planets/earth_spec_2k.png",
 		"normal": "res://assets/planets/earth_normal_2k.png",
+		# ETOPO 2022 v1 60 arc-sec "surface" grid, real min/max_m from
+		# assets/planets/SOURCES.txt. rg16: value = R*256+G (Godot flattens a
+		# real 16-bit PNG to 8-bit on load, tools/probe_dem16.gd - see
+		# docs/research/2026-09-09-dem-ingest.md). Signed/bathymetry-carrying:
+		# TerrainSampler.height_m() clamps to the liquid datum (0 m) only where
+		# the water mask says ocean; masked land below sea level (Dead Sea)
+		# still reports its real negative depth.
+		"height_encoding": "rg16",
+		"height_datum": 0.5980075212736995,
+		"height_m_per_unit": 17906.5,
+		"height_max": 1.0,
+		"height_signed": true,
+		# 8192px map / real circumference (2*pi*6371 km).
+		"height_texel_km": 4.88579,
 		"source": "ready-map",
 		"evidence": "Solar System Scope / NASA Blue Marble",
 		"cloud_amount": 1.0,
@@ -59,6 +83,18 @@ const RECIPES := {
 	"Moon": {
 		"kind": "rocky",
 		"albedo": "res://assets/planets/moon_2k.jpg",
+		"height": "res://assets/planets/moon_height_4k.png",
+		# LRO LOLA GDR ldem_16, real min/max_m from assets/planets/SOURCES.txt.
+		# rg16: value = R*256+G (Godot flattens a true 16-bit PNG to 8-bit on
+		# load, tools/probe_dem16.gd - see docs/research/2026-09-09-dem-ingest.md).
+		"height_encoding": "rg16",
+		"height_datum": 0.45815798199301144,
+		"height_m_per_unit": 19603.5,
+		"height_max": 1.0,
+		"height_signed": true,
+		# 4096px map / real circumference (2*pi*1737.4 km) - the DEM cannot
+		# express anything finer than this; below it geology is procedural fill.
+		"height_texel_km": 2.66514,
 		"source": "ready-map",
 		"evidence": "Solar System Scope / NASA LROC",
 		"cloud_amount": 0.0,
@@ -94,6 +130,17 @@ const RECIPES := {
 	"Mars": {
 		"kind": "rocky",
 		"albedo": "res://assets/planets/mars_2k.jpg",
+		"height": "res://assets/planets/mars_height_4k.png",
+		# MGS MOLA MEGDR megt90n000eb, real min/max_m from
+		# assets/planets/SOURCES.txt. rg16: value = R*256+G, same reasoning as
+		# the Moon entry below.
+		"height_encoding": "rg16",
+		"height_datum": 0.27827776641439966,
+		"height_m_per_unit": 29334.0,
+		"height_max": 1.0,
+		"height_signed": true,
+		# 4096px map / real circumference (2*pi*3396 km).
+		"height_texel_km": 5.20940,
 		"source": "ready-map",
 		"evidence": "Solar System Scope / Viking / MGS",
 		"cloud_amount": 0.08,
@@ -555,25 +602,110 @@ static func apply_sky(mat: Material, recipe: Dictionary, spec: Dictionary) -> vo
 			sm.emission = spec.get("color", Color.WHITE)
 
 
-static func apply_view(mat: Material, sun_dir: Vector3, detail: float) -> void:
+# `alt_km`/`atmo_top_km` feed planet_cook.gdshader's limb-width falloff (the
+# "60 km glowing wall" fix) — both default to a negative sentinel meaning
+# "unknown/far", which the shader reads as "no narrowing", i.e. the exact old
+# curve. Every pre-existing call site (sky-impostor discs, tests) that hasn't
+# been updated to pass real values keeps rendering unchanged.
+static func apply_view(mat: Material, sun_dir: Vector3, detail: float,
+		alt_km: float = -1.0, atmo_top_km: float = -1.0) -> void:
 	if mat is ShaderMaterial:
 		var sm := mat as ShaderMaterial
 		if sun_dir.length_squared() < 0.0001:
 			sun_dir = Vector3(0.72, 0.28, 0.63)
 		sm.set_shader_parameter("sun_dir", sun_dir.normalized())
 		sm.set_shader_parameter("detail", clampf(detail, 0.0, 1.0))
+		sm.set_shader_parameter("ship_alt_km", alt_km)
+		sm.set_shader_parameter("atmo_top_km", atmo_top_km)
+
+
+# Additive, not folded into apply_view(): apply_view is called for every body
+# every frame from several call sites (tools/render_terrain.gd, test_sol_*.gd),
+# and widening its signature would touch all of them. planet_system.gd calls
+# this right alongside apply_view with the SAME uv_offset it hands
+# CloudLayer.update_for(), so the globe's own cloud pixels and the close-up
+# deck line up at the 35 km handoff instead of jumping.
+static func set_cloud_drift(mat: Material, uv_offset: Vector2) -> void:
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("cloud_uv_offset", uv_offset)
+
+
+# Same reasoning as set_cloud_drift: _cook_material() binds cloud_amount from
+# the RAW recipe exactly once at construction, so the far globe kept showing
+# full cloud cover regardless of GameState.cloud_quality (player report
+# 2026-09-09b: "far globe ignores the setting") — only the close-up CloudLayer
+# deck (which reads its recipe fresh every update_for call) obeyed the
+# setting. planet_system.gd's refresh calls this alongside set_cloud_drift
+# with PlanetSystem.cloud_recipe_for_quality()'s scaled amount, cached per
+# body so it is only pushed again when the quality index actually changes.
+static func set_cloud_amount(mat: Material, cloud_amount: float) -> void:
+	if mat is ShaderMaterial:
+		(mat as ShaderMaterial).set_shader_parameter("cloud_amount", clampf(cloud_amount, 0.0, 1.0))
 
 
 # Bind height/clouds/night when the player is close. Albedo is already on.
-static func ensure_close_maps(mat: Material, recipe: Dictionary) -> void:
+#
+# Player report (2026-09-08, "going towards Earth is super laggy"): PlanetSystem calls this
+# exactly ONCE per body, the first frame it crosses close_enough() — previously every
+# CLOSE_KEYS entry (clouds/night/height/specular/normal, up to 5 files, some 2k/8k) ran
+# through a synchronous load() on the main thread in that single frame, a real hitch
+# category (sync asset load on approach). Now kicked off via
+# ResourceLoader.load_threaded_request and bound in over however many frames the load
+# actually takes — same textures, same flags, just off the frame that crosses the
+# threshold. `async=false` (tools/test_planet_generator.gd only) keeps the old
+# synchronous bind for a unit test that asserts the flags right after the call, with no
+# frame loop alive to drive the poll.
+static func ensure_close_maps(mat: Material, recipe: Dictionary, async: bool = true) -> void:
 	if not mat is ShaderMaterial:
 		return
 	var sm := mat as ShaderMaterial
+	var loop := (Engine.get_main_loop() as SceneTree) if async else null
+	var pending: Array[String] = []
 	for key in CLOSE_KEYS:
 		var flag := _flag_for(key)
 		if float(sm.get_shader_parameter(flag)) > 0.5:
 			continue
-		_bind_tex(sm, recipe, key, _tex_for(key), flag)
+		if loop == null:
+			_bind_tex(sm, recipe, key, _tex_for(key), flag)
+			continue
+		var path := globe_height_path(recipe) if key == "height" else str(recipe.get(key, ""))
+		if _tex_exists(path):
+			ResourceLoader.load_threaded_request(path)
+			pending.append(key)
+		else:
+			sm.set_shader_parameter(flag, 0.0)
+	if loop == null or pending.is_empty():
+		return
+	# Self-disconnecting poll: GDScript lambdas capture outer locals BY VALUE at the
+	# moment the `func() -> void: ...` literal is evaluated, so a lambda cannot refer to
+	# its own (not-yet-assigned) variable to disconnect itself. Box it in a one-element
+	# Array instead — Arrays are reference types, so `poll_box[0]` written AFTER capture
+	# is still visible inside the closure that captured `poll_box`.
+	var poll_box: Array[Callable] = [Callable()]
+	poll_box[0] = func() -> void:
+		if not is_instance_valid(sm):
+			loop.process_frame.disconnect(poll_box[0])
+			return
+		var still: Array[String] = []
+		for key in pending:
+			var path := globe_height_path(recipe) if key == "height" else str(recipe.get(key, ""))
+			var status := ResourceLoader.load_threaded_get_status(path)
+			if status == ResourceLoader.THREAD_LOAD_LOADED:
+				var tex := ResourceLoader.load_threaded_get(path) as Texture2D
+				var flag := _flag_for(key)
+				if tex != null:
+					sm.set_shader_parameter(_tex_for(key), tex)
+					sm.set_shader_parameter(flag, 1.0)
+				else:
+					sm.set_shader_parameter(flag, 0.0)
+			elif status == ResourceLoader.THREAD_LOAD_IN_PROGRESS:
+				still.append(key)
+			else:
+				sm.set_shader_parameter(_flag_for(key), 0.0)
+		pending = still
+		if pending.is_empty():
+			loop.process_frame.disconnect(poll_box[0])
+	loop.process_frame.connect(poll_box[0])
 
 
 static func close_enough(dist: float, radius: float) -> bool:
@@ -750,8 +882,9 @@ static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMate
 	mat.set_shader_parameter("color_air", Vector3(air.r, air.g, air.b))
 	var warm := sun_warm_for(spec)
 	mat.set_shader_parameter("sun_warm", Vector3(warm.r, warm.g, warm.b))
-	var ocean: Color = recipe.get("color_ocean", Color(0.06, 0.22, 0.32))
+	var ocean: Color = recipe.get("color_ocean", DEFAULT_COLOR_OCEAN)
 	mat.set_shader_parameter("color_ocean", Vector3(ocean.r, ocean.g, ocean.b))
+	mat.set_shader_parameter("kind", _kind_id(str(recipe.get("kind", "rocky"))))
 	# The maps themselves, so the shoreline and the albedo resolve at the MAP's
 	# resolution rather than at the mesh's. Ring 3's quads are 10.24 km at 13 km
 	# altitude; a coastline quantised to those is a giant angular wedge.
@@ -865,10 +998,11 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)
+	mat.set_shader_parameter("exposure", surface.exposure)
 	var a: Color = recipe.get("color_a", spec.get("color", Color(0.45, 0.4, 0.35)))
 	var b: Color = recipe.get("color_b", a.lightened(0.18))
 	var land_c: Color = recipe.get("color_land", a)
-	var ocean: Color = recipe.get("color_ocean", Color(0.03, 0.09, 0.22))
+	var ocean: Color = recipe.get("color_ocean", DEFAULT_COLOR_OCEAN)
 	mat.set_shader_parameter("color_a", Vector3(a.r, a.g, a.b))
 	mat.set_shader_parameter("color_b", Vector3(b.r, b.g, b.b))
 	mat.set_shader_parameter("color_land", Vector3(land_c.r, land_c.g, land_c.b))
@@ -879,6 +1013,7 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	mat.set_shader_parameter("kind", _kind_id(kind))
 	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
 	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
+	mat.set_shader_parameter("night_fill", NIGHT_FILL)
 	mat.set_shader_parameter("seed", float(recipe.get("seed", 0.0)))
 	mat.set_shader_parameter("ice_amount", float(recipe.get("ice_amount", 0.12)))
 	mat.set_shader_parameter("land_amount", float(recipe.get("land_amount", 0.32)))
@@ -889,6 +1024,18 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	var air_c: Color = recipe.get("color_air", Color(0.30, 0.56, 1.0))
 	mat.set_shader_parameter("color_air", Vector3(air_c.r, air_c.g, air_c.b))
 	mat.set_shader_parameter("band_count", float(recipe.get("band_count", 9.0 if kind == "gas" else 6.0)))
+	# Mirrors TerrainSampler's _h_stride: Mars/Moon's height maps are the
+	# R=hi/G=lo byte-pack (Godot flattens a real 16-bit PNG to 8-bit on load,
+	# tools/probe_dem16.gd), Earth's stays plain R8. sample_height() in
+	# planet_cook.gdshader decodes with this flag - touch one, touch both.
+	mat.set_shader_parameter("height_rg16", 1.0 if str(recipe.get("height_encoding", "r8")) == "rg16" else 0.0)
+	# planet_cook.gdshader's close-detail colour/water-depth blocks need to
+	# know where "sea level" sits in the raw 0..1 decode - Earth/Moon/Mars now
+	# all carry a signed, non-zero datum (PLANET_GENERATOR.md's DEM calibration
+	# section). Defaults (0.0 / false) reproduce the old constant-based
+	# behaviour bit for bit on any r8/unsigned or mapless body.
+	mat.set_shader_parameter("height_datum", float(recipe.get("height_datum", 0.0)))
+	mat.set_shader_parameter("height_signed", 1.0 if bool(recipe.get("height_signed", false)) else 0.0)
 	_bind_tex(mat, recipe, "albedo", "albedo_tex", "has_albedo")
 	if close:
 		for key in CLOSE_KEYS:
@@ -941,8 +1088,19 @@ static func _flag_for(key: String) -> String:
 			return "has_albedo"
 
 
+# The GPU (globe) material and the CPU TerrainSampler intentionally read
+# different resolutions of the same DEM (PLANET_GENERATOR.md, VRAM section):
+# "height_globe" (4k, optional) for any GPU bind, "height" (8k) for
+# TerrainSampler's raw-byte CPU sampler only. Every GPU bind of the height
+# texture goes through this one helper so there is exactly one place that
+# knows the fallback rule - never inline recipe.get("height", ...) for a
+# shader_parameter bind.
+static func globe_height_path(recipe: Dictionary) -> String:
+	return str(recipe.get("height_globe", recipe.get("height", "")))
+
+
 static func _bind_tex(mat: ShaderMaterial, recipe: Dictionary, key: String, tex_u: String, flag_u: String) -> void:
-	var path := str(recipe.get(key, ""))
+	var path := globe_height_path(recipe) if key == "height" else str(recipe.get(key, ""))
 	if _tex_exists(path):
 		var tex := load(path) as Texture2D
 		if tex != null:

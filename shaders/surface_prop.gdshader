@@ -7,6 +7,11 @@ uniform float air_amount = 0.0;
 uniform float haze_density = 1.0;
 uniform float haze_km = 70.0;
 uniform float ice_surface = 0.0;
+// Same per-body gain as shaders/planet_color.gdshaderinc's `exposure` (bound
+// from SurfacePatch.bind_recipe, see PLANET_GENERATOR.md "Exposure") - folded
+// into the lit term rather than ALBEDO so a rock doesn't float bright/dark
+// against the ground it stands on when the ground's own gain changes.
+uniform float exposure : hint_range(1.0, 4.0) = 1.0;
 varying vec3 world_normal;
 varying vec3 local_point;
 
@@ -21,7 +26,7 @@ void fragment() {
 	float seam = 0.5 + 0.5 * sin(local_point.y * 42.0 + sin(local_point.x * 11.0) * 1.5);
 	vec3 stone = pow(COLOR.rgb, vec3(2.2)) * (0.78 + 0.18 * grit + 0.12 * seam);
 	stone = mix(stone, vec3(0.46, 0.66, 0.76), ice_surface * 0.5);
-	float lit = 0.06 + 0.94 * max(dot(n, normalize(sun_dir)), 0.0);
+	float lit = (0.06 + 0.94 * max(dot(n, normalize(sun_dir)), 0.0)) * exposure;
 	float haze = clamp((1.0 - exp(-length(VERTEX) / haze_km)) * air_amount * haze_density, 0.0, 1.0);
 	ALBEDO = mix(stone * lit, color_air * lit, haze);
 }

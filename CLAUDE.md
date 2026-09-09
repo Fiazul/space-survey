@@ -23,7 +23,8 @@ scenes/Main.tscn (one-node stub, boots res://scripts/core/main.gd)
   │    (SystemDB, MissionDB are static RefCounted classes, NOT autoloads — global
   │     class_name only, no state, no registration needed)
   │
-  ├─ flight/   Ship, ShipMesh, FlightMode, TurnCarry, TouchControls, WedgeFighterDesign
+  ├─ flight/   Ship, ShipMesh, FlightMode, AnchorFrame, TurnCarry, TouchControls,
+  │            WedgeFighterDesign
   ├─ world/    PlanetSystem, PlanetGenerator, SurfaceRecipe, SurfacePatch,
   │            TerrainSampler, Starfield, GalaxyModel, Props
   ├─ travel/   Wormhole, Navigator, PlatformTeleport
@@ -38,6 +39,13 @@ type name, not by path. Stateful cross-cutting services are Godot **autoloads** 
 idiomatic concession); static lookup tables (`SystemDB`, `MissionDB`) stay plain
 `RefCounted` classes. Autoload init order is load-bearing — do not read one autoload's
 state from another's `_ready()` without checking ordering in `project.godot`.
+
+**Why the ship's position is anchored** (docs/adr/0002): `Vector3` is 32-bit in this engine
+build, so an Earth-centred coordinate near Venus has a ~14 km ULP and a 150 m substep rounds to
+zero — the ship froze. `Ship` holds (`anchor_name`, `anchor_off`) instead: the nearest body and
+the offset from its centre. Every cross-body subtraction happens in 64-bit scalars
+(`Ephemeris.rel_km` / `AnchorFrame`) before it is packed into a `Vector3`. `Ship.true_pos` is a
+property, not state — a lossy absolute view for boot/arrival/respawn/save only.
 
 **Why one shared height function** (PLANET_GENERATOR.md): `TerrainSampler` is the ONLY
 place ground height is computed. The ring mesh, the contact-kill test, and surface props
@@ -72,13 +80,14 @@ Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 godot --headless --script tools/test_surface_recipes.gd
 # → "surface_recipes: OK"
 ```
-Run all SceneTree-based tests in a loop (skips the 5 scene-based ones below, `timeout 120`
+Run all SceneTree-based tests in a loop (skips the 6 scene-based ones below, `timeout 120`
 per file so a hang doesn't stall the whole loop):
 ```
 for f in tools/test_*.gd; do
   case "$f" in
-    tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|tools/test_ship_roster.gd|\
-    tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
+    tools/test_anchor_frame.gd|tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|\
+    tools/test_dem_calibration.gd|tools/test_ship_roster.gd|tools/test_surface_integration.gd|\
+    tools/test_wedge_fighter.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -94,8 +103,8 @@ Scene-based tests (`extends Node3D` / `extends Node`, need a live scene tree) �
 godot --headless tools/test_surface_integration.tscn
 # → "surface_integration: OK"
 ```
-Same form for `test_ship_roster.tscn`, `test_wedge_fighter.tscn`, `test_chase_rig.tscn`,
-`test_base_basic_pbr.tscn`.
+Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_wedge_fighter.tscn`,
+`test_chase_rig.tscn`, `test_base_basic_pbr.tscn`, `test_dem_calibration.tscn`.
 
 Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail).
 **Plain `--headless` captures nothing** — no GL context, so `get_viewport().get_texture()`
@@ -140,6 +149,10 @@ runs it.
 - Always `git mv` a `.gd` file WITH its sibling `.gd.uid` in the same commit. Never move
   only the `.gd` — Godot regenerates the UID and breaks every `.tscn`/preload reference to
   it (docs/restructure/NOTES.md).
+- Always route cross-body distance through the anchored helpers (`Ephemeris.rel_km`,
+  `Ship.to_body`, `Ship.rel_to`). Never subtract two absolute coordinates in a `Vector3` for a
+  Sol body — `Vector3` is 32-bit here and the residue you want is smaller than the ULP
+  (docs/adr/0002).
 - Always use held references / autoloads for cross-module calls, matching the existing
   pattern. Never introduce a signal-heavy rewrite of an area you're not already touching —
   this codebase is intentionally direct-call, not event-driven.
@@ -214,7 +227,8 @@ expected; per-line/per-function narration is not.
 | `CONTEXT.md` | Domain glossary — the project's vocabulary + "_Avoid_" lists per term |
 | `PLANET_GENERATOR.md` | The planet/terrain pipeline contract (recipe → cook → terrain) |
 | `NEEDS-YOUR-EYES.md` | Standing physics/design constraints + open visual-review questions a human must judge (llvmpipe software renderer can't judge appearance) |
-| `docs/SESSION-*.md` | Dated session notes across sessions (two exist: `2026-08-18-sol-first-pass.md`, `2026-09-04-skin-band.md`) |
+| `docs/ROADMAP.md` | Living plan on the current axis: visual view + gameplay feel toward the reference frame; update when items land |
+| `docs/SESSION-*.md` | Dated session notes across sessions (`2026-08-18-sol-first-pass.md`, `2026-09-04-skin-band.md`, `2026-09-09-recipe-goal.md` — the last is the pickup note for uncommitted work) |
 | `CREDITS.md` | Asset credits — what's code-generated vs. free/AI-generated, and where from |
 | `STARFIELD.md` | How the real-catalogue star field is built and rendered |
 | `TAB_TARGETING.md` | How nose-aim Tab-targeting picks and cycles candidates |

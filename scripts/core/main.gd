@@ -5,12 +5,13 @@ extends Node3D
 # plain references — no @export drag-and-drop, so it just works on open.
 #
 # Floating origin: the Ship node stays pinned at (0,0,0) and only rotates. Its
-# "true" position is tracked as data (ship.true_pos). Every body is rendered at
-# (body.true_pos - ship.true_pos), and the starfield is a fixed backdrop on the
+# position is tracked as data, ANCHORED to the nearest body (docs/adr/0002:
+# ship.anchor_name + ship.anchor_off). Every body is rendered at its offset from
+# the ship in that frame, and the starfield is a fixed backdrop on the
 # world root (NOT a child of the ship), so it doesn't spin with the ship.
 #
 # Update order matters and is driven explicitly here: the ship integrates its
-# motion first, then the planet system reads the fresh true_pos, then the HUD.
+# motion first, then the planet system reads the fresh anchor + offset, then the HUD.
 
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way backdrop; loomed toward the core on the voyage
@@ -22,12 +23,18 @@ var wormhole: Wormhole
 var combat: Combat
 @onready var audio := GameAudio   # autoload (kept as alias so main.audio accessors still work)
 var settings: SettingsMenu
+var dev_sites: DevSitesPanel   # Ctrl+P: jump straight to a Sol body/park/landmark
 var map: StarMap
 var platform_tp: PlatformTeleport   # isolated platform fast-travel console (not the star map)
 var tutor: Tutor                    # new-game onboarding tip notifications
 var reward_card: RewardCard         # capture celebration card (auto-reward + fade-out)
 var _fresh_game := false            # true when there was no save → start the tutorial
 var quest_log: QuestLog
+
+# Perf profiling (2026-09-08 lag investigation): gated behind PERF_PROFILE=1 so it costs
+# nothing in normal play. tools/_perf_earth_approach.gd reads perf_timings each frame.
+var perf_timings := {}
+@onready var _perf_profile := OS.get_environment("PERF_PROFILE") == "1"
 @onready var planet_data := PlanetData   # autoload
 var planet_info: PlanetInfo
 var navigator: Navigator
@@ -88,6 +95,8 @@ var _perf_t := 0.0                # throttle for the perf text update
 var _saved_system := ""
 var _saved_pos := Vector3.ZERO
 var _has_saved_pos := false
+var _saved_anchor := ""           # anchored save (docs/adr/0002); "" = a pre-anchor save
+var _saved_off := Vector3.ZERO
 var _saved_ship_index := -1
 var _autosave_t := 5.0            # periodic position autosave (also guards against the crash)
 var _scan := 0.0             # scan progress 0..1 of the nearest body
@@ -143,7 +152,7 @@ var music: MusicDirector
 
 # Sol start is sunlit geostationary (42,157 km from Earth's centre). Earth is
 # day-lit in front of you; the Sun is behind the camera. See Ephemeris.geo_start_pos.
-# Largest sane true_pos magnitude (units). In-system play keeps true_pos to ~1e5 units at most
+# Largest sane offset-from-anchor magnitude (units). In-system play keeps it to ~1e5 units at most
 # (it resets to a small local coord on every arrival), and the galactic drive no longer moves it.
 # ~1e10 (≈1200 ly) is far above anything legitimate yet far below a corrupt ~8.7e11; a saved
 # position beyond it is discarded on load. See _restore_location.
@@ -167,8 +176,9 @@ func _ready() -> void:
 	ship = Ship.new()
 	add_child(ship)
 	ship.load_customization(GameState.customization)
-	ship.true_pos = Ephemeris.geo_start_pos()
-	ship.face_toward(-ship.true_pos)   # open looking at Earth (the origin)
+	ship.set_anchor("Earth")
+	ship.anchor_off = Ephemeris.geo_start_pos()
+	ship.face_toward(-ship.anchor_off)   # open looking at Earth (the origin)
 	ship.newton = true                 # Sol: real pull, parked spawn falls
 
 	# Chase camera lives on the world root; the ship drives its transform each
@@ -190,7 +200,7 @@ func _ready() -> void:
 	planets = PlanetSystem.new()
 	planets.speed_zones = false   # Sol 1:1 slice: speed pass comes later
 	add_child(planets)
-	planets.refresh(ship.true_pos, 0.0)
+	planets.refresh(ship.anchor_off, 0.0, ship.anchor_name)
 	ship.gravity = planets.gravity   # first fly already feels the pull
 
 	# Two shadowless lights give the ship/Earth/station CONTRAST and form without
@@ -273,6 +283,12 @@ func _ready() -> void:
 	settings.main = self         # for the "Reset Progress" button
 	add_child(settings)
 
+	# Dev-teleport panel (Ctrl+P): jump straight to any Sol body/park/landmark.
+	dev_sites = DevSitesPanel.new()
+	dev_sites.ship = ship
+	dev_sites.main = self
+	add_child(dev_sites)
+
 	# Waypoint navigator (Tab) + corner radar.
 	var nav_canvas := CanvasLayer.new()
 	add_child(nav_canvas)
@@ -335,24 +351,28 @@ func _restore_location() -> void:
 	if _saved_system != "" and _saved_system != current_system:
 		_arrive(_saved_system)
 	# Guard against a corrupt save (the old galactic-drive bug could leave an astronomical
-	# coordinate, ~8.7e11 units). true_pos is ALWAYS a small local coord by design, so anything
+	# coordinate, ~8.7e11 units). The offset is ALWAYS a small local coord by design, so anything
 	# this enormous is garbage — drop it and keep the arrival/START position instead of restoring
 	# nonsense (which would re-show the piled-up "From Earth" number and look unfixed).
 	if _has_saved_pos and _saved_pos.length() > MAX_SANE_POS:
 		_has_saved_pos = false
-	if _has_saved_pos and _saved_pos.length() > 0.001:
+	if _saved_anchor != "" and Ephemeris.has_pos(_saved_anchor) and _saved_off.length() < MAX_SANE_POS:
+		_anchor_ship(_saved_anchor)
+		ship.anchor_off = _saved_off
+		ship.face_toward(-_saved_off)
+	elif _has_saved_pos and _saved_pos.length() > 0.001:
 		ship.true_pos = _saved_pos
 		ship.face_toward(-_saved_pos)
 	# Pre-1:1 Sol saves sit inside the real Earth. Night-side GEO saves stare at
 	# a black planet that covers the Sun — snap those to the sunlit start too.
-	if current_system == SystemDB.SOL:
-		var r := ship.true_pos.length()
+	if current_system == SystemDB.SOL and ship.anchor_name == "Earth":
+		var r := ship.anchor_off.length()
 		var sun := Ephemeris.scene_pos("Sun")
 		var inside := r < Ephemeris.EARTH_RADIUS_KM + 200.0
-		var night_geo := r < Ephemeris.GEO_RADIUS_KM * 1.2 and sun.dot(ship.true_pos) < 0.0
+		var night_geo := r < Ephemeris.GEO_RADIUS_KM * 1.2 and sun.dot(ship.anchor_off) < 0.0
 		if inside or night_geo:
-			ship.true_pos = Ephemeris.geo_start_pos()
-			ship.face_toward(-ship.true_pos)
+			ship.anchor_off = Ephemeris.geo_start_pos()
+			ship.face_toward(-ship.anchor_off)
 	if _saved_ship_index >= 0 and _saved_ship_index < ship.ship_count() \
 			and _saved_ship_index != ship.current_index():
 		ship.swap_ship(_saved_ship_index)
@@ -368,10 +388,48 @@ func _notification(what: int) -> void:
 		_save_profile()
 
 
+# The ship's physical frame follows the nearest body (docs/adr/0002). The switch
+# is exact — the offset is rebased in doubles — so no hysteresis is needed, but
+# everything that shares the ship's frame has to come along.
+func _reanchor_to_nearest() -> void:
+	if not ship.newton:
+		return
+	_anchor_ship(planets.nearest_name)
+
+
+func _anchor_ship(who: String) -> void:
+	if who == "" or who == ship.anchor_name or not Ephemeris.is_anchorable(who):
+		return   # craft (Voyager 1/2) drift — anchoring there would clamp the ship at a
+		         # moving point while the render drifts away (docs/adr/0002 finding 3)
+	combat.shift_frame(ship.set_anchor(who))
+
+
+func _perf_t0() -> int:
+	return Time.get_ticks_usec() if _perf_profile else 0
+
+
+func _perf_mark(key: String, t0: int) -> void:
+	if _perf_profile:
+		perf_timings[key] = Time.get_ticks_usec() - t0
+
+
 func _process(delta: float) -> void:
 	_update_holds(delta)
+	var _pt := _perf_t0()
 	ship.fly(delta)
-	planets.refresh(ship.true_pos, delta)
+	_perf_mark("ship_fly", _pt)
+	if ship.pending_frame_shift != Vector3.ZERO:
+		combat.shift_frame(ship.pending_frame_shift)
+		ship.pending_frame_shift = Vector3.ZERO
+	_pt = _perf_t0()
+	# Outside Sol the anchor is Earth internally (ADR §6 — anchor_off IS the
+	# absolute position there), but PlanetSystem must see "" so it keeps the
+	# plain subtraction against the arcade system's OWN bodies rather than
+	# rel_km-ing against Sol's Earth/Sun (finding 4).
+	var refresh_anchor := ship.anchor_name if current_system == SystemDB.SOL else ""
+	planets.refresh(ship.anchor_off, delta, refresh_anchor)
+	_perf_mark("planets_refresh", _pt)
+	_reanchor_to_nearest()
 	ship.speed_limit = planets.speed_limit   # eases the ship down near a body
 	# Hand the ship the SAME height function the ground rings and the contact kill
 	# read, so its substep ground clamp cannot disagree with either.
@@ -400,13 +458,17 @@ func _process(delta: float) -> void:
 		ship.core_dist_ly = galaxy.remaining()
 		galaxy.advance_ly(ship.galactic_loom_rate() * delta)
 		_update_core_hazard(galaxy.remaining(), delta)
-	props.update(ship.true_pos, delta)
+	_pt = _perf_t0()
+	props.update(ship, delta)
+	_perf_mark("props_update", _pt)
 	# Harbour speed-cap: ease down near stations/probes AND near wormholes (so you can line
 	# up and dive in instead of rocketing past) — whichever zone is slowing you most wins.
-	ship.struct_limit = minf(props.struct_speed_limit, wormhole.slow_limit(ship.true_pos))
-	if wormhole.update(ship.true_pos, delta):
+	ship.struct_limit = minf(props.struct_speed_limit, wormhole.slow_limit(ship))
+	_pt = _perf_t0()
+	if wormhole.update(ship, delta):
 		_ob_note("wormhole")
 		_arrive(wormhole.dest_id)
+	_perf_mark("wormhole_update", _pt)
 	# Combat runs in normal flight (not mid-transit, not docked). Docking at a
 	# station is a safe harbor — the fight pauses so you can swap ships in peace.
 	var want_fire := false
@@ -425,7 +487,9 @@ func _process(delta: float) -> void:
 			want_fire = captured and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
 			# Right-click fires the nose laser beam (laser-equipped hulls only, e.g. Raptor II).
 			want_laser = captured and ship.has_laser and Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+		_pt = _perf_t0()
 		combat.update(ship, want_fire, delta, want_laser)
+		_perf_mark("combat_update", _pt)
 		ship.combat_lock = combat.in_combat()       # no interstellar speed mid-fight
 	else:
 		ship.combat_lock = false
@@ -445,12 +509,16 @@ func _process(delta: float) -> void:
 	_update_teleport(delta)
 	_update_dock_ui()
 	if ship.autopilot:
-		ship.autopilot_target = ship.true_pos + planets.rel_of(ship.autopilot_name)
+		ship.autopilot_target = ship.anchor_off + planets.rel_of(ship.autopilot_name)
+	_pt = _perf_t0()
 	_update_navigator()
 	_update_minimap()
 	_update_wormhole_radar()
 	_update_scan(delta)
+	_perf_mark("nav_minimap_scan", _pt)
+	_pt = _perf_t0()
 	music.update(delta, _is_interstellar(), ship.ship_name_at(ship.current_index()))
+	_perf_mark("music_update", _pt)
 	_update_onboarding()
 	_update_quests()
 	hud.lore_t = maxf(hud.lore_t - delta, 0.0)
@@ -462,7 +530,9 @@ func _process(delta: float) -> void:
 		_autosave_t = 5.0
 		if not ship.transiting and not _tp_active:
 			_save_profile()
+	_pt = _perf_t0()
 	hud.refresh()
+	_perf_mark("hud_refresh", _pt)
 
 
 # Are we "interstellar" — flown out of the limited-speed area into open/FTL space?
@@ -500,7 +570,7 @@ func _update_minimap() -> void:
 			role = MiniMap.NEAREST
 		blips.append({ "local": binv * rel, "dist": rel.length(), "role": role, "name": bname })
 	# All known wormholes, live (not just the nearest) — each its own gold blip on the radar.
-	for wp in wormhole.portals_rel(ship.true_pos):
+	for wp in wormhole.portals_rel(ship):
 		var wrel: Vector3 = wp.rel
 		blips.append({ "local": binv * wrel, "dist": wrel.length(), "role": MiniMap.WORMHOLE,
 			"name": "→ %s" % SystemDB.display_name(wp.dest) })
@@ -562,7 +632,7 @@ func _update_scan(delta: float) -> void:
 			and not ship.transiting and not docked:
 		# Bigger bodies (stars) get a tougher boss + bigger waves (power scales with radius).
 		var power: float = clampf(planets.nearest_radius / 7.0, 1.0, 3.0)
-		combat.set_guardians(ship.true_pos + planets.rel_of(name), name, power)
+		combat.set_guardians(ship.anchor_off + planets.rel_of(name), name, power)
 		_last_waves_cleared = 0       # fresh fight → reset the wave-announce tracker
 
 	# Capturable once ALL of THIS body's defending waves are beaten (finite — see combat).
@@ -693,6 +763,10 @@ func _load_profile() -> void:
 		_saved_system = str(cfg.get_value("player", "system", ""))
 		_has_saved_pos = cfg.has_section_key("player", "pos")
 		_saved_pos = cfg.get_value("player", "pos", Vector3.ZERO)
+		# Anchored save (docs/adr/0002). A pre-anchor save has only "pos", which
+		# is Earth-centred by definition — the empty anchor decomposes onto Earth.
+		_saved_anchor = str(cfg.get_value("player", "anchor", ""))
+		_saved_off = cfg.get_value("player", "off", Vector3.ZERO)
 		_saved_ship_index = int(cfg.get_value("player", "ship_index", -1))
 	else:
 		GameState.reset()    # autoload survives scene reload — clear stale memory on a fresh/reset game
@@ -713,6 +787,8 @@ func _save_profile() -> void:
 		if not ship.transiting and not _tp_active and not _skin_dying:
 			cfg.set_value("player", "system", current_system)
 			cfg.set_value("player", "pos", ship.true_pos)
+			cfg.set_value("player", "anchor", ship.anchor_name)
+			cfg.set_value("player", "off", ship.anchor_off)
 			cfg.set_value("player", "ship_index", ship.current_index())
 	cfg.save(PROFILE_PATH)
 
@@ -886,7 +962,7 @@ func _aim_ranked() -> Array:
 	# so you can target whichever one the ray points at. The closest-to-line portal is the pick.
 	_aim_wh_dest = ""
 	var wh_ang := TAB_WH_ANGLE
-	for p in wormhole.portals_rel(ship.true_pos):
+	for p in wormhole.portals_rel(ship):
 		var wrel: Vector3 = p.rel
 		var t2: float = wrel.dot(aim)
 		if t2 <= 0.0:
@@ -1057,7 +1133,7 @@ func _route_to(sys: String) -> Dictionary:
 	var hop := SystemDB.next_hop(current_system, sys, Callable(self, "is_edge_known"))
 	if hop == "":
 		return { "ok": false }
-	return { "ok": true, "hop": hop, "rel": wormhole.portal_rel_for(hop, ship.true_pos) }
+	return { "ok": true, "hop": hop, "rel": wormhole.portal_rel_for(hop, ship) }
 
 
 # Label for a Tab target — its real name once scanned, else "Unknown <kind>" so the player
@@ -1085,7 +1161,7 @@ func _mark_index(name: String, wh := "") -> int:
 # Resolve a waypoint entry { name, wh } to its current render-space offset.
 func _waypoint_rel(name: String, wh := "") -> Vector3:
 	if name == "Wormhole":
-		return wormhole.portal_rel_for(wh, ship.true_pos) if wh != "" else wormhole.portal_rel(ship.true_pos)
+		return wormhole.portal_rel_for(wh, ship) if wh != "" else wormhole.portal_rel(ship)
 	return planets.rel_of(name)
 
 
@@ -1217,7 +1293,7 @@ func _current_objective() -> Dictionary:
 func _nearest_gate_objective() -> Dictionary:
 	if wormhole == null:
 		return {}
-	var np := wormhole.nearest_portal(ship.true_pos)
+	var np := wormhole.nearest_portal(ship)
 	return {} if np.is_empty() else { "name": str(np.name), "rel": np.rel }
 
 func _fmt_nav_dist(u: float) -> String:
@@ -1515,8 +1591,11 @@ func _update_skin_kill(delta: float) -> void:
 		return
 	if planets.nearest_dist >= INF or planets.nearest_radius <= 0.0:
 		return
-	if impact and planets.nearest_name == "Earth":
-		_skin_begin("Earth")
+	# The ship's substep clamp fires in its ANCHOR's frame, so it is authoritative
+	# wherever the anchor and the nearest body agree — not just at Earth. Anywhere
+	# else the sweep below owns the kill.
+	if impact and planets.nearest_name == ship.anchor_name:
+		_skin_begin(planets.nearest_name)
 		return
 	var sampler := planets.terrain_sampler_for(planets.nearest_name)
 	if sampler == null:
@@ -1552,6 +1631,7 @@ func _skin_begin(body: String) -> void:
 	ship.locked = true
 	ship.velocity = Vector3.ZERO
 	ship.dev_speed = false
+	FlightMode.dev_fast_air = false
 	if planets != null and planets.has_method("hush_surface"):
 		planets.hush_surface()
 	hud.flash(1.0, Color(0.9, 0.05, 0.04))
@@ -1560,7 +1640,6 @@ func _skin_begin(body: String) -> void:
 
 func _skin_finish() -> void:
 	var who := _skin_body
-	var dest: Vector3 = Ephemeris.sweet_spot(who)
 	hud.set_death(false)
 	hud.set_menu("")
 	_skin_dying = false
@@ -1568,9 +1647,16 @@ func _skin_finish() -> void:
 	_skin_body = ""
 	ship.locked = false
 	ship.reset_mesh_pose()
-	ship.true_pos = dest
+	# Park in the dead body's OWN frame: anchor there first, then the offset is
+	# the sweet spot measured from its centre — no absolute round-trip.
+	var park := who
+	if who == "" or who == "Sun":
+		park = "Earth"
+	_anchor_ship(park)
+	ship.anchor_off = Ephemeris.geo_start_pos() if ship.anchor_name == "Earth" \
+		else Ephemeris.sweet_spot_off(ship.anchor_name)
 	ship.velocity = Vector3.ZERO
-	ship.face_toward(-dest if who == "Earth" or who == "" else (Ephemeris.scene_pos(who) - dest))
+	ship.face_toward(-ship.anchor_off)
 	combat.player_hp = ship.max_hp
 	hud.toast = "▲  respawn  ·  safe park above %s" % (who if who != "" else "Earth")
 	hud.toast_t = 3.2
@@ -1610,10 +1696,12 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 	if ship.camera:
 		ship.camera.far = Ephemeris.CAM_RENDER_FAR_KM
 	# Fly-arrive passes your preserved local offset (no teleport); wormhole/map use the system's pad.
-	ship.true_pos = at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id)
+	# Every arrival coordinate is a small LOCAL one, so the frame resets to Earth's origin.
+	ship.set_anchor("Earth")
+	ship.anchor_off = at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id)
 	ship.transiting = false
 	galaxy.reset_distance()                   # back in a normal system → core is ~26,000 ly away again
-	ship.face_toward(-ship.true_pos)          # look back toward the system's star
+	ship.face_toward(-ship.anchor_off)        # look back toward the system's star
 	# Show this system's neighbour wormholes that the player KNOWS — fly through any to
 	# transit straight to that neighbour (no central hub in the loop anymore).
 	wormhole.set_portals(_known_portals(system_id))
@@ -1645,16 +1733,16 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 		if lore != "":
 			hud.show_lore("%s\n\n%s" % [SystemDB.display_name(system_id), lore])
 	_save_profile()                                # persist visited set + any reward
-	print("[wormhole] arrived at %s — ship.true_pos.length()=%.2f (must be small)"
-		% [SystemDB.display_name(system_id), ship.true_pos.length()])
+	print("[wormhole] arrived at %s — anchor %s, offset %.2f (must be small)"
+		% [SystemDB.display_name(system_id), ship.anchor_name, ship.anchor_off.length()])
 
 
 # Platform-network arrival: instead of the far generic arrival point, set down right beside
 # the destination platform so you emerge nose-on and already in the docking ring (no long
 # fly-back). props.set_system (called from _arrive) has just placed this system's dock, so
 # props.dock_pos is current. We sit a short hop off it on the star-facing side and aim the
-# nose at the platform. (Bodies render at true_pos - ship.true_pos, so the dock renders at
-# props.dock_pos - ship.true_pos — that's what we face toward.)
+# nose at the platform. (Everything renders at its offset from the ship, so the dock
+# renders at ship.rel_to(props.dock_pos) — that's what we face toward.)
 func _land_beside_dock() -> void:
 	if not props.has_dock:
 		return
@@ -1663,7 +1751,7 @@ func _land_beside_dock() -> void:
 	var gap: float = clampf(props.dock_range * 0.6, 35.0, 60.0)   # close, but inside the ring
 	ship.true_pos = st + to_star * gap
 	ship.velocity = Vector3.ZERO
-	ship.face_toward(st - ship.true_pos)     # nose dead-on the platform (rendered position)
+	ship.face_toward(ship.rel_to(st))        # nose dead-on the platform (rendered position)
 
 
 # --- Docking at the station + ship swap ---
@@ -1674,12 +1762,15 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key: int = event.keycode
-	if key == KEY_F:
+	if key == KEY_P and event.ctrl_pressed:
+		dev_sites.toggle()
+		get_viewport().set_input_as_handled()
+	elif key == KEY_F:
 		# One interact key: undock if docked, else open the wormhole if near it,
 		# else dock if near the station.
 		if docked:
 			_set_docked(false)
-		elif wormhole.in_range(ship.true_pos):
+		elif wormhole.in_range(ship):
 			wormhole.start_transit()
 			ship.transiting = true
 		elif _dock_in_range:
@@ -1772,13 +1863,13 @@ func _update_dock_ui() -> void:
 	var dock_name := props.dock_name
 	var dock_range := props.dock_range
 	if current_system == SystemDB.INTERSTELLAR:
-		var st := wormhole.nearest_station(ship.true_pos)
+		var st := wormhole.nearest_station(ship)
 		has_dock = not st.is_empty()
 		if has_dock:
 			dock_pos = st.pos
 			dock_name = st.name
 			dock_range = st.range
-	var dock_dist := (dock_pos - ship.true_pos).length() if has_dock else INF
+	var dock_dist := ship.rel_to(dock_pos).length() if has_dock else INF
 	_dock_in_range = dock_dist < dock_range
 	# Force-slow the ship as it enters the landing zone (smooth, proximity-based):
 	# 0 at the outer edge (dock_range + DOCK_SLOW_MARGIN), 1 once inside the pad.
@@ -1793,7 +1884,7 @@ func _update_dock_ui() -> void:
 			hud.set_prompt("» Press F to dock at %s «" % dock_name)
 		elif props.probe_in_range:
 			hud.set_prompt(_probe_readout())   # drift up to a probe -> monster data
-		elif wormhole.in_range(ship.true_pos):
+		elif wormhole.in_range(ship):
 			hud.set_prompt("» Press F to enter the wormhole to %s  (%.0f ly) «"
 				% [SystemDB.display_name(wormhole.dest_id), wormhole.dest_ly])
 		else:

@@ -1308,11 +1308,12 @@ func refresh() -> void:
 	_reticle.set_target(1.0 if firing else 0.0, kick)
 	# Distance from Earth (the scene origin). Astronomical distances span a huge
 	# range, so show AU in-system and switch to ly once it's large.
-	var dist_au := float(ship.true_pos.length()) * AU_PER_UNIT
-	# On the galactic voyage the authoritative distance is the core scanner, not true_pos (which
+	var dist_au := float(ship.to_body("Earth").length()) * AU_PER_UNIT
+	# On the galactic voyage the authoritative distance is the core scanner, not the flown
+	# distance (which
 	# only creeps at her ordinary warp while the galaxy looms the real 26,000 ly). Once she's made
 	# any progress toward the core, show travelled = total − remaining; flying back out winds it to
-	# ~0, and a fresh system arrival resets remaining to total, handing the readout back to true_pos.
+	# ~0, and a fresh system arrival resets remaining to total, handing the readout back to it.
 	if ship.has_galactic_drive and (ship.core_total_ly - ship.core_dist_ly) > 0.5:
 		dist_au = (ship.core_total_ly - ship.core_dist_ly) / LY_PER_AU
 	_dist_label.text = "From %s   %s" % [origin_name, _fmt_dist(dist_au)]
@@ -1321,8 +1322,10 @@ func refresh() -> void:
 	if _tape_label != null:
 		_tape_label.visible = ship.newton
 	if ship.newton:
-		var inward := -ship.true_pos.normalized() if ship.true_pos.length_squared() > 0.001 else Vector3.FORWARD
-		var dist := ship.true_pos.length()
+		# No nearby body: fall back to Earth, which is what the origin always meant.
+		var to_earth: Vector3 = ship.to_body("Earth")
+		var inward := to_earth.normalized() if to_earth.length_squared() > 0.001 else Vector3.FORWARD
+		var dist := to_earth.length()
 		var rad := Ephemeris.EARTH_RADIUS_KM
 		var mu := Ephemeris.GM_EARTH
 		var who := "Earth"
@@ -1356,6 +1359,8 @@ func refresh() -> void:
 				tag += " leftover"
 		if ship.dev_speed:
 			tag += "  DEV"
+			if FlightMode.dev_fast_air:
+				tag += "·FASTAIR"
 		if ship.time_rate > 1.0:
 			tag += "  ×%.0f" % ship.time_rate
 		if ship.drop_flash > 0.0:
@@ -1375,6 +1380,13 @@ func refresh() -> void:
 		var air_top := Ephemeris.atmo_top_km(who)
 		if air_top > 0.0:
 			extra += "\nAir     %.0f km top" % air_top
+		var g_mag := ship.last_newton_g.length() / 9.80665e-3
+		var vspeed := -ship.velocity.dot(inward) if dist > 0.001 else 0.0
+		extra += "\nG       %.2f g  ·  Vspd %s%s" % [
+			g_mag, "+" if vspeed >= 0.0 else "-", _fmt_speed(absf(vspeed))]
+		if zone == FlightMode.AIR:
+			extra += "\nMach    %.2f  ·  Load %.0f%%" % [
+				ship.mach_number, ship.air_load * 100.0]
 		if planets != null:
 			if ship.newton and planets.cook_n > 0:
 				extra += "\nCook    %d  · mesh %d  · sky %d" % [

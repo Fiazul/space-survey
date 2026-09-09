@@ -39,6 +39,48 @@ const DRIVE_DECAY := 2.0            # how fast the clock unwinds when you let of
 const ENGINE_SPOOL_TIME := 12.0     # pitch spools up to its cruise note over this long
 const ENGINE_SUSTAIN_PITCH := 0.12  # pitch climbed at full cruise (×pitch_mul per ship)
 
+# --- Air entry wind / rumble ---
+# Both loops are procedural PCM (no asset file) so the whole entry-feel pass ships
+# without new binary assets. Driven by FlightMode.air_load / Ship.mach_number through a
+# LOG mapping (see _log_db_for/wind_db_for/rumble_db_for below), NOT a raw linear clamp.
+# A linear map over air_load's full [0,1] range was wrong at both ends: real controlled
+# flight never exceeds air_load ~= 0.0044 (tools/test_flight_envelope.gd — thrust/drag
+# equilibrium tops out there at every Earth altitude), so a linear map compresses every
+# real-gameplay value into a fraction of a dB near the OFF floor (inaudible), while a
+# DEV tool (F9 thrust and/or FASTAIR drag) saturates air_load to ~1 almost immediately,
+# pinning the old law at its loudest setting — which was LOUDER than the engine's own
+# boost peak (2026-09-09 "air sound too loud" report). air_load == 0 (vacuum) still
+# means both sit at their OFF floor and stop, same rule as every other entry-FX.
+const AIR_WIND_OFF_DB := -60.0        # inaudible floor (matches ENGINE_OFF_DB's silence rule)
+# Cruise reference: test_flight_envelope.gd's steady-cruise air_load, identical at every
+# Earth altitude sampled (0.0013) — the quietest load a controlled dive ever registers.
+const AIR_WIND_ONSET_LOAD := 0.0013
+const AIR_WIND_ONSET_DB := -40.0      # "just audible" hint of wind, not a wash
+# Dive reference: test_flight_envelope.gd's max BOOST air_load (0.0044, also identical
+# at every altitude) x3 - a "screaming dive" harder than any Shift-boost equilibrium the
+# ship's own thrust/drag can sustain in controlled flight, without a DEV tool.
+const AIR_WIND_FULL_LOAD := 0.0132
+# The engine's own loudest moment is ENGINE_LOOP_DB + ENGINE_BOOST_DB = -16 dB (boosting,
+# see the engine block above). Wind must stay >=6 dB under that so the engine roar always
+# reads as the loudest layer even mid-dive-boost - that puts the cap at -22, not the -18
+# a first guess assumed before checking the actual engine peak in this file.
+const AIR_WIND_MAX_DB := -22.0
+# Below onset, wind fades to the OFF floor over this many decades of air_load (log10
+# units) instead of a hard on/off snap - shared by both wind and rumble's floor segment.
+const AIR_FADE_DECADES := 0.6
+
+const AIR_RUMBLE_OFF_DB := -60.0
+# Rumble is gated by air_load * mach_frac - it is the "diving HARD in air" layer, not
+# felt from air presence alone - so its onset/full references are taken from that same
+# product across the envelope, not from air_load in isolation.
+const AIR_RUMBLE_ONSET_LOAD := 0.0007   # max cruise (air_load*mach_frac) across the envelope
+const AIR_RUMBLE_ONSET_DB := -42.0
+const AIR_RUMBLE_FULL_LOAD := 0.0129    # max boost product x3, same "screaming dive" reference
+# A few dB under the wind cap so rumble reads as an undertone beneath the wind layer
+# rather than competing with it (mirrors the old -13 vs -9 relative gap).
+const AIR_RUMBLE_MAX_DB := -26.0
+const AIR_SMOOTH := 3.0   # dB glide rate per second toward whichever target above
+
 var _fire: Array[AudioStreamPlayer] = []
 var _fire_i := 0
 var _explosion: AudioStreamPlayer
@@ -57,6 +99,9 @@ var _eng_on := false            # is the engine currently "running" (loop active
 var _eng_default: AudioStream   # shared authored-ship engine loop
 var _eng_sustain := 0.0         # seconds of continuous driving (drives cruise settle)
 var _engine_duck_db := 0.0      # dB the engine is pulled back (set by main while ship music is up)
+
+var _air_wind: AudioStreamPlayer
+var _air_rumble: AudioStreamPlayer
 
 
 # Pull the engine back under the interstellar ship music. Main feeds this each frame,
@@ -140,6 +185,16 @@ func _ready() -> void:
 	_laser_loop.stream = ls
 	_laser_loop.volume_db = LASER_DB
 	add_child(_laser_loop)
+
+	_air_wind = AudioStreamPlayer.new()
+	_air_wind.stream = _make_wind_noise()
+	_air_wind.volume_db = AIR_WIND_OFF_DB
+	add_child(_air_wind)
+
+	_air_rumble = AudioStreamPlayer.new()
+	_air_rumble.stream = _make_rumble()
+	_air_rumble.volume_db = AIR_RUMBLE_OFF_DB
+	add_child(_air_rumble)
 
 
 # Load an OGG and flag it as looping (no-op / null if the file is missing).
@@ -280,6 +335,127 @@ func play_pickup() -> void:
 	if _pickup != null:
 		_pickup.pitch_scale = randf_range(0.94, 1.02)
 		_pickup.play()
+
+
+# Broadband hiss (one-pole low-passed white noise) - reads as wind, not static. 2s
+# loop; noise camouflages the seam, no crossfade needed.
+func _make_wind_noise() -> AudioStreamWAV:
+	var rate := 22050
+	var n := int(rate * 2.0)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4177
+	var lp := 0.0
+	for i in n:
+		var white := rng.randf_range(-1.0, 1.0)
+		lp += (white - lp) * 0.12
+		data.encode_s16(i * 2, int(clampf(lp * 2.2, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.stereo = false
+	wav.data = data
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_end = n
+	return wav
+
+
+# Low double-sine rumble for a hard dive. 42 Hz / 67 Hz over exactly 2.0s both land on
+# a whole number of cycles (84 / 134), so the loop is genuinely seamless - no click.
+func _make_rumble() -> AudioStreamWAV:
+	var rate := 22050
+	var dur := 2.0
+	var n := int(rate * dur)
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var t := float(i) / float(rate)
+		var s := sin(TAU * 42.0 * t) * 0.6 + sin(TAU * 67.0 * t) * 0.4
+		data.encode_s16(i * 2, int(clampf(s, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.stereo = false
+	wav.data = data
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_end = n
+	return wav
+
+
+# Log-mapped dB for a physics scalar `x` (air_load, or air_load*mach_frac for rumble)
+# given a cruise-audible onset point and a maxed-out "full" point, both in the same
+# units as x. Linear in log10(x) between onset and full; fades to off_db over
+# `decades` below onset; clamps flat at full_db beyond full. Never louder than
+# full_db, never quieter than off_db, monotonic in x by construction — this is the
+# one perceptual-mapping law both air layers (and any future physics-driven audio
+# parameter in this file) should route through instead of a raw linear clamp.
+static func _log_db_for(x: float, onset: float, full: float, onset_db: float,
+		full_db: float, off_db: float, decades: float) -> float:
+	var v := maxf(x, 0.0)
+	if v <= 0.0:
+		return off_db
+	var floor_load := onset / pow(10.0, decades)
+	var l := log(v) / log(10.0)
+	var l_floor := log(floor_load) / log(10.0)
+	var l_onset := log(onset) / log(10.0)
+	var l_full := log(full) / log(10.0)
+	if l <= l_floor:
+		return off_db
+	if l >= l_full:
+		return full_db
+	if l <= l_onset:
+		return lerpf(off_db, onset_db, (l - l_floor) / (l_onset - l_floor))
+	return lerpf(onset_db, full_db, (l - l_onset) / (l_full - l_onset))
+
+
+# Wind loop target dB for a given FlightMode.air_load (see the AIR_WIND_* reference
+# constants above). Static + pure so it is unit-testable without the autoload's node
+# tree — tools/test_air_audio.gd preloads this script and calls it directly.
+static func wind_db_for(air_load: float) -> float:
+	return _log_db_for(air_load, AIR_WIND_ONSET_LOAD, AIR_WIND_FULL_LOAD,
+		AIR_WIND_ONSET_DB, AIR_WIND_MAX_DB, AIR_WIND_OFF_DB, AIR_FADE_DECADES)
+
+
+# Rumble loop target dB for air_load * mach_frac (mach capped the same way this file
+# always has: mach/8, clamped 0..1 — a generous ceiling above anything Sol newton
+# flight reaches without a DEV tool). See the AIR_RUMBLE_* reference constants above.
+static func rumble_db_for(air_load: float, mach: float) -> float:
+	var mach_frac := clampf(mach / 8.0, 0.0, 1.0)
+	var p := air_load * mach_frac
+	return _log_db_for(p, AIR_RUMBLE_ONSET_LOAD, AIR_RUMBLE_FULL_LOAD,
+		AIR_RUMBLE_ONSET_DB, AIR_RUMBLE_MAX_DB, AIR_RUMBLE_OFF_DB, AIR_FADE_DECADES)
+
+
+# Called next to update_engine, every fly() frame. air_load 0 (vacuum) settles both
+# loops back to their OFF floor and stops them - real silence, not just quiet. Both
+# targets - and the play/stop gate itself - are driven off the SAME log law above,
+# not a second raw-scalar threshold (that was the same category of bug: a bare
+# air_load > 0.02 gate never once fired in controlled flight, since air_load tops
+# out at 0.0044 there — the loops literally never started playing).
+func update_air(air_load: float, mach: float, delta: float) -> void:
+	if _air_wind == null or _air_rumble == null:
+		return
+	var mach_frac := clampf(mach / 8.0, 0.0, 1.0)
+	var k := clampf(AIR_SMOOTH * delta, 0.0, 1.0)
+
+	var wind_target := wind_db_for(air_load)
+	_air_wind.volume_db = lerpf(_air_wind.volume_db, wind_target, k)
+	_air_wind.pitch_scale = clampf(lerpf(0.85, 1.35, mach_frac), 0.85, 1.35)
+	if wind_target > AIR_WIND_OFF_DB + 1.0 and not _air_wind.playing:
+		_air_wind.play()
+	elif wind_target <= AIR_WIND_OFF_DB + 1.0 and _air_wind.playing \
+			and _air_wind.volume_db <= AIR_WIND_OFF_DB + 1.0:
+		_air_wind.stop()
+
+	# Diving hard IN the air (both air present and speed high) - not a vacuum groan.
+	var rumble_target := rumble_db_for(air_load, mach)
+	_air_rumble.volume_db = lerpf(_air_rumble.volume_db, rumble_target, k)
+	if rumble_target > AIR_RUMBLE_OFF_DB + 1.0 and not _air_rumble.playing:
+		_air_rumble.play()
+	elif rumble_target <= AIR_RUMBLE_OFF_DB + 1.0 and _air_rumble.playing \
+			and _air_rumble.volume_db <= AIR_RUMBLE_OFF_DB + 1.0:
+		_air_rumble.stop()
 
 
 # Build a ~70 ms low sine blip with a fast decay (no external asset). A slight downward

@@ -15,3 +15,4 @@ Everything the player reads/clicks: HUD readouts and every overlay panel.
 | `quest_log.gd` | feature area | The Mission Log (J) |
 | `reward_card.gd` | feature area | The capture-celebration payout card |
 | `tutor.gd` | feature area | Non-blocking new-game tip notifications |
+| `dev_sites_panel.gd` | feature area | Dev-teleport overlay (Ctrl+P) — jump to any `DevSites` row |

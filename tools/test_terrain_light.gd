@@ -94,14 +94,14 @@ func _normals() -> int:
 	# follows the terrain. Earth's DEM has real grade there.
 	var earth := G.recipe_for({"name": "Earth"})
 	var sampler: TerrainSampler = G.terrain_sampler(earth)
-	var patch = SP.new()
+	var patch := SP.new()
 	patch._ready()
 	patch.bind_body(earth, sampler)
 	var dir := _dir_of(27.95, 86.80)
 	var ceiling: float = G.band_ceiling_km(sampler)
-	for _i in SP.RING_COUNT:
-		patch.update_for(dir * (EARTH_R + 8.0), "Earth", true, EARTH_R, 8.0, 0.02,
-			ceiling, earth, sampler)
+	patch.update_for(dir * (EARTH_R + 8.0), "Earth", true, EARTH_R, 8.0, 0.02,
+		ceiling, earth, sampler)
+	patch.force_ready()
 
 	# Shading data must NOT have leaked into positions. This is the same check
 	# that guards the height function, re-run because normals touch the same mesh.

@@ -1,8 +1,9 @@
 class_name Combat
 extends Node3D
 # Dogfighting in floating-origin space. Aliens, your bolts and their bolts all
-# live in absolute `true_pos` (same frame as the planets) and are rendered at
-# (true_pos - ship.true_pos) every frame, so nothing drifts as you fly.
+# live in the ship's ANCHOR frame (docs/adr/0002) and are rendered at
+# (pos - ship.anchor_off) every frame, so nothing drifts as you fly. When the
+# ship re-anchors, main calls shift_frame() and every entity comes along.
 #
 # You: left-click fires bolts where your nose points (aim by flying). Aliens:
 # big GLB ships that drift toward you and auto-fire. Bolt↔target hits are simple
@@ -109,6 +110,7 @@ var hitmarker := 0.0              # >0 for a moment after a shot lands (HUD read
 
 @onready var audio := GameAudio   # autoload; SFX for fire / explosion
 var planets: PlanetSystem         # set by main; lets gravity wells bend bolts
+var frame_anchor := ""            # body every entity position below is measured from
 
 var _aliens := []                 # { pos, vel, hp, node, fire_cd, alive, respawn }
 var _bolts := []                  # player bolts: { pos, vel, life, node }
@@ -264,11 +266,12 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	# Boost regen pauses WHILE boosting, so holding Shift visibly drains the bar.
 	if not ship.is_boosting:
 		boost_energy = minf(boost_energy + BOOST_REGEN * delta, e_max)
-	var sp: Vector3 = ship.true_pos
+	frame_anchor = str(ship.anchor_name)
+	var sp: Vector3 = ship.anchor_off
 	var fwd: Vector3 = -ship.transform.basis.z
 	# Live muzzle, tracking the hull's cosmetic bank — bolts spawn here AND their trail tail
 	# re-anchors here every frame, so the start stays glued to the nose even as you strafe.
-	var muzzle_now: Vector3 = ship.muzzle_world() if ship.has_method("muzzle_world") else sp + fwd * ship.muzzle - ship.transform.basis.y * ship.muzzle_drop
+	var muzzle_now: Vector3 = ship.muzzle_off() if ship.has_method("muzzle_off") else sp + fwd * ship.muzzle - ship.transform.basis.y * ship.muzzle_drop
 	# You can only fire at regular (sublight) combat speed. main force-slows the ship to it
 	# while you hold fire, so this just blocks the brief moment before the slowdown lands.
 	var slow_enough: bool = ship.velocity.length() <= Ship.WEAPON_FIRE_SPEED * 1.05
@@ -421,9 +424,9 @@ func _fire_ray(ship: Node3D, origin: Vector3, fwd: Vector3, col: Color, dmg: int
 			best_alien = a
 	var beam_len := best_t            # on a hit, the tracer connects exactly to the target
 	if best_alien != null:
-		_damage_alien(best_alien, ship.true_pos, dmg)
-		fx.hit_flash(best_alien.pos - ship.true_pos)
-		fx.enemy_flash(best_alien.pos - ship.true_pos, best_alien.size)
+		_damage_alien(best_alien, ship.anchor_off, dmg)
+		fx.hit_flash(best_alien.pos - ship.anchor_off)
+		fx.enemy_flash(best_alien.pos - ship.anchor_off, best_alien.size)
 		hitmarker = 0.18
 	else:
 		beam_len = SHOT_TRACER_MISS_LEN   # a miss streaks a bullet-length tracer, not a full beam
@@ -515,7 +518,7 @@ func _step_bolts(list: Array, sp: Vector3, delta: float, player: bool, muzzle :=
 		var b = list[i]
 		var prev: Vector3 = b.pos
 		if planets != null:
-			b.vel += planets.gravity_at(b.pos) * delta   # bolts curve through gravity wells
+			b.vel += planets.gravity_at(b.pos, frame_anchor) * delta   # bolts curve through gravity wells
 		b.pos += b.vel * delta
 		b.life -= delta
 		b.node.position = b.pos - sp
@@ -672,7 +675,7 @@ var guard_wave := 0          # current wave (1-based; 0 = none)
 var guard_waves := 0         # total waves for this body
 var guard_waves_cleared := 0 # waves beaten so far (HUD reads this for "Wave k/N cleared")
 var _guard_cleared := false  # all waves down → the body can be captured
-var _guard_center := Vector3.ZERO  # where waves spawn (the body's true position)
+var _guard_center := Vector3.ZERO  # where waves spawn (the body, in the anchor frame)
 var _wave_cd := 0.0          # breather countdown between waves
 
 var _zone_power := 1.0   # current guard zone's strength (scales with the body's size)
@@ -687,6 +690,18 @@ var _pickup_cd := PICKUP_EVERY
 # Boss names live in EnemyFactory.BOSS_NAMES; _spawn_guard_wave picks one per wave from there.
 
 # `power` ~ the body's size; bigger bodies get more waves + tougher bosses. Spawns wave 1.
+# Carry every live entity to a new anchor. `shift` is (new anchor - old anchor);
+# the ship's own offset moved by -shift, so everything it shares a frame with does
+# too. Nodes are re-placed from pos on the next update, so only pos moves here.
+func shift_frame(shift: Vector3) -> void:
+	if shift == Vector3.ZERO:
+		return
+	for list in [_aliens, _bolts, _abolts, _pickups]:
+		for e in list:
+			e.pos -= shift
+	_guard_center -= shift
+
+
 func set_guardians(center: Vector3, body: String, power := 1.0) -> void:
 	clear_guardians()
 	guard_body = body

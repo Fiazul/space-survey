@@ -1,8 +1,8 @@
 class_name Props
 extends Node3D
 # Hand-placed GLB landmarks (space stations, an astronaut, drifting probes) tracked
-# with floating origin: each has a true_pos in game units and is rendered at
-# (true_pos - ship_pos) every frame, just like the planets.
+# with floating origin: each has an absolute position in game units and is rendered at
+# (Ship.rel_to(prop.pos)) every frame, just like the planets.
 #
 # Each prop is tagged with the star system it belongs to; only the props for the
 # currently-loaded system are shown (set_system, called from main on arrival).
@@ -225,7 +225,7 @@ func _park_sol_at_geo() -> void:
 			it.pos = geo + side * 16.0 + Vector3(0.0, 2.0, 0.0)
 
 
-func update(ship_pos: Vector3, delta: float) -> void:
+func update(flyer: Ship, delta: float) -> void:
 	probe_in_range = false
 	probe_name = ""
 	var near_struct := INF
@@ -237,7 +237,7 @@ func update(ship_pos: Vector3, delta: float) -> void:
 			it.pos = it.pos.rotated(Vector3.UP, it.orbit * delta)
 			if it.is_dock:
 				dock_pos = it.pos   # keep the dock prompt tracking the moving station
-		var rel: Vector3 = it.pos - ship_pos  # floating origin
+		var rel: Vector3 = flyer.rel_to(it.pos)  # floating origin, anchor-safe
 		it.holder.position = rel
 		var dist := rel.length()
 		var vis: bool = dist < it.cull

@@ -8,6 +8,7 @@ GDShader source, all `shader_type spatial` except `hud_text.gdshader` (canvas_it
 | `terrain_tile.gdshader` | feature area | Lit, hazed ground for the skin-band terrain rings |
 | `surface_prop.gdshader` | feature area | Shading for kit props (rocks/ice/trees) seated on terrain |
 | `air_shell.gdshader` | feature area | The sky as seen from inside an atmosphere |
+| `cloud_layer.gdshader` | feature area | Cloud deck shell (`CloudLayer`) covering the gap between the globe's clouds vanishing and the skin band's ground |
 | `wedge_hull.gdshader` | feature area | Hull material for the wedge-fighter ship design |
 | `wedge_exhaust.gdshader` | feature area | Exhaust plume for the wedge-fighter ship design |
 | `jazoone_hull_booster.gdshader` | feature area | Textured hull + HDR torch for the JazOone ship's authored emissive engine discs |

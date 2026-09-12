@@ -52,6 +52,28 @@ func _initialize() -> void:
 	failed += _check("symmetry_thrust", is_equal_approx(left.thrust, right.thrust))
 	failed += _check("symmetry_yaw", is_equal_approx(left.yaw, -right.yaw))
 
+	# pinch_zoom(start_zoom, start_dist, cur_dist, zmin, zmax)
+	var apart := TC.pinch_zoom(2.0, 100.0, 200.0, 0.45, 8.0)   # fingers spread 2x -> zoom halves
+	failed += _check("pinch_apart_halves", is_equal_approx(apart, 1.0))
+
+	var together := TC.pinch_zoom(2.0, 100.0, 50.0, 0.45, 8.0)   # fingers close 2x -> zoom doubles
+	failed += _check("pinch_together_doubles", is_equal_approx(together, 4.0))
+
+	var unchanged := TC.pinch_zoom(2.0, 100.0, 100.0, 0.45, 8.0)   # same distance -> unchanged
+	failed += _check("pinch_unchanged_dist", is_equal_approx(unchanged, 2.0))
+
+	var clamp_min := TC.pinch_zoom(1.0, 100.0, 1000.0, 0.45, 8.0)   # would go far below zmin
+	failed += _check("pinch_clamps_at_zmin", is_equal_approx(clamp_min, 0.45))
+
+	var clamp_max := TC.pinch_zoom(1.0, 1000.0, 1.0, 0.45, 8.0)   # would go far above zmax
+	failed += _check("pinch_clamps_at_zmax", is_equal_approx(clamp_max, 8.0))
+
+	var zero_cur := TC.pinch_zoom(2.0, 100.0, 0.0, 0.45, 8.0)   # cur_dist ~0 — no div-by-zero
+	failed += _check("pinch_zero_cur_dist_no_blowup", is_equal_approx(zero_cur, 2.0) and is_finite(zero_cur))
+
+	var zero_start := TC.pinch_zoom(2.0, 0.0, 100.0, 0.45, 8.0)   # start_dist ~0 — degenerate pinch start
+	failed += _check("pinch_zero_start_dist_no_blowup", is_equal_approx(zero_start, 2.0) and is_finite(zero_start))
+
 	if failed == 0:
 		print("touch_controls: OK")
 		quit(0)

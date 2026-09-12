@@ -430,7 +430,13 @@ func swept_contact(from: Vector3, to: Vector3, body_radius_km: float,
 	if travel < 0.0001:
 		return false
 	# One sample per ~50 m of travel (a ring-0 quad), capped so a teleport cannot
-	# stall the frame. 64 samples covers 3.2 km, which the speed cap guarantees.
+	# stall the frame. 64 samples covers ~3.2 km of travel; there is no speed cap to
+	# guarantee that's enough (removed 2026-09-08, docs/ROADMAP.md "L.3") — at
+	# AIR_TERMINAL_KMS (12 km/s) a single 60 fps frame covers ~200 km, well past this
+	# sweep's 3.2 km reach, so a hull moving that fast between two clear samples can
+	# still tunnel through terrain between them. Declared, accepted known limitation,
+	# not something this function's algorithm fixes — see flight_mode.gd's own note on
+	# the anti-tunnelling gap.
 	var steps := clampi(int(ceil(travel / 0.05)), 1, 64)
 	for i in range(1, steps):
 		var p: Vector3 = from.lerp(to, float(i) / float(steps))

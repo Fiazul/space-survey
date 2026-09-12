@@ -1,34 +1,44 @@
 extends SceneTree
 # Run: godot --headless --script res://tools/test_flight_envelope.gd
 #
-# Live-state acceptance for the hypersonic-entry-feel audit (2026-09-09): solves the
-# ship's own thrust-vs-drag equilibrium at a handful of altitudes and prints the max
-# SUSTAINED airspeed and the resulting FlightMode.air_load there. The audit found this
-# regime unreachable in controlled flight (2 g thrust vs 2.5*rho*v^2 drag caps out at
-# ~80 m/s at sea level, ~250 m/s at 10 km, air_load <= 0.005 — below every FX threshold),
-# which is why the whole visual entry layer (plasma sheath, hull heat, camera buffet)
-# was ripped out rather than kept unreachable. If a future thrust/drag change makes the
-# assert below fail, the regime became reachable and docs/ROADMAP.md "G.8" must be
-# revisited before any visual FX is re-added.
+# Live-state acceptance for the hypersonic-entry-feel audit (2026-09-09, superseded
+# 2026-09-12): solves the ship's own thrust-vs-drag equilibrium at a handful of
+# altitudes and prints the max SUSTAINED airspeed and the resulting FlightMode.air_load
+# there. The 2026-09-09 audit found this regime unreachable in controlled flight (2 g
+# thrust vs the then-hand-picked 0.005 ballistic capped out at ~80 m/s at sea level,
+# air_load <= 0.005 — below every FX threshold), which is why the whole visual entry
+# layer (plasma sheath, hull heat, camera buffet) was ripped out rather than kept
+# unreachable dark.
+#
+# 2026-09-12 player directive changed the premise: air must allow >=10 km/s, so the
+# ballistic coefficient is now DERIVED (FlightMode.air_ballistic/AIR_TERMINAL_KMS) to
+# put boosted sea-level terminal at 12 km/s, not hand-picked at 0.005. Under that
+# coefficient the regime this test used to prove unreachable IS now reached at every
+# altitude in the boosted-equilibrium case (air_load saturates near 1.0 - see the
+# constant-q derivation in the assertions below). docs/ROADMAP.md "G.8" still needs a
+# real revisit before any visual entry FX is re-added (this file changes drag/reachability
+# only, not FX), but the asserted invariant here flips from "stays below threshold" to
+# "reaches saturation".
 #
 # ship.gd cannot be preloaded here: it references the Ephemeris autoload at parse
 # time, which does not exist under --script (see test_chase_rig.gd's header comment
-# for the same constraint). Its thrust/drag constants are hardcoded below instead,
+# for the same constraint). Its thrust/boost constants are hardcoded below instead,
 # named identically and commented with their ship.gd source line — touch one, touch
 # both. FlightMode itself has no such reference at parse time (only inside function
-# bodies, which GDScript resolves lazily) and preloads clean, so air_load()/mach() are
-# called directly.
+# bodies, which GDScript resolves lazily) and preloads clean, so air_load()/mach()/
+# air_ballistic() are called directly.
 
 const FM := preload("res://scripts/flight/flight_mode.gd")
 
 # --- Mirrored from scripts/flight/ship.gd — keep these in step with that file ---
-const NEWTON_BALLISTIC := 0.005     # ship.gd:~316
-const NEWTON_THRUST := 0.01962      # ship.gd:~319, 2 g in km/s^2
-const BOOST_MULT := 3.0             # ship.gd:~73, Shift multiplier
+const NEWTON_THRUST := 0.01962      # ship.gd:~342, 2 g in km/s^2
+const BOOST_MULT := 3.0             # ship.gd:~80, Shift multiplier
 # --- Mirrored from scripts/autoload/ephemeris.gd — keep these in step with that file ---
-const RHO0 := 1.225                 # ephemeris.gd:58, kg/m^3 at sea level
-const EARTH_ATMO_H_KM := 8.5        # ephemeris.gd:57, density scale height
-const EARTH_ATMO_TOP_KM := 100.0    # ephemeris.gd:45, Karman line
+const RHO0 := 1.225                 # ephemeris.gd:62, kg/m^3 at sea level
+const EARTH_ATMO_H_KM := 8.5        # ephemeris.gd:61, density scale height
+const EARTH_ATMO_TOP_KM := 100.0    # ephemeris.gd:49, Karman line
+# Derived, not hand-picked (see header) — same call ship.gd's static var makes.
+static var NEWTON_BALLISTIC: float = FM.air_ballistic(NEWTON_THRUST, BOOST_MULT, RHO0)
 
 const ALTITUDES_KM := [0.0, 5.0, 10.0, 20.0, 30.0, 50.0]
 
@@ -57,7 +67,19 @@ func _initialize() -> void:
 		var load_boost: float = FM.air_load(alt, spd_boost, EARTH_ATMO_TOP_KM)
 		print("flight_envelope: alt %5.1f km  cruise %8.4f km/s (load %.4f)  boost %8.4f km/s (load %.4f)"
 			% [alt, spd_cruise, load_cruise, spd_boost, load_boost])
-		failed += _check("air_load_boost_below_threshold_at_%.0fkm" % alt, load_boost < 0.05)
+		# rho*v^2 at equilibrium is a constant set only by thrust_acc/(500*ballistic) -
+		# independent of altitude - so air_load at boosted equilibrium is the SAME at
+		# every altitude, and by construction (FlightMode.air_load_q_ref) it lands at
+		# FlightMode.AIR_LOAD_TARGET_FRAC (0.9), not saturated to 1.0 - unlike the
+		# pre-2026-09-12 unreachable regime this file used to assert against.
+		failed += _check("air_load_boost_near_target_frac_at_%.0fkm" % alt,
+			absf(load_boost - 0.9) < 0.01)
+
+	# Sea-level boosted equilibrium speed must match FlightMode.AIR_TERMINAL_KMS
+	# within 1% - the whole point of the 2026-09-12 rescale (docs/ROADMAP.md L.3).
+	var spd_boost_sea: float = _max_sustained_speed(0.0, NEWTON_THRUST * BOOST_MULT)
+	failed += _check("sea_level_boost_equilibrium_matches_air_terminal_kms",
+		absf(spd_boost_sea - 12.0) <= 0.01 * 12.0)
 
 	if failed == 0:
 		print("flight_envelope: OK")

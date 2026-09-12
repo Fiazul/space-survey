@@ -21,7 +21,10 @@ extends CanvasLayer
 #                 (ship.touch_pitch) where a shooter puts its fire buttons, plus the
 #                 smaller BOOST/CAP/THRUST/INTERACT/MAP/HOME buttons along the right
 #                 edge. A drag anywhere in the right zone that isn't on a button is the
-#                 aim-look drag (ship.add_touch_look), same as before.
+#                 aim-look drag (ship.add_touch_look), same as before — UNLESS a second
+#                 finger is also down in that same free-look zone, in which case the pair
+#                 pinches the chase-camera zoom instead of steering the look (see
+#                 pinch_zoom(), unit-tested in tools/test_touch_controls.gd).
 #   TOP-RIGHT   — a small DEV tap button (ship._debug_toggle_dev_speed); while dev mode
 #                 is on it reveals NODEATH/FASTAIR tap buttons next to it.
 # BOOST/CAP still hold a synthesised key (Shift/V) — keys aren't touch-emulated.
@@ -89,6 +92,15 @@ var _prev_brake := false
 
 var _pitch_held := {}   # b.code (-1/1) -> true, while its UP/DOWN button is held
 
+# Pinch-to-zoom: only the first two fingers simultaneously tagged "look" (right free
+# zone, not on a button, not the joystick) drive it. A 3rd+ look finger is ignored —
+# rare on a phone (joystick already claims one hand) and not worth the complexity.
+var _look_idx: Array = []      # finger indices currently tagged "look", in landing order
+var _finger_pos := {}          # finger index -> last known position, "look" fingers only
+var _pinch_active := false
+var _pinch_start_zoom := 1.0
+var _pinch_start_dist := 0.0
+
 # Assumption (orchestrator brief): UP/DOWN drive nose PITCH, not a Space/Ctrl lift
 # strafe. Flip to false + swap the two touch_pitch signs below to switch to lift.
 const UPDOWN_IS_PITCH := true
@@ -152,6 +164,35 @@ func _clamped_bottom_margin(size_y: float, base_margin: float) -> float:
 	return maxf(base_margin, size_y - (REFERENCE_HEIGHT - base_margin))
 
 
+# Android backgrounding (call, notification shade, task-switch) can drop touch-up events
+# entirely — the OS never delivers them once the app loses focus. Without this, a lifted
+# finger's index leaks forever in _finger/_look_idx (phantom pinch pair, or a joystick/look
+# that never lets go), and any held button keeps a synthesized key down.
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_reset_all_input()
+
+
+func _reset_all_input() -> void:
+	for f in _finger.values():
+		if f is Dictionary:
+			_release(f)   # un-highlights + _send(code,false) for BOOST/CAP, clears touch_fire/pitch
+	_finger.clear()
+	_look_idx.clear()
+	_finger_pos.clear()
+	_pinch_active = false
+	_pitch_held.clear()
+	_joy_finger = -1
+	_joy_ring.visible = false
+	_prev_brake = false
+	if ship != null:
+		ship.touch_thrust = 0.0
+		ship.touch_yaw = 0.0
+		ship.touch_brake = false
+		ship.touch_pitch = 0.0
+		ship.touch_fire = false
+
+
 func _process(_delta: float) -> void:
 	if ship == null:
 		return
@@ -200,6 +241,10 @@ func _touch_at(index: int, pos: Vector2, pressed: bool) -> void:
 					_joy_ring.queue_redraw()
 			"look":
 				_finger[index] = "look"
+				_finger_pos[index] = pos
+				if not _look_idx.has(index):
+					_look_idx.append(index)
+				_pinch_rebaseline()
 			_:
 				pass   # bottom-margin hazard strip — leave it to hud.gd's own mouse-emulated widgets
 	else:
@@ -214,7 +259,23 @@ func _touch_at(index: int, pos: Vector2, pressed: bool) -> void:
 				ship.touch_yaw = 0.0
 				ship.touch_brake = false
 			_prev_brake = false
+		elif was == "look":
+			_look_idx.erase(index)
+			_finger_pos.erase(index)
+			_pinch_rebaseline()
 		_finger.erase(index)
+
+
+# (Re)start the pinch baseline whenever exactly two fingers are tagged "look" — called
+# after any look finger lands or lifts. Anything other than exactly two disables pinch
+# (a lone finger goes back to normal look; a 3rd+ finger is simply not pinch-tracked).
+func _pinch_rebaseline() -> void:
+	if _look_idx.size() == 2 and ship != null:
+		_pinch_active = true
+		_pinch_start_zoom = ship._cam_zoom
+		_pinch_start_dist = _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]])
+	else:
+		_pinch_active = false
 
 
 # A finger moved; joystick fingers drive the stick, look fingers orbit the camera.
@@ -238,7 +299,19 @@ func _drag(index: int, pos: Vector2, rel: Vector2) -> void:
 					main.hud.toast_t = 2.0
 			_prev_brake = cmd.brake
 	elif kind == "look":
-		if ship != null:
+		_finger_pos[index] = pos
+		if _pinch_active:
+			var cur_dist: float = _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]])
+			if ship != null:
+				# ship.ZOOM_MIN/MAX read dynamically (ship is typed Node here, not Ship) — a
+				# static `Ship.ZOOM_MIN` class-name reference still loads fine, but forces this
+				# script to fully compile ship.gd as a dependency, which spews
+				# "Identifier not found: Ephemeris" compile errors to stderr under
+				# `godot --headless --script` (ship.gd touches the Ephemeris autoload — see
+				# CLAUDE.md). Reading it off the instance avoids that noise.
+				ship._cam_zoom = pinch_zoom(_pinch_start_zoom, _pinch_start_dist, cur_dist,
+					ship.ZOOM_MIN, ship.ZOOM_MAX)
+		elif not _pinch_active and _look_idx.size() == 1 and ship != null:
 			ship.add_touch_look(rel * LOOK_SENS)
 
 
@@ -266,6 +339,17 @@ static func stick_to_cmd(v: Vector2) -> Dictionary:
 	var thrust := mag * maxf(0.0, cos(deg_to_rad(theta_deg)))
 	var ramp := smoothstep(0.0, 1.0, clampf((theta_deg - 15.0) / 75.0, 0.0, 1.0))
 	return {"thrust": thrust, "yaw": side * ramp, "brake": false}
+
+
+# Pure — no ship/autoload access — so tools/test_touch_controls.gd can unit-test it
+# headless. Fingers moving apart (cur_dist > start_dist) zoom IN (camera closer, smaller
+# zoom value); together zooms out. Guards a near-zero distance (finger-down frame before
+# any separation, or a degenerate same-point pinch) instead of dividing by it.
+static func pinch_zoom(start_zoom: float, start_dist: float, cur_dist: float,
+		zmin: float, zmax: float) -> float:
+	if cur_dist < 0.001 or start_dist < 0.001:
+		return clampf(start_zoom, zmin, zmax)
+	return clampf(start_zoom * (start_dist / cur_dist), zmin, zmax)
 
 
 func _zone_at(pos: Vector2) -> String:

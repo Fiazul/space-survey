@@ -187,3 +187,40 @@ autopilot cancel). Taller-than-16:9 tablet aspects (16:10/4:3 landscape) are han
 clamping the overlay's true-bottom-anchored margin so it never drifts past hud.gd's
 fixed-720-canvas hazard line — verified by hand at 1280×800/1280×960, untested on an
 actual tablet.
+
+## Added 2026-09-12: pinch-to-zoom chase camera + mobile max-zoom-in default
+
+Two fingers in the right free-look zone pinch `Ship._cam_zoom` (`TouchControls.pinch_zoom()`,
+unit-tested); mobile boots at `Ship.TOUCH_DEFAULT_ZOOM` (= `ZOOM_MIN`, closest) via
+`Ship.default_zoom()`, which every zoom-reset site (teleport cancel/arrival) now routes
+through instead of hardcoding `1.0`. `_notification(NOTIFICATION_APPLICATION_FOCUS_OUT)`
+clears all touch/pinch/joystick state on Android backgrounding (missed touch-up events).
+Follow-up: a scene-based pinch state-machine test (synthetic ScreenTouch/ScreenDrag driven
+through `_touch_at`/`_drag`) has not been written yet — current coverage is the pure
+`pinch_zoom()` unit tests only.
+
+## Added 2026-09-12: Earth atmosphere drag rescaled for >=10 km/s (player directive)
+
+`Ship.NEWTON_BALLISTIC` is now derived (`FlightMode.air_ballistic`/`AIR_TERMINAL_KMS := 12.0`)
+instead of hand-picked; boosted sea-level terminal is ~12 km/s (was ~0.14 km/s). New test
+`tools/test_air_terminal.gd`. Side effect found and fixed: `tools/test_flight_envelope.gd`
+existed specifically to prove the entry-heat regime (ROADMAP G.8) was UNreachable at the old
+drag — under the new drag it IS reachable (air_load reaches its design target at every
+altitude, constant q at equilibrium), so that test's assertion was flipped and its header
+updated; G.8 itself still needs an actual FX design pass, not a new audit. `tools/test_flight_mode.gd`'s
+`DRAG_MAX_DV_FRAC` clamp scenario no longer binds at realistic entry speed (25% clamp is now a
+dormant safety net, not routinely hit) — kept a synthetic-speed case to prove the clamp
+mechanism itself still works.
+
+Follow-up review caught that `air_load` CONSUMERS were still calibrated to the old
+(unreachable) envelope even after the drag derivation landed: `FlightMode.AIR_LOAD_Q_REF`
+(5.0, hand-picked) pinned the HUD's Load readout at 100% for any ordinary boosted flight —
+replaced with `air_load_q_ref(rho0)`, derived so boosted sea-level equilibrium reads
+`AIR_LOAD_TARGET_FRAC = 0.9` (q_ref ≈ 76.61, was 5.0). `game_audio.gd`'s `AIR_WIND_*`/
+`AIR_RUMBLE_*` onset/full LOAD anchors (not the dB targets) were similarly re-picked
+against the new curve (onset ≈ air_load at 1 km/s sea level ≈0.0158/0.0058, full = 0.9) —
+without this, wind/rumble would have pinned at max dB in any ordinary dive.
+`NEEDS-YOUR-EYES.md` §6 and `terrain_sampler.gd`'s swept_contact comment updated to the
+new numbers/limitation. New scene-level check in `tools/test_ship_roster.tscn` confirms
+`Ship.NEWTON_BALLISTIC`'s static-var init actually ran against the LIVE `Ephemeris`
+autoload (not just pure-math parity). Not done: feel on device/in a real play session.

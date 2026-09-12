@@ -52,6 +52,18 @@ func _ready() -> void:
 			paints[0].size() > 0 and paints[0] != paints[1])
 		_check("boosters_ignore_the_pick_%d" % (idx + 1),
 			boosters[0].size() > 0 and boosters[0] == boosters[1])
+
+	# NEWTON_BALLISTIC (2026-09-12 rescale) is a static var whose initializer calls
+	# FlightMode.air_ballistic against the LIVE Ephemeris autoload - a plain SceneTree
+	# test can't exercise that (Ephemeris doesn't exist under --script), so this scene
+	# test is the one live-state check that the static init actually ran against real
+	# autoload values, not just that the pure math checks out in isolation.
+	var ballistic: float = ShipScript.NEWTON_BALLISTIC
+	_check("newton_ballistic_finite", is_finite(ballistic))
+	_check("newton_ballistic_positive", ballistic > 0.0)
+	_check("newton_ballistic_matches_live_derivation", is_equal_approx(ballistic,
+		FlightMode.air_ballistic(ShipScript.NEWTON_THRUST, ShipScript.BOOST_MULT, Ephemeris.RHO0)))
+
 	ship.queue_free()
 	await get_tree().process_frame
 	print("ship_roster: ", "OK" if failures == 0 else "FAIL %d" % failures)

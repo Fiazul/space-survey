@@ -217,15 +217,23 @@ move.
 
 ---
 
-## 6. Hypersonic-entry visual layer — removed 2026-09-09
+## 6. Hypersonic-entry visual layer — removed 2026-09-09, premise changed 2026-09-12
 
 Plasma sheath, hull heat glow, and camera g-sag/buffet were built on
 `FlightMode.air_load`, then found unreachable in controlled flight: 2 g thrust
-vs 2.5·rho·v² drag caps sustained airspeed at ~80 m/s at sea level and ~250 m/s
-at 10 km, so `air_load` never exceeds ~0.005 — below every FX threshold. The
-whole visual layer was removed rather than shipped invisible; `air_load`/`mach`,
-the HUD readout, and engine-air audio stay. See `docs/ROADMAP.md` "G.8" for what
-a reachable regime would need before any visual FX is re-added.
+vs the then-hand-picked drag coefficient capped sustained airspeed at ~80 m/s at
+sea level and ~250 m/s at 10 km, so `air_load` never exceeded ~0.005 — below
+every FX threshold. The whole visual layer was removed rather than shipped
+invisible; `air_load`/`mach`, the HUD readout, and engine-air audio stay.
+
+**2026-09-12: no longer true.** Drag was rescaled to a player-directed target
+(`FlightMode.AIR_TERMINAL_KMS`, `docs/ROADMAP.md` "L.3") — sustained airspeed at
+sea level is now ~6.9 km/s unboosted, ~12 km/s boosted (both far above every FX
+threshold; `air_load` saturates to its 0.9 design target at boosted equilibrium,
+constant at every altitude). The regime this section describes as unreachable
+is now reached in ordinary controlled flight, not just a designed dive. See
+`docs/ROADMAP.md` "G.8" for what re-adding the visual FX itself would still need
+(a design pass, not a reachability fix).
 
 ---
 

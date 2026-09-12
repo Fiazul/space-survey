@@ -43,23 +43,32 @@ const ENGINE_SUSTAIN_PITCH := 0.12  # pitch climbed at full cruise (×pitch_mul 
 # Both loops are procedural PCM (no asset file) so the whole entry-feel pass ships
 # without new binary assets. Driven by FlightMode.air_load / Ship.mach_number through a
 # LOG mapping (see _log_db_for/wind_db_for/rumble_db_for below), NOT a raw linear clamp.
-# A linear map over air_load's full [0,1] range was wrong at both ends: real controlled
-# flight never exceeds air_load ~= 0.0044 (tools/test_flight_envelope.gd — thrust/drag
-# equilibrium tops out there at every Earth altitude), so a linear map compresses every
-# real-gameplay value into a fraction of a dB near the OFF floor (inaudible), while a
-# DEV tool (F9 thrust and/or FASTAIR drag) saturates air_load to ~1 almost immediately,
-# pinning the old law at its loudest setting — which was LOUDER than the engine's own
-# boost peak (2026-09-09 "air sound too loud" report). air_load == 0 (vacuum) still
-# means both sit at their OFF floor and stop, same rule as every other entry-FX.
+# A linear map over air_load's full [0,1] range was wrong at both ends: a linear map
+# compresses small-but-real values into a fraction of a dB near the OFF floor
+# (inaudible), while a DEV tool (F9 thrust and/or FASTAIR drag) saturates air_load to ~1
+# almost immediately, pinning the old law at its loudest setting — which was LOUDER than
+# the engine's own boost peak (2026-09-09 "air sound too loud" report). air_load == 0
+# (vacuum) still means both sit at their OFF floor and stop, same rule as every other
+# entry-FX.
+#
+# 2026-09-12: the reference load values below are re-picked against the rescaled drag
+# curve (see FlightMode.AIR_TERMINAL_KMS/AIR_LOAD_TARGET_FRAC, docs/ROADMAP.md L.3). The
+# ONLY thing that changed here is these four LOAD anchors — the dB targets/caps below
+# them are unchanged, they're a perceptual choice independent of the physics scale.
+# Old anchors (0.0013/0.0132 wind, 0.0007/0.0129 rumble) were calibrated to an envelope
+# whose max reachable air_load was ~0.0044; under the new drag, ordinary controlled
+# flight reaches air_load up to 0.9 (FlightMode.AIR_LOAD_TARGET_FRAC at boosted sea-level
+# equilibrium), so the old FULL anchors sat two decades below anything real gameplay now
+# produces and both loops would pin at max dB in any ordinary dive.
 const AIR_WIND_OFF_DB := -60.0        # inaudible floor (matches ENGINE_OFF_DB's silence rule)
-# Cruise reference: test_flight_envelope.gd's steady-cruise air_load, identical at every
-# Earth altitude sampled (0.0013) — the quietest load a controlled dive ever registers.
-const AIR_WIND_ONSET_LOAD := 0.0013
+# Onset reference: FlightMode.air_load at 1 km/s sea level (~0.0158) — a light cruise
+# speed, not yet a dive; "just audible" should start becoming noticeable here.
+const AIR_WIND_ONSET_LOAD := 0.0158
 const AIR_WIND_ONSET_DB := -40.0      # "just audible" hint of wind, not a wash
-# Dive reference: test_flight_envelope.gd's max BOOST air_load (0.0044, also identical
-# at every altitude) x3 - a "screaming dive" harder than any Shift-boost equilibrium the
-# ship's own thrust/drag can sustain in controlled flight, without a DEV tool.
-const AIR_WIND_FULL_LOAD := 0.0132
+# Dive reference: FlightMode.air_load at boosted sea-level equilibrium (AIR_TERMINAL_KMS,
+# AIR_LOAD_TARGET_FRAC = 0.9) — the loudest air_load an ordinary Shift-boost dive
+# settles into, without any DEV tool.
+const AIR_WIND_FULL_LOAD := 0.9
 # The engine's own loudest moment is ENGINE_LOOP_DB + ENGINE_BOOST_DB = -16 dB (boosting,
 # see the engine block above). Wind must stay >=6 dB under that so the engine roar always
 # reads as the loudest layer even mid-dive-boost - that puts the cap at -22, not the -18
@@ -72,10 +81,13 @@ const AIR_FADE_DECADES := 0.6
 const AIR_RUMBLE_OFF_DB := -60.0
 # Rumble is gated by air_load * mach_frac - it is the "diving HARD in air" layer, not
 # felt from air presence alone - so its onset/full references are taken from that same
-# product across the envelope, not from air_load in isolation.
-const AIR_RUMBLE_ONSET_LOAD := 0.0007   # max cruise (air_load*mach_frac) across the envelope
+# product, at the SAME reference speeds as the wind anchors above (1 km/s sea level for
+# onset, boosted sea-level equilibrium for full), not from air_load in isolation.
+const AIR_RUMBLE_ONSET_LOAD := 0.0058   # air_load(1 km/s)=0.0158 * mach_frac(1 km/s)=0.368
 const AIR_RUMBLE_ONSET_DB := -42.0
-const AIR_RUMBLE_FULL_LOAD := 0.0129    # max boost product x3, same "screaming dive" reference
+# air_load(equilibrium)=0.9 * mach_frac(equilibrium) - mach is already ~35 there
+# (mach/8 clamps to 1.0 well before reaching AIR_TERMINAL_KMS), so this is the same 0.9.
+const AIR_RUMBLE_FULL_LOAD := 0.9
 # A few dB under the wind cap so rumble reads as an undertone beneath the wind layer
 # rather than competing with it (mirrors the old -13 vs -9 relative gap).
 const AIR_RUMBLE_MAX_DB := -26.0

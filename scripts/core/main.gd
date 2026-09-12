@@ -335,6 +335,9 @@ func _ready() -> void:
 		touch_controls.ship = ship
 		touch_controls.main = self
 		add_child(touch_controls)
+		ship.touch_active = true
+		ship._cam_zoom = ship.default_zoom()   # mobile default: max zoom-in
+		ship._cam_zoom_smooth = ship._cam_zoom # snap the eased value too — no visible 1.0->0.45 dolly on boot
 
 	_restore_location()   # resume where you left off (system + position + hull)
 
@@ -1442,7 +1445,7 @@ func cancel_teleport() -> void:
 	hud.tp_cancel_button.visible = false
 	hud.set_menu("")
 	ship.set_frozen(false)
-	ship._cam_zoom = 1.0
+	ship._cam_zoom = ship.default_zoom()
 	ship._set_capture(true)
 	hud.toast = "Teleport cancelled."
 	hud.toast_t = 2.0
@@ -1489,7 +1492,7 @@ func _update_teleport(delta: float) -> void:
 		hud.tp_cancel_button.visible = false
 		hud.set_menu("")
 		ship.set_frozen(false)
-		ship._cam_zoom = 1.0
+		ship._cam_zoom = ship.default_zoom()
 		if audio != null:
 			audio.stop_teleport()
 		_arrive(_tp_dest)

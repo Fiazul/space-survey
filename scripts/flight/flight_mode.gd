@@ -10,17 +10,34 @@ const AIR := "AIR"
 const STAR_CHROMOSPHERE_KM := 2500.0   # real chromosphere; corona is visual, not a cruise wall
 const AIRLESS_EZ_KM := 10.0            # dump before the skin; vacuum has no 25% fake air
 
+# Boosted terminal velocity ship.gd's drag targets at Earth sea level (player
+# directive 2026-09-12: air must allow >=10 km/s, was ~0.14 km/s under the old
+# hand-picked ballistic coefficient). air_ballistic derives the coefficient
+# from this instead of it being hand-tuned.
+const AIR_TERMINAL_KMS := 12.0
+
 const SPEED_OF_SOUND_KMS := 0.34
-# q_ref (kg/m^3 * km^2/s^2) picks the entry-intensity curve's knee. At sea level
-# (rho=1.225) this saturates hard by ~5 km/s, matching the hypersonic dive speeds
-# the ship actually reaches inside the 100 km Earth skin.
-const AIR_LOAD_Q_REF := 5.0
+# Fraction of the [0,1] air_load curve FlightMode targets AT boosted sea-level
+# equilibrium (AIR_TERMINAL_KMS). Not fully saturated: a genuinely harder dive
+# above equilibrium (a designed high-thrust entry, DEV tools, etc.) should still
+# read as MORE load, so the curve needs headroom above the speed ordinary
+# controlled flight actually reaches. air_load_q_ref derives the curve's knee
+# (q_ref) from this instead of q_ref being a separately hand-picked magic number.
+# 2026-09-12: the old q_ref=5.0 was picked when boosted equilibrium topped out at
+# q~=0.02 at sea level (the pre-rescale ballistic, docs/ROADMAP.md L.3); under the
+# rescaled drag, equilibrium q is 176.4 (rho0 * AIR_TERMINAL_KMS^2), and the old
+# knee saturated air_load to 1.0 at every altitude reachable in ordinary flight —
+# see the HUD's Load readout, which pinned at 100% permanently.
+const AIR_LOAD_TARGET_FRAC := 0.9
 # Onset floor on dynamic pressure (kg/m^3 * km^2/s^2). Below this q, air_load is
 # HARD zero — not just numerically tiny. Without it, alt=90-100 km (where rho is
 # ~1e-5..1e-6 of sea level) still returns a nonzero-but-imperceptible air_load for
 # any real entry speed, which is wrong: nothing should be felt that high. Picked so
 # 2 km/s at ~70 km (rho ~= 3.25e-4 kg/m^3, q = rho*4 ~= 1.3e-3) is the FIRST felt
-# buffet — the number the player actually asked for.
+# buffet — the number the player actually asked for. Untouched by the 2026-09-12
+# rescale: q_ref moved from 5.0 to ~76.6, but this floor operates on raw q (not on
+# the normalized output), so it's now a smaller fraction of q_ref but still gates
+# the same real physical q values — still the right number for the same job.
 const AIR_LOAD_Q_FLOOR := 0.0013
 
 
@@ -29,6 +46,16 @@ const AIR_LOAD_Q_FLOOR := 0.0013
 # and the drag that actually slows you always agree. PlanetGenerator.air_density_at
 # is a second, independent curve (sky-opacity scale height, not drag's); mixing it
 # in here would let the glow and the deceleration disagree.
+# Solves air_load's own curve (1 - exp(-q/q_ref) == AIR_LOAD_TARGET_FRAC) for q_ref at
+# q = rho0 * AIR_TERMINAL_KMS^2 (dynamic pressure at boosted sea-level equilibrium), so
+# the curve's knee tracks AIR_TERMINAL_KMS instead of being a second hand-picked number.
+# Takes rho0 as an arg (not Ephemeris.RHO0 directly), same autoload-free reason as
+# air_ballistic.
+static func air_load_q_ref(rho0: float) -> float:
+	var q := rho0 * AIR_TERMINAL_KMS * AIR_TERMINAL_KMS
+	return q / -log(1.0 - AIR_LOAD_TARGET_FRAC)
+
+
 static func air_load(alt_km: float, spd_kms: float, atmo_top_km: float) -> float:
 	if atmo_top_km <= 0.0 or alt_km >= atmo_top_km or alt_km < 0.0 or spd_kms <= 0.0:
 		return 0.0
@@ -37,11 +64,19 @@ static func air_load(alt_km: float, spd_kms: float, atmo_top_km: float) -> float
 	var q_eff := maxf(q - AIR_LOAD_Q_FLOOR, 0.0)
 	if q_eff <= 0.0:
 		return 0.0
-	return 1.0 - exp(-q_eff / AIR_LOAD_Q_REF)
+	return 1.0 - exp(-q_eff / air_load_q_ref(Ephemeris.RHO0))
 
 
 static func mach(spd_kms: float) -> float:
 	return spd_kms / SPEED_OF_SOUND_KMS
+
+
+# Solves ship.gd's own equilibrium (thrust_acc == 500 * ballistic * rho0 * v^2) for the
+# ballistic coefficient at v = AIR_TERMINAL_KMS, so the drag number is derived from the
+# design target instead of hand-picked. Takes its inputs as args (not read off ship.gd's
+# consts directly) so this stays autoload-free and callable from a plain SceneTree test.
+static func air_ballistic(thrust_kms2: float, boost_mult: float, rho0: float) -> float:
+	return (thrust_kms2 * boost_mult) / (500.0 * rho0 * AIR_TERMINAL_KMS * AIR_TERMINAL_KMS)
 
 
 # --- Skin-band speed cap: removed 2026-09-08 as a flight limiter (player
@@ -62,7 +97,10 @@ static func mach(spd_kms: float) -> float:
 # DEV-only tour aid (F9 dev-speed engines' atmosphere counterpart): there is no
 # hard speed cap in air (2026-09-08, see docs/ROADMAP.md "Feel - atmospheric
 # flight model"), so the only lever left for a fast Earth tour is weaker drag.
-# _newton_atmo_drag reads this; nothing else should.
+# _newton_atmo_drag reads this; nothing else should. 2026-09-12: drag itself was
+# rescaled to a ~12 km/s boosted sea-level terminal (AIR_TERMINAL_KMS above), so
+# this is mostly redundant now for ordinary touring — kept as an extra lever for
+# even faster dev tours, not removed.
 static var dev_fast_air := false
 const DEV_AIR_DRAG_MULT := 0.01
 

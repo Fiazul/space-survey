@@ -86,7 +86,11 @@ func _initialize() -> void:
 	failed += _check("air_load_vacuum_above_top", is_equal_approx(M.air_load(150.0, 5.0, 100.0), 0.0))
 	failed += _check("air_load_zero_speed", is_equal_approx(M.air_load(10.0, 0.0, 100.0), 0.0))
 	var low_load: float = M.air_load(10.0, 1.0, 100.0)
-	var high_load: float = M.air_load(10.0, 8.0, 100.0)
+	# 2026-09-12: the curve's knee (air_load_q_ref) now tracks AIR_TERMINAL_KMS (12 km/s
+	# boosted equilibrium lands at 0.9 by design, not 1.0 - see flight_mode.gd), so a
+	# speed well past that design point is needed to demonstrate the curve's asymptote,
+	# not the old 8 km/s (which only reached ~0.27 under the new curve).
+	var high_load: float = M.air_load(10.0, 30.0, 100.0)
 	failed += _check("air_load_monotonic_in_speed", high_load > low_load)
 	failed += _check("air_load_saturates", high_load < 1.0 and high_load > 0.9)
 	failed += _check("air_load_in_range", low_load >= 0.0 and low_load <= 1.0)
@@ -132,9 +136,14 @@ func _initialize() -> void:
 	failed += _check("entry_crossing_softened_to_cap", is_equal_approx(v_capped.length(), ENTRY_SPEED_MAX_KMS))
 	failed += _check("entry_crossing_keeps_heading", v_capped.normalized().dot(v_in.normalized()) > 0.999)
 
-	# Drag clamp: at 30 km/s / 40 km, a single substep must remove at most 25% of
-	# speed - same law _newton_atmo_drag uses (500 * NEWTON_BALLISTIC * rho * spd^2).
-	const NEWTON_BALLISTIC := 0.005    # ship.gd:~316
+	# Drag clamp: a single substep must never remove more than 25% of speed - same
+	# law _newton_atmo_drag uses (500 * NEWTON_BALLISTIC * rho * spd^2). NEWTON_BALLISTIC
+	# is derived (2026-09-12) from FlightMode.air_ballistic/AIR_TERMINAL_KMS rather than
+	# hand-picked (was a hardcoded 0.005 here and in ship.gd) — mirror the same call ship.gd
+	# makes, using ship.gd's own NEWTON_THRUST/BOOST_MULT (mirrored below; touch one, touch both).
+	const NEWTON_THRUST := 0.01962     # ship.gd:~342, 2 g in km/s^2
+	const NEWTON_BOOST_MULT := 3.0     # ship.gd:~80, Shift multiplier
+	var NEWTON_BALLISTIC: float = M.air_ballistic(NEWTON_THRUST, NEWTON_BOOST_MULT, E.RHO0)
 	const DRAG_MAX_DV_FRAC := 0.25     # ship.gd, _newton_atmo_drag
 	var spd40: float = 30.0
 	var rho40: float = E.RHO0 * exp(-40.0 / E.EARTH_ATMO_H_KM)
@@ -142,15 +151,27 @@ func _initialize() -> void:
 	var dt_coarse := 0.05   # in_air substep from _newton_advance
 	var dv40: float = minf(acc40 * dt_coarse, DRAG_MAX_DV_FRAC * spd40)
 	failed += _check("drag_step_never_exceeds_quarter_speed", dv40 <= DRAG_MAX_DV_FRAC * spd40 + 1.0e-9)
-	# Also exercise a case where the raw drag law WOULD remove more than 25% in one
-	# substep (sea level, same speed) - the clamp must actually bind there.
 	var rho0: float = E.RHO0 * exp(-0.0 / E.EARTH_ATMO_H_KM)
 	var acc0: float = 500.0 * NEWTON_BALLISTIC * rho0 * spd40 * spd40
 	var dv0: float = minf(acc0 * dt_coarse, DRAG_MAX_DV_FRAC * spd40)
-	failed += _check("drag_clamp_actually_binds_at_sea_level", acc0 * dt_coarse > DRAG_MAX_DV_FRAC * spd40)
-	failed += _check("drag_clamp_result_is_the_25pct_cap", is_equal_approx(dv0, DRAG_MAX_DV_FRAC * spd40))
-	print("flight_mode: 30km/s @ 40km dv %.3f km/s (unclamped, cap not binding); @ sea level dv %.3f km/s clamped to %.3f"
-		% [acc40 * dt_coarse, acc0 * dt_coarse, dv0])
+	print("flight_mode: 30km/s @ 40km dv %.5f km/s; @ sea level dv %.5f km/s (clamp cap %.3f)"
+		% [acc40 * dt_coarse, acc0 * dt_coarse, DRAG_MAX_DV_FRAC * spd40])
+	# The 2026-09-12 derived ballistic is ~7500x weaker than the old hand-picked 0.005
+	# (that was the whole point - see docs/ROADMAP.md L.3), so at any realistic in-air
+	# speed (entry is itself capped to ENTRY_SPEED_MAX_KMS=3 km/s) this clamp no longer
+	# binds - it's a dormant safety net now, not a routinely-hit path. Confirm that,
+	# and separately confirm the clamp MECHANISM (not the flight-realistic scenario)
+	# still binds given a large enough synthetic speed - the mechanism in ship.gd is
+	# untouched by this rescale, only the coefficient it's fed is different.
+	failed += _check("drag_clamp_no_longer_binds_at_synthetic_30kms",
+		acc0 * dt_coarse < DRAG_MAX_DV_FRAC * spd40)
+	var spd_synthetic: float = 50000.0   # far beyond any reachable in-game speed; mechanism-only
+	var acc_synthetic: float = 500.0 * NEWTON_BALLISTIC * rho0 * spd_synthetic * spd_synthetic
+	var dv_synthetic: float = minf(acc_synthetic * dt_coarse, DRAG_MAX_DV_FRAC * spd_synthetic)
+	failed += _check("drag_clamp_mechanism_still_binds_given_enough_speed",
+		acc_synthetic * dt_coarse > DRAG_MAX_DV_FRAC * spd_synthetic)
+	failed += _check("drag_clamp_result_is_the_25pct_cap",
+		is_equal_approx(dv_synthetic, DRAG_MAX_DV_FRAC * spd_synthetic))
 
 	var hud_src := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	failed += _check("hud_mode_line", hud_src.find("Mode    ") >= 0)

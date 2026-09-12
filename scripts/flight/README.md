@@ -14,7 +14,9 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 
 Touch controls: left thumb is a fixed movement-joystick zone (forward + turn only, no
 reverse — pushing into the back cone brakes); right thumb has FIRE + stacked UP/DOWN
-nose-pitch buttons plus BOOST/CAP/THRUST/INTERACT/MAP/HOME, and a free-drag look area.
-A top-right DEV tap button reveals NODEATH/FASTAIR when dev mode is on. The stick→command
-mapping is the pure static `TouchControls.stick_to_cmd()`, unit-tested in
-`tools/test_touch_controls.gd`.
+nose-pitch buttons plus BOOST/CAP/THRUST/INTERACT/MAP/HOME, and a free-drag look area —
+two fingers in that look area pinch the chase-camera zoom instead of steering the look
+(mobile boots at max zoom-in, `Ship.default_zoom()`). A top-right DEV tap button reveals
+NODEATH/FASTAIR when dev mode is on. The stick→command mapping is the pure static
+`TouchControls.stick_to_cmd()`, and the pinch math is the pure static
+`TouchControls.pinch_zoom()`, both unit-tested in `tools/test_touch_controls.gd`.

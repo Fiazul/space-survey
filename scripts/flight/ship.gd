@@ -64,6 +64,7 @@ const SHIP_PALETTES := [
 const ZOOM_MIN := 0.45              # closest, in hull-length multiples
 const ZOOM_MAX := 8.0               # farthest
 const ZOOM_STEP := 0.12             # per wheel notch
+const TOUCH_DEFAULT_ZOOM := ZOOM_MIN # mobile default: camera as close as the wheel allows
 # Authored `length` was ~0.6 when 1 unit was a game metre. Now 1 unit = 1 km,
 # so that hull would be 600 m. Fit to this many km instead; ratios between ships stay.
 const HULL_REF_LENGTH := 0.6
@@ -335,12 +336,16 @@ const GALACTIC_TEST_MULT := 1.0  # ⚠ TEST ONLY — set back to 1.0 before ship
 const DOCK_EDGE_SPEED := 1000.0    # speed cap at the outer edge of the zone (gentle entry)
 const DOCK_PLATFORM_SPEED := 60.0  # speed cap right at the pad (smooth final approach)
 const DOCK_SPIN := 0.5             # showroom turntable spin (rad/s) while docked
-# Cd*A/m for a dense craft (m²/kg). Converts to km/s² via 500 * B * ρ * v².
-const NEWTON_BALLISTIC := 0.005
-# Sol engines: a few g. 2 g main beats Earth at the ground; drag sets air cruise ~80 m/s.
+# Sol engines: a few g. 2 g main beats Earth at the ground; drag sets air cruise ~6.9 km/s
+# unboosted, ~12 km/s boosted (2026-09-12, see NEWTON_BALLISTIC below).
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g
+# Derived arcade coefficient (m²/kg, converts to km/s² via 500 * B * ρ * v²), not
+# hand-tuned (2026-09-12 player directive: air must allow >=10 km/s, was ~0.14 km/s
+# boosted at sea level under the old hand-picked 0.005) — see FlightMode.air_ballistic
+# and FlightMode.AIR_TERMINAL_KMS for the target this solves for.
+static var NEWTON_BALLISTIC: float = _FM.air_ballistic(NEWTON_THRUST, BOOST_MULT, Ephemeris.RHO0)
 const DEV_THRUST_MULT := 1000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 # Entry handshake (2026-09-09): the shell crossing itself is softened, not flight
 # speed in general — "no hard cap in flight" stays true once you're inside the air.
@@ -792,8 +797,9 @@ var _hull_fill: DirectionalLight3D                   # Chase fill; parented to t
 var _engine_accent := Color(0.35, 0.70, 1.0)         # Hot-end exhaust colour for lights
 var _streaks: GPUParticles3D          # motion streaks at high speed
 var _streak_mat: StandardMaterial3D
-var _cam_zoom := 1.0          # target zoom (mouse wheel)
+var _cam_zoom := 1.0          # target zoom (mouse wheel / pinch)
 var _cam_zoom_smooth := 1.0   # eased toward _cam_zoom
+var touch_active := false     # set true by main.gd when the touch overlay is built
 var _hull_km := HULL_KM       # live fitted hull length (km); camera sits in hull-lengths
 var _cam_basis := Basis()
 var _bank := 0.0
@@ -820,6 +826,14 @@ func _ready() -> void:
 	_build_visual()
 	_set_capture(true)
 	_cam_basis = transform.basis  # seed so the first frame isn't a lurch
+
+
+# Default chase-cam zoom for the current input mode — touch defaults to closest-in
+# (thumbs cover more of a small screen than a wheel-zoomed desktop view), desktop keeps
+# the 1.0 baseline. Every site that resets _cam_zoom to "default" should call this
+# instead of hardcoding 1.0, so the touch default stays a single source of truth.
+func default_zoom() -> float:
+	return TOUCH_DEFAULT_ZOOM if touch_active else 1.0
 
 
 func _input(event: InputEvent) -> void:

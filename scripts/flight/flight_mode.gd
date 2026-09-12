@@ -14,7 +14,7 @@ const AIRLESS_EZ_KM := 10.0            # dump before the skin; vacuum has no 25%
 # directive 2026-09-12: air must allow >=10 km/s, was ~0.14 km/s under the old
 # hand-picked ballistic coefficient). air_ballistic derives the coefficient
 # from this instead of it being hand-tuned.
-const AIR_TERMINAL_KMS := 12.0
+const AIR_TERMINAL_KMS := 50.0
 
 const SPEED_OF_SOUND_KMS := 0.34
 # Fraction of the [0,1] air_load curve FlightMode targets AT boosted sea-level
@@ -65,6 +65,22 @@ static func air_load(alt_km: float, spd_kms: float, atmo_top_km: float) -> float
 	if q_eff <= 0.0:
 		return 0.0
 	return 1.0 - exp(-q_eff / air_load_q_ref(Ephemeris.RHO0))
+
+
+# Sea-level shorthand for air_load, autoload-free (rho0 as an arg, not Ephemeris.RHO0 -
+# same reason as air_load_q_ref/air_ballistic below). Lets callers that must stay
+# preloadable under --script (GameAudio's onset/full reference loads, tests) derive a
+# value off this exact curve instead of hand-picking a number that silently goes stale
+# the next time AIR_TERMINAL_KMS moves (as literally happened: 12 -> 50 km/s stranded
+# GameAudio's old hardcoded 0.0158/0.0058 anchors at the pre-rescale calibration).
+static func load_at_sea_level(spd_kms: float, rho0: float) -> float:
+	if spd_kms <= 0.0:
+		return 0.0
+	var q := rho0 * spd_kms * spd_kms
+	var q_eff := maxf(q - AIR_LOAD_Q_FLOOR, 0.0)
+	if q_eff <= 0.0:
+		return 0.0
+	return 1.0 - exp(-q_eff / air_load_q_ref(rho0))
 
 
 static func mach(spd_kms: float) -> float:

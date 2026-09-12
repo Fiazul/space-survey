@@ -14,6 +14,12 @@ track by Infraction (see *Music* below).
 - Promoted by **Infraction — No Copyright Music** —
   https://www.youtube.com/channel/UCkRrhwhJ2Ia_ZlkTQ4XFWJA
 
+**Flight playlist** — plays sequentially (looping the list) whenever the ship is undocked:
+
+- `assets/bgm.ogg` — AI-generated (see above)
+- `assets/bgm_flight_2.ogg` — *"Becoming"* by **Really Slow Motion** (nightcore edit, player-supplied)
+- `assets/bgm_flight_3.ogg` — *"Summer's Gone"* by **Bob Bradley & Thomas Balmforth** (nightcore edit, player-supplied)
+
 The **3D ship & prop models** are free assets, sourced mainly from:
 
 - **Poly Pizza** — https://poly.pizza/

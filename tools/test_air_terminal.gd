@@ -63,7 +63,7 @@ func _initialize() -> void:
 	# moved FlightMode.AIR_LOAD_Q_REF's replacement (air_load_q_ref) so this curve's
 	# knee tracks AIR_TERMINAL_KMS instead of saturating to 1.0 everywhere reachable.
 	print("air_terminal: sea-level air_load by speed —")
-	for v in [0.0, 1.0, 3.0, 7.0, 12.0]:
+	for v in [0.0, 1.0, 3.0, 7.0, FM.AIR_TERMINAL_KMS]:
 		print("  %5.1f km/s : load %.4f" % [v, FM.air_load(0.0, v, EARTH_ATMO_TOP_KM)])
 	var load_1kms: float = FM.air_load(0.0, 1.0, EARTH_ATMO_TOP_KM)
 	failed += _check("light_cruise_load_stays_low", load_1kms < 0.1)
@@ -74,7 +74,7 @@ func _initialize() -> void:
 		var load_eq: float = FM.air_load(alt, v_eq, EARTH_ATMO_TOP_KM)
 		print("  %5.1f km alt : v %8.3f km/s : load %.4f" % [alt, v_eq, load_eq])
 		failed += _check("boosted_equilibrium_load_in_target_band_at_%.0fkm" % alt,
-			load_eq >= 0.85 and load_eq <= 0.95)
+			load_eq >= FM.AIR_LOAD_TARGET_FRAC - 0.05 and load_eq <= FM.AIR_LOAD_TARGET_FRAC + 0.05)
 
 	if failed == 0:
 		print("air_terminal: OK")

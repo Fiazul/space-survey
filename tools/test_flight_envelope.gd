@@ -12,8 +12,9 @@ extends SceneTree
 #
 # 2026-09-12 player directive changed the premise: air must allow >=10 km/s, so the
 # ballistic coefficient is now DERIVED (FlightMode.air_ballistic/AIR_TERMINAL_KMS) to
-# put boosted sea-level terminal at 12 km/s, not hand-picked at 0.005. Under that
-# coefficient the regime this test used to prove unreachable IS now reached at every
+# put boosted sea-level terminal at AIR_TERMINAL_KMS (currently 50 km/s; was 12 km/s
+# under an earlier revision of this same directive), not hand-picked at 0.005. Under
+# that coefficient the regime this test used to prove unreachable IS now reached at every
 # altitude in the boosted-equilibrium case (air_load saturates near 1.0 - see the
 # constant-q derivation in the assertions below). docs/ROADMAP.md "G.8" still needs a
 # real revisit before any visual entry FX is re-added (this file changes drag/reachability
@@ -70,16 +71,16 @@ func _initialize() -> void:
 		# rho*v^2 at equilibrium is a constant set only by thrust_acc/(500*ballistic) -
 		# independent of altitude - so air_load at boosted equilibrium is the SAME at
 		# every altitude, and by construction (FlightMode.air_load_q_ref) it lands at
-		# FlightMode.AIR_LOAD_TARGET_FRAC (0.9), not saturated to 1.0 - unlike the
+		# FlightMode.AIR_LOAD_TARGET_FRAC, not saturated to 1.0 - unlike the
 		# pre-2026-09-12 unreachable regime this file used to assert against.
 		failed += _check("air_load_boost_near_target_frac_at_%.0fkm" % alt,
-			absf(load_boost - 0.9) < 0.01)
+			absf(load_boost - FM.AIR_LOAD_TARGET_FRAC) < 0.01)
 
 	# Sea-level boosted equilibrium speed must match FlightMode.AIR_TERMINAL_KMS
 	# within 1% - the whole point of the 2026-09-12 rescale (docs/ROADMAP.md L.3).
 	var spd_boost_sea: float = _max_sustained_speed(0.0, NEWTON_THRUST * BOOST_MULT)
 	failed += _check("sea_level_boost_equilibrium_matches_air_terminal_kms",
-		absf(spd_boost_sea - 12.0) <= 0.01 * 12.0)
+		absf(spd_boost_sea - FM.AIR_TERMINAL_KMS) <= 0.01 * FM.AIR_TERMINAL_KMS)
 
 	if failed == 0:
 		print("flight_envelope: OK")

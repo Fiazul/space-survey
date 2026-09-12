@@ -336,8 +336,10 @@ const GALACTIC_TEST_MULT := 1.0  # ⚠ TEST ONLY — set back to 1.0 before ship
 const DOCK_EDGE_SPEED := 1000.0    # speed cap at the outer edge of the zone (gentle entry)
 const DOCK_PLATFORM_SPEED := 60.0  # speed cap right at the pad (smooth final approach)
 const DOCK_SPIN := 0.5             # showroom turntable spin (rad/s) while docked
-# Sol engines: a few g. 2 g main beats Earth at the ground; drag sets air cruise ~6.9 km/s
-# unboosted, ~12 km/s boosted (2026-09-12, see NEWTON_BALLISTIC below).
+# Sol engines: a few g. 2 g main beats Earth at the ground; drag sets boosted air
+# cruise to exactly FlightMode.AIR_TERMINAL_KMS (currently 50 km/s, 2026-09-12; this
+# number has already moved once, from an earlier 12 km/s revision of the same player
+# directive — see NEWTON_BALLISTIC below, don't restate the speed as a bare literal).
 const NEWTON_G := 0.00981          # 1 g in km/s²
 const NEWTON_THRUST := 0.01962     # 2 g
 const NEWTON_STRAFE := 0.00981     # 1 g

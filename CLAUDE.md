@@ -80,14 +80,14 @@ Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 godot --headless --script tools/test_surface_recipes.gd
 # → "surface_recipes: OK"
 ```
-Run all SceneTree-based tests in a loop (skips the 7 scene-based ones below, `timeout 120`
+Run all SceneTree-based tests in a loop (skips the 8 scene-based ones below, `timeout 120`
 per file so a hang doesn't stall the whole loop):
 ```
 for f in tools/test_*.gd; do
   case "$f" in
     tools/test_anchor_frame.gd|tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|\
-    tools/test_dem_calibration.gd|tools/test_dev_sites_scene.gd|tools/test_ship_roster.gd|\
-    tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
+    tools/test_dem_calibration.gd|tools/test_dev_sites_scene.gd|tools/test_music_director_scene.gd|\
+    tools/test_ship_roster.gd|tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -109,7 +109,8 @@ godot --headless tools/test_surface_integration.tscn
 # → "surface_integration: OK"
 ```
 Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_wedge_fighter.tscn`,
-`test_chase_rig.tscn`, `test_base_basic_pbr.tscn`, `test_dem_calibration.tscn`.
+`test_chase_rig.tscn`, `test_base_basic_pbr.tscn`, `test_dem_calibration.tscn`,
+`test_music_director_scene.tscn`.
 
 Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail).
 **Plain `--headless` captures nothing** — no GL context, so `get_viewport().get_texture()`

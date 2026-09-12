@@ -146,8 +146,8 @@ var _tp_label := ""
 var _tp_platform := false              # this jump came from the platform network → land beside the dock
 var _tp_ring: MeshInstance3D          # shiny light-ball that wraps the ship
 var _tp_ring_mat: StandardMaterial3D  # additive glowing-orb material (pulses in a light wave)
-# --- Music: a two-track lobby⇄ship state machine — extracted to MusicDirector (Phase 3).
-# main keeps _is_interstellar() and feeds the director each frame via music.update(...).
+# --- Music: a platform⇄flight state machine — extracted to MusicDirector (Phase 3).
+# main feeds the director each frame via music.update(delta, docked).
 var music: MusicDirector
 
 # Sol start is sunlit geostationary (42,157 km from Earth's centre). Earth is
@@ -520,7 +520,7 @@ func _process(delta: float) -> void:
 	_update_scan(delta)
 	_perf_mark("nav_minimap_scan", _pt)
 	_pt = _perf_t0()
-	music.update(delta, _is_interstellar(), ship.ship_name_at(ship.current_index()))
+	music.update(delta, docked)
 	_perf_mark("music_update", _pt)
 	_update_onboarding()
 	_update_quests()
@@ -540,7 +540,8 @@ func _process(delta: float) -> void:
 
 # Are we "interstellar" — flown out of the limited-speed area into open/FTL space?
 # Not while docked or mid-transit; otherwise it's the ship's open-space signal (every
-# speed cap lifted). Local play (in-system, docked, hangar) returns false -> lobby track.
+# speed cap lifted). No callers currently (MusicDirector switched to docked-only
+# platform/flight, not interstellar) — kept for future use.
 func _is_interstellar() -> bool:
 	return not docked and not ship.transiting and ship.in_open_space()
 

@@ -227,10 +227,14 @@ every FX threshold. The whole visual layer was removed rather than shipped
 invisible; `air_load`/`mach`, the HUD readout, and engine-air audio stay.
 
 **2026-09-12: no longer true.** Drag was rescaled to a player-directed target
-(`FlightMode.AIR_TERMINAL_KMS`, `docs/ROADMAP.md` "L.3") — sustained airspeed at
-sea level is now ~6.9 km/s unboosted, ~12 km/s boosted (both far above every FX
-threshold; `air_load` saturates to its 0.9 design target at boosted equilibrium,
-constant at every altitude). The regime this section describes as unreachable
+(`FlightMode.AIR_TERMINAL_KMS`, `docs/ROADMAP.md` "L.3") — boosted sustained
+airspeed at sea level is now exactly `AIR_TERMINAL_KMS` by construction
+(currently 50 km/s; this number has already moved once, from an earlier 12 km/s
+revision of the same directive — don't restate it as a bare literal), unboosted
+roughly `AIR_TERMINAL_KMS / sqrt(BOOST_MULT)` (currently ≈29 km/s). Both are far
+above every FX threshold; `air_load` saturates to its `AIR_LOAD_TARGET_FRAC`
+design target (0.9) at boosted equilibrium, constant at every altitude. The
+regime this section describes as unreachable
 is now reached in ordinary controlled flight, not just a designed dive. See
 `docs/ROADMAP.md` "G.8" for what re-adding the visual FX itself would still need
 (a design pass, not a reachability fix).

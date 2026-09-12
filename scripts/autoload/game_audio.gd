@@ -5,6 +5,8 @@ extends Node
 # (pooled so shots overlap), a "crush" boom on alien death, and a three-part
 # engine voice (start -> seamless loop -> stop) that the ship drives every frame.
 
+const _FM := preload("res://scripts/flight/flight_mode.gd")
+
 const FIRE_VOICES := 8          # round-robin players so rapid shots overlap cleanly
 const FIRE_DB := -19.0          # bullet fire — gentle/soft
 const EXPLOSION_DB := -3.0
@@ -51,24 +53,32 @@ const ENGINE_SUSTAIN_PITCH := 0.12  # pitch climbed at full cruise (×pitch_mul 
 # (vacuum) still means both sit at their OFF floor and stop, same rule as every other
 # entry-FX.
 #
-# 2026-09-12: the reference load values below are re-picked against the rescaled drag
-# curve (see FlightMode.AIR_TERMINAL_KMS/AIR_LOAD_TARGET_FRAC, docs/ROADMAP.md L.3). The
-# ONLY thing that changed here is these four LOAD anchors — the dB targets/caps below
-# them are unchanged, they're a perceptual choice independent of the physics scale.
-# Old anchors (0.0013/0.0132 wind, 0.0007/0.0129 rumble) were calibrated to an envelope
-# whose max reachable air_load was ~0.0044; under the new drag, ordinary controlled
-# flight reaches air_load up to 0.9 (FlightMode.AIR_LOAD_TARGET_FRAC at boosted sea-level
-# equilibrium), so the old FULL anchors sat two decades below anything real gameplay now
-# produces and both loops would pin at max dB in any ordinary dive.
+# 2026-09-12: the onset/full LOAD anchors below are DERIVED from FlightMode's own
+# air_load curve (FlightMode.load_at_sea_level / AIR_LOAD_TARGET_FRAC) at a named
+# reference speed, not hand-picked — so a future move of FlightMode.AIR_TERMINAL_KMS
+# (the drag-rescale target, docs/ROADMAP.md L.3) can't silently strand these at a stale
+# calibration again. That's exactly what happened once already: these were hand-picked
+# for a 12 km/s target (0.0158/0.0058), then AIR_TERMINAL_KMS moved to 50 km/s and both
+# anchors were quietly ~17x too loud for their actual reference speed until this pass.
+# _RHO0 mirrors ephemeris.gd's RHO0 (not read off the Ephemeris autoload directly) so
+# this file stays autoload-free / preloadable under --script, same convention every
+# tools/test_*.gd file already uses for the same reason. The dB targets/caps below are
+# unchanged — they're a perceptual choice independent of the physics scale.
+const _RHO0 := 1.225   # ephemeris.gd:62, kg/m^3 at sea level
+
 const AIR_WIND_OFF_DB := -60.0        # inaudible floor (matches ENGINE_OFF_DB's silence rule)
-# Onset reference: FlightMode.air_load at 1 km/s sea level (~0.0158) — a light cruise
-# speed, not yet a dive; "just audible" should start becoming noticeable here.
-const AIR_WIND_ONSET_LOAD := 0.0158
+# Onset reference speed: a light cruise, not yet a dive; "just audible" should start
+# becoming noticeable here. AIR_WIND_ONSET_LOAD is FlightMode.air_load at this speed,
+# sea level — a static var (not const) because it calls a function, computed once at
+# script load.
+const AIR_WIND_ONSET_KMS := 1.0
+static var AIR_WIND_ONSET_LOAD: float = _FM.load_at_sea_level(AIR_WIND_ONSET_KMS, _RHO0)
 const AIR_WIND_ONSET_DB := -40.0      # "just audible" hint of wind, not a wash
-# Dive reference: FlightMode.air_load at boosted sea-level equilibrium (AIR_TERMINAL_KMS,
-# AIR_LOAD_TARGET_FRAC = 0.9) — the loudest air_load an ordinary Shift-boost dive
-# settles into, without any DEV tool.
-const AIR_WIND_FULL_LOAD := 0.9
+# Dive reference: boosted sea-level equilibrium. FlightMode.air_load lands EXACTLY at
+# AIR_LOAD_TARGET_FRAC there BY CONSTRUCTION (air_load_q_ref is solved for that), so this
+# is not a second number to re-derive — it's the loudest air_load an ordinary
+# Shift-boost dive settles into, without any DEV tool.
+const AIR_WIND_FULL_LOAD := _FM.AIR_LOAD_TARGET_FRAC
 # The engine's own loudest moment is ENGINE_LOOP_DB + ENGINE_BOOST_DB = -16 dB (boosting,
 # see the engine block above). Wind must stay >=6 dB under that so the engine roar always
 # reads as the loudest layer even mid-dive-boost - that puts the cap at -22, not the -18
@@ -81,13 +91,14 @@ const AIR_FADE_DECADES := 0.6
 const AIR_RUMBLE_OFF_DB := -60.0
 # Rumble is gated by air_load * mach_frac - it is the "diving HARD in air" layer, not
 # felt from air presence alone - so its onset/full references are taken from that same
-# product, at the SAME reference speeds as the wind anchors above (1 km/s sea level for
-# onset, boosted sea-level equilibrium for full), not from air_load in isolation.
-const AIR_RUMBLE_ONSET_LOAD := 0.0058   # air_load(1 km/s)=0.0158 * mach_frac(1 km/s)=0.368
+# product, at the SAME reference speed as the wind onset above (AIR_WIND_ONSET_KMS) for
+# onset, and the same boosted sea-level equilibrium for full.
+static var AIR_RUMBLE_ONSET_LOAD: float = AIR_WIND_ONSET_LOAD * clampf(_FM.mach(AIR_WIND_ONSET_KMS) / 8.0, 0.0, 1.0)
 const AIR_RUMBLE_ONSET_DB := -42.0
-# air_load(equilibrium)=0.9 * mach_frac(equilibrium) - mach is already ~35 there
-# (mach/8 clamps to 1.0 well before reaching AIR_TERMINAL_KMS), so this is the same 0.9.
-const AIR_RUMBLE_FULL_LOAD := 0.9
+# mach_frac is already ~1.0 well before boosted sea-level equilibrium (mach/8 clamps out
+# long before AIR_TERMINAL_KMS is reached), so rumble's full reference is the same
+# AIR_LOAD_TARGET_FRAC as wind's.
+const AIR_RUMBLE_FULL_LOAD := _FM.AIR_LOAD_TARGET_FRAC
 # A few dB under the wind cap so rumble reads as an undertone beneath the wind layer
 # rather than competing with it (mirrors the old -13 vs -9 relative gap).
 const AIR_RUMBLE_MAX_DB := -26.0

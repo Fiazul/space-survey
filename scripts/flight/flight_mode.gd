@@ -67,6 +67,17 @@ static var dev_fast_air := false
 const DEV_AIR_DRAG_MULT := 0.01
 
 
+# DEV-only tour aid (Ctrl+D): touring low over terrain at dev speed shouldn't end
+# every pass in a contact kill. main.gd's death paths (_update_skin_kill,
+# _update_core_hazard) read kill_allowed() at the top of their per-frame check;
+# nothing else should read this flag directly.
+static var dev_no_death := false
+
+
+static func kill_allowed() -> bool:
+	return not dev_no_death
+
+
 # The only body with a modelled density profile so far (Earth's RHO0 + scale
 # height). Gates air_load/mach/drag/co-rotation together so the HUD, the wind
 # audio and the deceleration that actually happens always agree (ship.gd:242-

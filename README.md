@@ -85,8 +85,9 @@ nav-arrow guide · hold `X` (~1s) lock the current Tab target as a paid waypoint
 **Debug (Sol only)** — `F3` perf/leak readout · `F4` dump a 15s flight footprint ·
 `F6` circularize at current altitude · `F7` park at GEO · `F9` toggle fat
 (dev-speed) engines · `\` (while DEV is on) toggle FASTAIR, weaker atmosphere
-drag for touring (speed in air has no hard cap) · `F10` face the nearest body
-and kill leftover speed.
+drag for touring (speed in air has no hard cap) · `Ctrl+D` (while DEV is on)
+toggle NODEATH, contact kill off · `F10` face the nearest body and kill
+leftover speed.
 
 ## Run
 

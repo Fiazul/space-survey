@@ -80,14 +80,14 @@ Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 godot --headless --script tools/test_surface_recipes.gd
 # → "surface_recipes: OK"
 ```
-Run all SceneTree-based tests in a loop (skips the 6 scene-based ones below, `timeout 120`
+Run all SceneTree-based tests in a loop (skips the 7 scene-based ones below, `timeout 120`
 per file so a hang doesn't stall the whole loop):
 ```
 for f in tools/test_*.gd; do
   case "$f" in
     tools/test_anchor_frame.gd|tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|\
-    tools/test_dem_calibration.gd|tools/test_ship_roster.gd|tools/test_surface_integration.gd|\
-    tools/test_wedge_fighter.gd) continue ;;
+    tools/test_dem_calibration.gd|tools/test_dev_sites_scene.gd|tools/test_ship_roster.gd|\
+    tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -96,6 +96,11 @@ Removed 2026-09-08: `test_wh_network.gd` (hung — `SystemDB.arrival_pos()` reac
 `Ephemeris` autoload, which does not exist under `--script`; wormhole hop guarantee is
 currently unchecked, reinstate as a scene-based test), `test_dingo57_starship.gd`,
 `test_jazoone_spaceship.gd` (ships left the roster).
+
+Known noisy pass: `test_streak_scale.gd` preloads `ship.gd` (which touches the
+`Ephemeris` autoload), so `--script` prints a `SCRIPT ERROR`/`Failed to load script`
+pair to stderr before the test body still runs and prints its own PASS lines + `OK`
+(exit 0) — pre-existing, not a real failure; don't treat the stderr noise alone as FAIL.
 
 Scene-based tests (`extends Node3D` / `extends Node`, need a live scene tree) — pass the
 `.tscn`, not the `.gd`, as a **positional path arg** (not `--script`):

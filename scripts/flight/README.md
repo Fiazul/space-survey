@@ -9,5 +9,12 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 | `anchor_frame.gd` | data | `AnchorFrame` — 64-bit arithmetic for the anchored ship frame (docs/adr/0002); static, autoload-free |
 | `flight_mode.gd` | feature area | Zone (CENTER/INSIDE/SKIN/AIR/SPACE) vs mode (LOCAL/CRUISE/AIR) + exclusion-zone math |
 | `turn_carry.gd` | feature area | Sol flight assist: a turn carries velocity with the hull |
-| `touch_controls.gd` | feature area | Mobile multi-touch control overlay (`--touch` to test on desktop) |
+| `touch_controls.gd` | feature area | Mobile multi-touch control overlay, landscape/two-thumb (`--touch` to test on desktop) |
 | `wedge_fighter.gd` | data | `WedgeFighterDesign` — one hull's shader/geometry design constants |
+
+Touch controls: left thumb is a fixed movement-joystick zone (forward + turn only, no
+reverse — pushing into the back cone brakes); right thumb has FIRE + stacked UP/DOWN
+nose-pitch buttons plus BOOST/CAP/THRUST/INTERACT/MAP/HOME, and a free-drag look area.
+A top-right DEV tap button reveals NODEATH/FASTAIR when dev mode is on. The stick→command
+mapping is the pure static `TouchControls.stick_to_cmd()`, unit-tested in
+`tools/test_touch_controls.gd`.

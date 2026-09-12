@@ -1533,6 +1533,10 @@ func _build_teleport_vfx() -> void:
 func _update_core_hazard(rem: float, delta: float) -> void:
 	if _core_dying or _tp_active or ship.transiting:
 		return
+	if not FlightMode.kill_allowed():
+		# DEV NODEATH: no capture, no hull shred, no pull — the pass is a no-op
+		# while the flag is set, same as the skin-kill guard above it in call order.
+		return
 	if rem >= CORE_DANGER_LY:
 		if _core_warned:                 # just fled the danger zone → clear the overlay once
 			hud.set_menu("")
@@ -1580,6 +1584,12 @@ func _update_skin_kill(delta: float) -> void:
 			planets.hush_surface()
 		if _skin_t >= Ephemeris.SURFACE_KILL_SECS:
 			_skin_finish()
+		return
+	if not FlightMode.kill_allowed():
+		# DEV NODEATH: consume the impact flag and drop the sweep's memory of the
+		# last frame so no stale segment fires a false kill the instant the flag
+		# flips back off (same reasoning as the anchor-change reset below).
+		_prev_body = ""
 		return
 	if _tp_active or ship.transiting or docked or _core_dying:
 		_prev_body = ""
@@ -1632,6 +1642,7 @@ func _skin_begin(body: String) -> void:
 	ship.velocity = Vector3.ZERO
 	ship.dev_speed = false
 	FlightMode.dev_fast_air = false
+	FlightMode.dev_no_death = false
 	if planets != null and planets.has_method("hush_surface"):
 		planets.hush_surface()
 	hud.flash(1.0, Color(0.9, 0.05, 0.04))

@@ -11,8 +11,8 @@ next session's fix round. Next session: Friday 2026-09-11.
    OK at push time.
 2. Start with the player-reported bugs in "Open items" (Venus vanishing near the surface is
    the first).
-3. Work through the Opus review findings (recorded below if they arrived before the session
-   ended; otherwise re-run the review over `git diff 9f73637..HEAD`).
+3. Work through the Opus review findings (section below; blocker 1 first — it is a silent
+   Earth-approach regression in the pushed commit).
 4. Then the player walks the "Player check" column; nothing there has been seen in the real
    game yet.
 
@@ -52,6 +52,62 @@ shading-step defect; needs exposure + cast shadow (in flight below).
 
 Nothing. All four slices that were running when this note was first written have landed
 (rows above).
+
+## Opus review of the pushed diff (arrived after push, nothing fixed yet)
+
+Verdict: REQUEST CHANGES. Anchored physics checked clean (no absolute-Vector3 subtraction
+left on a Sol path; save/legacy/arcade paths correct). Full test loop 31 OK + 8 scene OK.
+Nothing visual was re-rendered by the reviewer.
+
+**Blocker**
+1. `planet_generator.gd:663-708` threaded `ensure_close_maps`: the poll lambda captures
+   `pending` by value, so `pending = still` never persists. On any approach where the four
+   close maps finish on different frames, the next poll re-processes already-collected keys,
+   `load_threaded_get_status` returns INVALID for them, and the `else` branch sets
+   `has_clouds/night/normal/height` back to 0. `close_maps = true` is set the same frame, so
+   there is no retry: Earth loses its close maps for the session. Proven with two live probes.
+   Fix: box `pending` like `poll_box`, or re-derive it each poll from the bound flags.
+
+**Should-fix**
+2. Procedural cloud fallback law differs: `cloud_layer.gd:225` clamps centre to
+   `PROC_CENTER_MIN/MAX` (0.14/0.86), `planet_cook.gdshader:364` clamps 0..1. Coverage step
+   at the 35 km hand-off on Mars/Venus/Titan. Add the constants to the shader.
+3. `touch_controls.gd:126-147`: no release on `NOTIFICATION_APPLICATION_PAUSED` /
+   `WM_WINDOW_FOCUS_OUT`; `_touch_at(index, pos, true)` overwrites a held finger without
+   releasing it. Lost release = stuck Shift/V, `touch_fire` true, ring frozen. Add
+   `_release_all()` + release-before-overwrite.
+4. `terrain_tile.gdshader:126-128`: `mix(alb, tex, 1.0)` behind `map_weight > 0.001` is a
+   binary switch, not a blend. Decide: drop `map_weight` or restore the blend.
+5. `dev_sites_panel.gd:120-137` `go()` never checks `ship.anchor_name == body` after
+   `_anchor_ship`; a non-anchorable body would apply a foreign offset to the old anchor.
+6. CLAUDE.md loop hangs on `tools/test_dev_sites_scene.gd` (scene-based, not in skip list);
+   count text says 6, list has 7, `.tscn` prose omits it. Should be 8.
+7. CLAUDE.md "Last verified 2026-09-08 (21 OK)" stale: 31 OK + 8 scene.
+8. PLANET_GENERATOR.md:240-251 "Known gap" paragraph stale: both fixes landed.
+9. tools/README.md: scene-based list wrong (8 now) and 13 new tools undocumented
+   (test_dev_sites, test_dev_sites_scene, test_horizon_shadow, test_low_alt_haze,
+   test_air_audio, test_flight_envelope, test_globe_ring_color_parity, test_globe_ring_uv,
+   test_ring_handoff, test_dem_calibration, probe_dem16, ingest_dem.py, render_dev_sites).
+
+**Nits**
+10. `surface_patch.gd:836` `_skirt_drop` samples at full detail while rim verts used
+    `_detail_km_at`; inflates skirt by up to ~1.6× DETAIL_MAX_M (hidden, clamped).
+11. Exposure gate differs: cook = rocky && has_albedo; terrain_tile = rocky; surface_prop =
+    always. Ice/gas ground unexposed while its props are.
+12. `planet_system.gd:840-850` `cloud_recipe_for_quality` duplicates a dict per body per
+    frame at Light quality; cache next to `_pushed_cloud_amount`.
+13. `hud.gd:1387` Mach/Load shown at Venus/Titan as 0; gate on `has_drag_model`.
+14. earth_spec_2k.png.import mipmap flip: reverted before push (editor noise).
+15. DEM `.import` files keep `detect_3d/compress_to=1`; an editor 3D-detect reimport would
+    VRAM-compress and destroy R*256+G. Set 0 on the six DEM imports.
+16. Dev sites panel says "Ctrl+P / Esc to close" but pauses the tree and main is PAUSABLE,
+    so only Esc closes. Fix label or make main PROCESS_MODE_ALWAYS.
+17. `ship.gd:340` DEV_THRUST_MULT 1e11→1e6, comment "~20 s GEO→skin" stale.
+18. CLAUDE.md architecture tree omits CloudLayer and DevSites.
+19. Teleport that keeps the anchor (GEO→Everest) leaves `_shell_edge_known` true → spurious
+    drop_flash. Reset after `go()`.
+20. `main.gd:391-398` `_reanchor_to_nearest` has no hysteresis; at an equidistant point the
+    anchor can flip per frame, random-walking ~ULP(2d) (~23 m Earth/Moon midpoint).
 
 ## Open items / next briefs (not started)
 
@@ -110,3 +166,24 @@ Capture evidence lives only in the session scratchpad (not the repo); re-render 
   concurrent renders only slow each other. Tests that load DEM/texture assets can flake
   under heavy concurrent godot load — re-run alone before believing a failure.
 - Perf numbers from llvmpipe: only per-category CPU ms and hitch attribution transfer.
+
+## Added 2026-09-12
+
+`FlightMode.dev_no_death` (Ctrl+D, DEV-gated like FASTAIR): guards both player-death
+paths, `_update_skin_kill` and `_update_core_hazard` in `scripts/core/main.gd`, via
+`FlightMode.kill_allowed()`. Cleared whenever DEV mode itself is turned off. New test
+`tools/test_dev_no_death.gd`.
+
+## Added 2026-09-12: touch controls reworked (player-untested on device)
+
+Landscape lock (`project.godot` orientation 5→4, `SCREEN_SENSOR_LANDSCAPE`). Left thumb
+is now a proper movement joystick (forward + turn, analog `Ship.touch_thrust/touch_yaw`,
+brake past the 150° back cone) instead of the old free-drag mouse-look; mapping is the
+pure `TouchControls.stick_to_cmd()`, unit-tested in `tools/test_touch_controls.gd`. Right
+thumb gets FIRE + stacked UP/DOWN nose-pitch buttons plus BOOST/CAP/THRUST/INTERACT/MAP/
+HOME; a top-right DEV button reveals NODEATH/FASTAIR. `Ship._in_fwd/_in_brake/_in_yaw`
+now fold touch into every W/S/A/D-reading site (warp spool, cruise sway, throttle,
+autopilot cancel). Taller-than-16:9 tablet aspects (16:10/4:3 landscape) are handled by
+clamping the overlay's true-bottom-anchored margin so it never drifts past hud.gd's
+fixed-720-canvas hazard line — verified by hand at 1280×800/1280×960, untested on an
+actual tablet.

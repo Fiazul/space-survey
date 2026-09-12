@@ -291,6 +291,10 @@ var combat_lock := false        # set by main while in combat — no interstella
 var firing := false             # set by main while holding fire — force-caps to combat speed
 var touch_fire := false         # mobile: the on-screen FIRE button (NOT the emulated mouse, which
 								# every touch would otherwise trigger) — main reads this on touch builds
+var touch_thrust := 0.0         # mobile joystick: 0..1 analog forward (TouchControls.stick_to_cmd)
+var touch_yaw := 0.0            # mobile joystick: -1..1 analog turn, folds into the A/D kyaw branch
+var touch_pitch := 0.0          # mobile UP/DOWN buttons: -1/0/1 nose pitch, folds into mouse-look md.y
+var touch_brake := false        # mobile joystick: pushed past the back cone (150°+)
 var combat_ref: Node                   # set by main — owns the shared energy pools
 var _boost_starved := false            # true while boosting on an empty tank -> plume sputters
 var is_boosting := false               # true while boost is actually engaged (combat pauses boost regen)
@@ -438,6 +442,7 @@ func _debug_toggle_dev_speed() -> void:
 		debug_toast = "F9  DEV on  ×%.0f engines" % DEV_THRUST_MULT
 	else:
 		_FM.dev_fast_air = false
+		_FM.dev_no_death = false
 		debug_toast = "F9  DEV off"
 
 
@@ -445,6 +450,12 @@ func _debug_toggle_dev_fast_air() -> void:
 	_FM.dev_fast_air = not _FM.dev_fast_air
 	debug_toast = "\\  FASTAIR on  ×%.0f weaker drag" % (1.0 / _FM.DEV_AIR_DRAG_MULT) \
 		if _FM.dev_fast_air else "\\  FASTAIR off"
+
+
+func _debug_toggle_dev_no_death() -> void:
+	_FM.dev_no_death = not _FM.dev_no_death
+	debug_toast = "Ctrl+D  NODEATH on  ·  contact kill off" \
+		if _FM.dev_no_death else "Ctrl+D  NODEATH off"
 
 
 func _debug_face_earth() -> void:
@@ -836,6 +847,9 @@ func _input(event: InputEvent) -> void:
 			_debug_toggle_dev_speed()
 		elif event.keycode == KEY_BACKSLASH and dev_speed:
 			_debug_toggle_dev_fast_air()
+		elif event.keycode == KEY_D and event.ctrl_pressed and dev_speed:
+			_debug_toggle_dev_no_death()
+			get_viewport().set_input_as_handled()
 		elif event.keycode == KEY_F10:
 			_debug_face_earth()
 		elif event.keycode == KEY_F4:
@@ -846,6 +860,29 @@ func _input(event: InputEvent) -> void:
 # but with no mouse capture, which phones don't have). Called by TouchControls.
 func add_touch_look(v: Vector2) -> void:
 	_mouse_delta += v
+
+
+const TOUCH_PITCH_MD := 9.0   # touch_pitch (±1, held) -> an md.y-equivalent rate for fly()'s pitch branch
+
+# Keyboard + touch combined, so every W/S/A/D/warp/autopilot-cancel site reads one source
+# instead of re-deriving "is the player thrusting" per site (the touch joystick is analog,
+# keys are digital — mixing them ad hoc at each call site is how one of them gets missed).
+func _in_fwd() -> float:
+	var k := 1.0 if (Input.is_physical_key_pressed(KEY_W) or auto_cruise) else 0.0
+	return clampf(k + touch_thrust, 0.0, 1.0)
+
+
+func _in_brake() -> bool:
+	return Input.is_physical_key_pressed(KEY_S) or touch_brake
+
+
+func _in_yaw() -> float:
+	var k := 0.0
+	if Input.is_physical_key_pressed(KEY_A):
+		k -= 1.0
+	if Input.is_physical_key_pressed(KEY_D):
+		k += 1.0
+	return clampf(k + touch_yaw, -1.0, 1.0)
 
 
 # Called every frame by main.gd, before the world is rebuilt around the ship.
@@ -969,14 +1006,12 @@ func fly(delta: float) -> void:
 			_yaw_rate = lerpf(_yaw_rate, 0.0, clampf(YAW_LEVEL * delta, 0.0, 1.0))
 		# A/D INTERRUPT the auto-rotate and steer the yaw directly — break a spin and change
 		# direction from the keyboard. Opposing the current spin winds it down/reverses faster.
-		var kyaw := 0.0
-		if Input.is_physical_key_pressed(KEY_A):
-			kyaw -= 1.0
-		if Input.is_physical_key_pressed(KEY_D):
-			kyaw += 1.0
+		var kyaw := _in_yaw()
 		if kyaw != 0.0:
 			var kax := YAW_KEY_RATE * (REVERSE_BOOST if _yaw_rate * kyaw < 0.0 else 1.0)
 			_yaw_rate = clampf(_yaw_rate + kyaw * kax * delta, -MAX_YAW_RATE, MAX_YAW_RATE)
+		if touch_pitch != 0.0:
+			md.y += touch_pitch * TOUCH_PITCH_MD
 		if absf(md.y) > MOUSE_DEADZONE:
 			_pitch_rate = clampf(_pitch_rate + md.y * mouse_sens * RATE_ACCEL, -MAX_PITCH_RATE, MAX_PITCH_RATE)
 		else:
@@ -1024,12 +1059,11 @@ func fly(delta: float) -> void:
 	# you need to be able to back off and reposition. In Sol, S is a brake instead:
 	# reverse-along-nose while facing Earth is an outbound burn and feels like "S
 	# takes me away".
-	if Input.is_physical_key_pressed(KEY_W) or auto_cruise:
-		fwd -= 1.0
-	if Input.is_physical_key_pressed(KEY_S) and not newton:
+	fwd -= _in_fwd()
+	if _in_brake() and not newton:
 		fwd += 1.0
 	# Honest Sol uses S as a brake (see dump: turn-away leftover).
-	var braking := newton and Input.is_physical_key_pressed(KEY_S)
+	var braking := newton and _in_brake()
 	if Input.is_physical_key_pressed(KEY_A):
 		strafe -= 1.0
 	if Input.is_physical_key_pressed(KEY_D):
@@ -1058,7 +1092,7 @@ func fly(delta: float) -> void:
 		_warp_charge = 0.0
 		eff_warp = 1.0
 	elif warp > 1.0 and not combat_lock:
-		if Input.is_physical_key_pressed(KEY_W) or auto_cruise or autopilot:   # auto-cruise/autopilot spool warp too
+		if _in_fwd() > 0.0 or autopilot:   # auto-cruise/autopilot/touch-thrust spool warp too
 			_warp_charge = minf(_warp_charge + delta / WARP_CHARGE_TIME, 1.0)
 		else:
 			_warp_charge = maxf(_warp_charge - delta / WARP_DECAY_TIME, 0.0)
@@ -1187,7 +1221,7 @@ func fly(delta: float) -> void:
 	# and after a beat the hull breathes a slow roll left↔right. Any steer/strafe input
 	# unwinds it fast so it never fights real control.
 	var steering := absf(turn) > 0.0008 or absf(_strafe) > 0.04 or _free_look or autopilot or braking
-	var cruising := (Input.is_physical_key_pressed(KEY_W) or auto_cruise) and not steering
+	var cruising := _in_fwd() > 0.0 and not steering
 	_cruise_t = (_cruise_t + delta) if cruising else maxf(_cruise_t - delta * 3.0, 0.0)
 	var sway_ramp := clampf((_cruise_t - SWAY_DELAY) / SWAY_RAMP, 0.0, 1.0)
 	if sway_ramp > 0.0:
@@ -1229,8 +1263,8 @@ func fly(delta: float) -> void:
 
 	# --- Engine / booster intensity ---
 	var flipping := _flip_t > 0.0
-	var throttle := 1.0 if (Input.is_physical_key_pressed(KEY_W) or auto_cruise) else 0.18
-	if Input.is_physical_key_pressed(KEY_S):
+	var throttle := 1.0 if _in_fwd() > 0.0 else 0.18
+	if _in_brake():
 		throttle = maxf(throttle, 0.55)
 	if boost > 1.0:
 		throttle *= 1.4
@@ -1800,7 +1834,8 @@ func _autopilot_steer(delta: float) -> void:
 	# doesn't abort the instant the map closes and the cursor re-captures.
 	if Input.is_physical_key_pressed(KEY_W) or Input.is_physical_key_pressed(KEY_S) \
 			or Input.is_physical_key_pressed(KEY_A) or Input.is_physical_key_pressed(KEY_D) \
-			or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_CTRL):
+			or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_CTRL) \
+			or touch_thrust > 0.0 or touch_brake or touch_yaw != 0.0:
 		autopilot = false
 		return
 	var to := autopilot_target - anchor_off

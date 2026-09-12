@@ -1361,6 +1361,8 @@ func refresh() -> void:
 			tag += "  DEV"
 			if FlightMode.dev_fast_air:
 				tag += "·FASTAIR"
+			if FlightMode.dev_no_death:
+				tag += "·NODEATH"
 		if ship.time_rate > 1.0:
 			tag += "  ×%.0f" % ship.time_rate
 		if ship.drop_flash > 0.0:

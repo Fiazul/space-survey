@@ -9,6 +9,7 @@ const CRUISER_LED_SHADER := preload("res://shaders/cruiser_led.gdshader")
 const CRUISER_PROPULSION_SHADER := preload("res://shaders/cruiser_propulsion.gdshader")
 const CRUISER_TORCH_SHADER := preload("res://shaders/cruiser_torch.gdshader")
 const JAZOONE_HULL_BOOSTER_SHADER := preload("res://shaders/jazoone_hull_booster.gdshader")
+const VANGUARD_VENT_SHADER := preload("res://shaders/vanguard_vent.gdshader")
 const EXHAUST_HAZE_SHADER := preload("res://shaders/exhaust_haze.gdshader")
 # Tileable turbulence for every torch/haze layer, baked by tools/gen_exhaust_noise.py.
 # Four independent channels (fine / coarse / warp / filament), so it must stay a
@@ -826,8 +827,7 @@ static func add_base_basic_booster_plumes(model: Node3D,
 	return materials
 
 
-# Vanguard, built to base_basic's recipe: authored maps on the hull, the booster
-# surface carrying a propulsion pass, and two torch layers in its single outlet.
+# Vanguard: authored hull maps, glass inserts in root.2, and a central plasma outlet.
 #
 # The OBJ arrives as ONE mesh with eight named surfaces rather than eight nodes, so
 # the booster is found by SURFACE name. It also arrives with no materials, so every
@@ -862,18 +862,34 @@ static func style_vanguard(model: Node3D,
 			hull.emission_operator = BaseMaterial3D.EMISSION_OP_MULTIPLY
 			hull.emission = Color(1.0, 1.0, 1.0)
 			hull.emission_energy_multiplier = 1.15
-			if mi.mesh.surface_get_name(si) == VANGUARD_BOOSTER_SURFACE:
+			if surface_name == VANGUARD_BOOSTER_SURFACE:
 				var drive := ShaderMaterial.new()
 				drive.shader = CRUISER_PROPULSION_SHADER
 				drive.set_shader_parameter("plasma_color", Color.WHITE)
 				drive.set_shader_parameter("brightness", VANGUARD_BOOSTER_GAIN)
-				# Grade against the central outlet, so the housing around it stops
-				# being a light source and the glow ends before the mesh does.
 				_wire_nozzle_shape(drive, VANGUARD_BOOSTER_SOCKETS,
 					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
 				hull.next_pass = drive
 				materials.append(drive)
 			mi.set_surface_override_material(si, hull)
+	var glass := ShaderMaterial.new()
+	glass.shader = VANGUARD_VENT_SHADER
+	glass.set_shader_parameter("brightness", booster_gain(1.0))
+	# The root.2 grille openings slope forward toward the outside of each housing.
+	for side in [-1.0, 1.0]:
+		var lens := MeshInstance3D.new()
+		lens.name = "VanguardVentGlassLeft" if side < 0.0 else "VanguardVentGlassRight"
+		var face := QuadMesh.new()
+		face.size = Vector2(0.143, 0.064)
+		face.subdivide_width = 20
+		face.subdivide_depth = 10
+		lens.mesh = face
+		lens.material_override = glass
+		lens.position = Vector3(side * 0.291, 0.143, 0.726)
+		lens.rotation = Vector3(0.0, side * 0.15, side * 0.035)
+		lens.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		model.add_child(lens)
+	materials.append(glass)
 	return materials
 
 

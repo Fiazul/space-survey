@@ -12,7 +12,7 @@ extends SceneTree
 const FM := preload("res://scripts/flight/flight_mode.gd")
 
 # --- Mirrored from scripts/flight/ship.gd — keep these in step with that file ---
-const NEWTON_THRUST := 0.01962      # ship.gd:~342, 2 g in km/s^2
+const NEWTON_THRUST := 0.02943      # ship.gd:NEWTON_THRUST, 3 g in km/s^2
 const BOOST_MULT := 3.0             # ship.gd:~80, Shift multiplier
 # --- Mirrored from scripts/autoload/ephemeris.gd — keep these in step with that file ---
 const RHO0 := 1.225                 # ephemeris.gd:62, kg/m^3 at sea level

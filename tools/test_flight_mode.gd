@@ -144,7 +144,7 @@ func _initialize() -> void:
 	# is derived (2026-09-12) from FlightMode.air_ballistic/AIR_TERMINAL_KMS rather than
 	# hand-picked (was a hardcoded 0.005 here and in ship.gd) — mirror the same call ship.gd
 	# makes, using ship.gd's own NEWTON_THRUST/BOOST_MULT (mirrored below; touch one, touch both).
-	const NEWTON_THRUST := 0.01962     # ship.gd:~342, 2 g in km/s^2
+	const NEWTON_THRUST := 0.02943     # ship.gd:NEWTON_THRUST, 3 g in km/s^2
 	const NEWTON_BOOST_MULT := 3.0     # ship.gd:~80, Shift multiplier
 	var NEWTON_BALLISTIC: float = M.air_ballistic(NEWTON_THRUST, NEWTON_BOOST_MULT, E.RHO0)
 	const DRAG_MAX_DV_FRAC := 0.25     # ship.gd, _newton_atmo_drag

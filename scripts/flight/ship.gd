@@ -336,19 +336,19 @@ const GALACTIC_TEST_MULT := 1.0  # ⚠ TEST ONLY — set back to 1.0 before ship
 const DOCK_EDGE_SPEED := 1000.0    # speed cap at the outer edge of the zone (gentle entry)
 const DOCK_PLATFORM_SPEED := 60.0  # speed cap right at the pad (smooth final approach)
 const DOCK_SPIN := 0.5             # showroom turntable spin (rad/s) while docked
-# Sol engines: a few g. 2 g main beats Earth at the ground; drag sets boosted air
+# Sol engines: a few g. 3 g main beats Earth at the ground; drag sets boosted air
 # cruise to exactly FlightMode.AIR_TERMINAL_KMS (currently 50 km/s, 2026-09-12; this
 # number has already moved once, from an earlier 12 km/s revision of the same player
 # directive — see NEWTON_BALLISTIC below, don't restate the speed as a bare literal).
 const NEWTON_G := 0.00981          # 1 g in km/s²
-const NEWTON_THRUST := 0.01962     # 2 g
-const NEWTON_STRAFE := 0.00981     # 1 g
+const NEWTON_THRUST := 0.02943     # 3 g — 50% faster acceleration
+const NEWTON_STRAFE := 0.014715    # 1.5 g — 50% faster acceleration
 # Derived arcade coefficient (m²/kg, converts to km/s² via 500 * B * ρ * v²), not
 # hand-tuned (2026-09-12 player directive: air must allow >=10 km/s, was ~0.14 km/s
 # boosted at sea level under the old hand-picked 0.005) — see FlightMode.air_ballistic
 # and FlightMode.AIR_TERMINAL_KMS for the target this solves for.
 static var NEWTON_BALLISTIC: float = _FM.air_ballistic(NEWTON_THRUST, BOOST_MULT, Ephemeris.RHO0)
-const DEV_THRUST_MULT := 1000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 100000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 # Entry handshake (2026-09-09): the shell crossing itself is softened, not flight
 # speed in general — "no hard cap in flight" stays true once you're inside the air.
 const ENTRY_SPEED_MAX_KMS := 3.0

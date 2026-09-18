@@ -19,7 +19,7 @@ extends CanvasLayer
 #                 the stick is analog).
 #   RIGHT thumb — FIRE (ship.touch_fire) and stacked UP/DOWN nose-pitch hold buttons
 #                 (ship.touch_pitch) where a shooter puts its fire buttons, plus the
-#                 smaller BOOST/CAP/THRUST/INTERACT/MAP/HOME buttons along the right
+#                 smaller BOOST/CAP/THRUST/INTERACT/MAP/HOME/ZOOM buttons along the right
 #                 edge. A drag anywhere in the right zone that isn't on a button is the
 #                 aim-look drag (ship.add_touch_look), same as before — UNLESS a second
 #                 finger is also down in that same free-look zone, in which case the pair
@@ -48,7 +48,7 @@ var _use_mouse := not OS.has_feature("mobile")
 const MOUSE_FINGER := -7      # synthetic finger index for the desktop test mouse
 
 # kinds
-enum { K_TOGGLE_CRUISE, K_HOLD_KEY, K_HOLD_FIRE, K_TAP_KEY, K_HOLD_PITCH, K_TAP_DEV, K_TAP_DEBUG_SUB }
+enum { K_TOGGLE_CRUISE, K_HOLD_KEY, K_HOLD_FIRE, K_TAP_KEY, K_HOLD_PITCH, K_HOLD_ZOOM, K_TAP_DEV, K_TAP_DEBUG_SUB }
 
 var _buttons: Array = []      # [{node, kind, code, tint, side, x_margin, w, h, bottom_off}]
 var _finger := {}             # touch index -> button dict, or the string "joystick"/"look"
@@ -56,6 +56,7 @@ var _dev_btn: Dictionary
 var _nodeath_btn: Dictionary
 var _fastair_btn: Dictionary
 var _cruise_btn: Dictionary
+var _zoom_held := {}
 
 # Bottom clearance (true-bottom-edge to cluster-bottom, in canvas units — canvas units
 # track hud.gd's own fixed-pixel positions 1:1 regardless of resolution/stretch, so these
@@ -128,6 +129,8 @@ func _build() -> void:
 	_add("INTERACT", 340.0, 110, 64, Color(0.55, 0.85, 1.0), K_TAP_KEY, "R", 232.0, KEY_F)
 	_add("MAP",      340.0, 110, 64, Color(0.7, 0.8, 1.0), K_TAP_KEY, "R", 306.0, KEY_M)
 	_add("HOME",     340.0, 110, 64, Color(1.0, 0.7, 0.5), K_TAP_KEY, "R", 380.0, KEY_H)
+	_add("ZOOM+", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 10.0, -1)
+	_add("ZOOM−", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 84.0, 1)
 
 	_dev_btn = _add("DEV", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEV, "TR", 0.0)
 	_nodeath_btn = _add("NODEATH", 114.0, 100, 40, Color(1.0, 0.4, 0.4), K_TAP_DEBUG_SUB, "TR", 0.0, 0)
@@ -182,6 +185,7 @@ func _reset_all_input() -> void:
 	_finger_pos.clear()
 	_pinch_active = false
 	_pitch_held.clear()
+	_zoom_held.clear()
 	_joy_finger = -1
 	_joy_ring.visible = false
 	_prev_brake = false
@@ -193,9 +197,14 @@ func _reset_all_input() -> void:
 		ship.touch_fire = false
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
 	if ship == null:
 		return
+	# Log-space so a held button covers the whole range in ~1.5 s at a uniform perceived rate.
+	var zoom_amount: float = log(ship.ZOOM_MAX / ship.ZOOM_MIN) / 1.5 * delta
+	for dir in _zoom_held:
+		ship._cam_zoom = zoom_step(ship._cam_zoom, dir, zoom_amount,
+			ship.ZOOM_MIN, ship.ZOOM_MAX)
 	# auto_cruise can also be dropped by the touch-brake rising edge, main.gd's Num Lock
 	# toggle, or its S-tap handler — none of which go through _press, so the THRUST
 	# button's highlight has to be polled here rather than set only on press.
@@ -352,6 +361,10 @@ static func pinch_zoom(start_zoom: float, start_dist: float, cur_dist: float,
 	return clampf(start_zoom * (start_dist / cur_dist), zmin, zmax)
 
 
+static func zoom_step(cur: float, dir: int, amount: float, zmin: float, zmax: float) -> float:
+	return clampf(cur * exp(dir * amount), zmin, zmax)
+
+
 func _zone_at(pos: Vector2) -> String:
 	var size := get_viewport().get_visible_rect().size
 	if pos.x <= size.x * JOY_ZONE_FRACTION:
@@ -385,6 +398,9 @@ func _press(b: Dictionary) -> void:
 			_pitch_held[b.code] = true
 			_recompute_pitch()
 			_highlight(b, true)
+		K_HOLD_ZOOM:
+			_zoom_held[b.code] = true
+			_highlight(b, true)
 		K_TAP_DEV:
 			# No _flash — _process polls ship.dev_speed every frame; a flash would fight it.
 			if ship != null: ship._debug_toggle_dev_speed()
@@ -404,6 +420,9 @@ func _release(b: Dictionary) -> void:
 		K_HOLD_PITCH:
 			_pitch_held.erase(b.code)
 			_recompute_pitch()
+			_highlight(b, false)
+		K_HOLD_ZOOM:
+			_zoom_held.erase(b.code)
 			_highlight(b, false)
 		# toggle/tap/dev buttons keep or already flashed their state.
 

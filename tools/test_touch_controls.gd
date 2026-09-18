@@ -74,6 +74,18 @@ func _initialize() -> void:
 	var zero_start := TC.pinch_zoom(2.0, 0.0, 100.0, 0.45, 8.0)   # start_dist ~0 — degenerate pinch start
 	failed += _check("pinch_zero_start_dist_no_blowup", is_equal_approx(zero_start, 2.0) and is_finite(zero_start))
 
+	var zoom_in := TC.zoom_step(2.0, -1, log(2.0), 0.45, 8.0)   # one halving
+	failed += _check("zoom_step_in", is_equal_approx(zoom_in, 1.0))
+
+	var zoom_out := TC.zoom_step(2.0, 1, log(2.0), 0.45, 8.0)   # one doubling
+	failed += _check("zoom_step_out", is_equal_approx(zoom_out, 4.0))
+
+	var zoom_min := TC.zoom_step(0.5, -1, 0.12, 0.45, 8.0)
+	failed += _check("zoom_step_clamps_at_zmin", is_equal_approx(zoom_min, 0.45))
+
+	var zoom_max := TC.zoom_step(7.95, 1, 0.12, 0.45, 8.0)
+	failed += _check("zoom_step_clamps_at_zmax", is_equal_approx(zoom_max, 8.0))
+
 	if failed == 0:
 		print("touch_controls: OK")
 		quit(0)

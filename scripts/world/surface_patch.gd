@@ -372,6 +372,16 @@ func has_ground() -> bool:
 	return _ring_anchor[0] != Vector3.ZERO
 
 
+func covers_horizon(ship_pos: Vector3) -> bool:
+	if not has_ground() or _radius <= 0.0 or ship_pos.length_squared() < 0.001:
+		return false
+	var offset_angle := acos(clampf(ship_pos.normalized().dot(_ring_anchor[0].normalized()), -1.0, 1.0))
+	var horizon_angle := acos(clampf(_radius / maxf(ship_pos.length(), _radius), 0.0, 1.0))
+	var half_width := ring_reach_km(RING_COUNT - 1, _base_quad) * 0.5
+	# The square's inscribed cap must contain the observer's entire visible horizon.
+	return offset_angle + horizon_angle <= atan(half_width / _radius)
+
+
 # `physical` is the 1u = 1 km truth flag. Without it an arcade system (1u = 0.01 AU,
 # radii boosted by VISUAL_SCALE) hands us an "altitude" of 0.1 that is really a
 # million kilometres, and a ground tile pops in deep space. main._update_skin_kill
@@ -404,6 +414,7 @@ var _was_in_band := false
 # `visible` still false from the frame the tile was cold, even though
 # `has_ground()` just became true.
 var _last_in_band := false
+var _last_ship_pos := Vector3.ZERO
 
 
 func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
@@ -428,6 +439,7 @@ func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
 func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		alt: float, kill: float, ceiling: float, recipe: Dictionary,
 		sampler: TerrainSampler) -> void:
+	_last_ship_pos = ship_pos
 	if sampler == null:
 		visible = false
 		return
@@ -459,7 +471,7 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# Pick up a finished batch (if any) before deciding whether a new one is
 	# needed, so a rebuild that completed between frames is never held an
 	# extra frame past when it could have shown.
-	_poll_rebuild(hit)
+	_poll_rebuild()
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	# AGL can be tiny above a mountain while the sea-level horizon is far away.
 	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius, _base_quad)
@@ -473,7 +485,7 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# never safe regardless of which of the three triggered this.
 	if (cold or rescaled or recentered) and not _thread_pending:
 		_start_rebuild(hit, radius, want_base)
-	visible = in_band and has_ground()
+	visible = in_band and covers_horizon(ship_pos)
 	_recount_tris()
 
 
@@ -518,29 +530,14 @@ func _start_rebuild(hit: Vector3, radius: float, base: float) -> void:
 # `update_for` calls this every frame, so the frame that happens to be the one
 # where the last ring lands pays for the (cheap) mesh commit; every other
 # frame pays only for the `is_group_task_completed` check.
-func _poll_rebuild(hit: Vector3) -> void:
+func _poll_rebuild() -> void:
 	if not _thread_pending:
 		return
 	if not WorkerThreadPool.is_group_task_completed(_thread_group_id):
 		return
 	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
-	# The ship may have moved far enough while this batch was computing that
-	# its anchor is no longer good enough to show - drop it rather than
-	# commit stale ground, and let the next update_for call see `recentered`
-	# (or `rescaled`) still true and dispatch a fresh batch from where the
-	# ship actually is now.
-	#
-	# EXCEPT when nothing is committed yet (cold tile): dropping every batch
-	# forever is exactly the starvation that hid the Moon at speed - a fast
-	# enough approach re-triggers `recentered` before each fresh dispatch
-	# ever lands, so the body stayed invisible until the ship left the band.
-	# Some ground at a slightly stale anchor beats none; commit it, and the
-	# very next `update_for` frame still sees `recentered` true (the anchor
-	# lags the ship) and dispatches the next batch from the ship's new spot.
-	if hit.distance_to(_thread_hit) > ring_reach_km(0, _thread_base) * REBUILD_FRAC \
-			and _ring_anchor[0] != Vector3.ZERO:
-		_thread_pending = false
-		return
+	# Rejecting completed batches at speed starves updates forever. Commit the
+	# newest ground; covers_horizon keeps the globe visible if it still lags too far.
 	_finish_rebuild()
 
 
@@ -561,7 +558,7 @@ func _finish_rebuild() -> void:
 	for i in RING_COUNT:
 		_commit_ring(i, _thread_results[i], _thread_hit)
 		_ring_anchor[i] = _thread_hit
-	visible = _last_in_band and has_ground()
+	visible = _last_in_band and covers_horizon(_last_ship_pos)
 	_recount_tris()
 
 

@@ -4,10 +4,10 @@ Dev-only scripts: none of this ships in a build. See CLAUDE.md for exact invocat
 
 ## test_* — headless tests (pass/fail contracts)
 
-Most `extends SceneTree`, run via `godot --headless --script tools/test_X.gd`. Six are
+Most `extends SceneTree`, run via `godot --headless --script tools/test_X.gd`. Some are
 scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 `godot --headless tools/test_X.tscn`): `test_anchor_frame`, `test_base_basic_pbr`,
-`test_chase_rig`, `test_ship_roster`, `test_surface_integration`, `test_wedge_fighter`.
+`test_chase_rig`, `test_ship_roster`, `test_surface_integration`, `test_surface_streaming`, `test_wedge_fighter`.
 
 | File | Covers |
 |---|---|
@@ -36,6 +36,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_streak_scale.gd` | Motion-streak field scale vs ship speed |
 | `test_surface_band.gd` | The bird-eye ground tile (skin band) contract |
 | `test_surface_integration.gd` (+ `.tscn`) | Live Moon placement + Earth/Moon death entry |
+| `test_surface_streaming.gd` (+ `.tscn`) | Fast Earth/Moon flight keeps ground coverage while terrain rebuilds |
 | `test_surface_recipes.gd` | Recipe routing, crater/caldera geometry, height bounds, contact, repeatability |
 | `test_terrain_light.gd` | Ground lighting/haze matches the globe's rule |
 | `test_turn_carry.gd` | A turn carries Sol velocity with the hull |

@@ -87,7 +87,7 @@ for f in tools/test_*.gd; do
   case "$f" in
     tools/test_anchor_frame.gd|tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|\
     tools/test_dem_calibration.gd|tools/test_dev_sites_scene.gd|tools/test_music_director_scene.gd|\
-    tools/test_ship_roster.gd|tools/test_surface_integration.gd|tools/test_wedge_fighter.gd) continue ;;
+    tools/test_ship_roster.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|tools/test_wedge_fighter.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done

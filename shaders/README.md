@@ -16,5 +16,6 @@ GDShader source, all `shader_type spatial` except `hud_text.gdshader` (canvas_it
 | `cruiser_torch.gdshader` | feature area | Shared additive plasma torch for every ship's authored booster sockets |
 | `cruiser_led.gdshader` | feature area | Animated rainbow chase for the cruiser's authored window strip |
 | `vanguard_vent.gdshader` | feature area | Curved luminous glass inserts in Vanguard's rectangular rear housings |
+| `base_basic_wing_glass.gdshader` | feature area | Shape-conforming blue-white glass overlay for Base Basic PBR's paired wings |
 | `exhaust_haze.gdshader` | feature area | Screen-space refraction shell wrapped around a booster plume |
 | `hud_text.gdshader` | feature area | Metallic linear-gradient fill for HUD glyph text |

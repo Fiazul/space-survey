@@ -10,6 +10,7 @@ const CRUISER_PROPULSION_SHADER := preload("res://shaders/cruiser_propulsion.gds
 const CRUISER_TORCH_SHADER := preload("res://shaders/cruiser_torch.gdshader")
 const JAZOONE_HULL_BOOSTER_SHADER := preload("res://shaders/jazoone_hull_booster.gdshader")
 const VANGUARD_VENT_SHADER := preload("res://shaders/vanguard_vent.gdshader")
+const BASE_BASIC_WING_GLASS_SHADER := preload("res://shaders/base_basic_wing_glass.gdshader")
 const EXHAUST_HAZE_SHADER := preload("res://shaders/exhaust_haze.gdshader")
 # Tileable turbulence for every torch/haze layer, baked by tools/gen_exhaust_noise.py.
 # Four independent channels (fine / coarse / warp / filament), so it must stay a
@@ -786,6 +787,20 @@ static func style_base_basic_pbr(model: Node3D,
 				housing.next_pass = drive
 				mi.set_surface_override_material(si, housing)
 			materials.append(drive)
+	for mi in gather_mesh_instances(model):
+		if mi.mesh == null or String(mi.name) not in ["root.2", "root.4", "root_2", "root_4"]:
+			continue
+		var glass := ShaderMaterial.new()
+		glass.shader = BASE_BASIC_WING_GLASS_SHADER
+		glass.set_shader_parameter("brightness", booster_gain(0.72))
+		var lens := MeshInstance3D.new()
+		lens.name = "BaseBasicWingGlassPort" if "2" in String(mi.name) else "BaseBasicWingGlassStarboard"
+		lens.mesh = mi.mesh
+		lens.material_override = glass
+		lens.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		lens.set_meta("ship_bounds_exclude", true)
+		mi.add_child(lens)
+		materials.append(glass)
 	return materials
 
 

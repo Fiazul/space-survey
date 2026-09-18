@@ -28,8 +28,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # Legacy "tools" package (the action's default) no longer exists in the runner's SDK.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK packages
         run: |

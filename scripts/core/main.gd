@@ -430,7 +430,7 @@ func _process(delta: float) -> void:
 	# plain subtraction against the arcade system's OWN bodies rather than
 	# rel_km-ing against Sol's Earth/Sun (finding 4).
 	var refresh_anchor := ship.anchor_name if current_system == SystemDB.SOL else ""
-	planets.refresh(ship.anchor_off, delta, refresh_anchor)
+	planets.refresh(ship.anchor_off, delta, refresh_anchor, ship.velocity)
 	_perf_mark("planets_refresh", _pt)
 	_reanchor_to_nearest()
 	ship.speed_limit = planets.speed_limit   # eases the ship down near a body

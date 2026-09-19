@@ -506,7 +506,7 @@ func _build_star_shell() -> void:
 # is "" outside Sol, where every coordinate is small and the offset IS absolute.
 # Everything this writes into `_rel` stays SHIP-relative, so nothing downstream
 # (navigator, minimap, HUD, surface band) has to know an anchor exists.
-func refresh(ship_off: Vector3, delta: float, anchor := "") -> void:
+func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = Vector3.ZERO) -> void:
 	_cloud_time_s += delta
 	nearest_dist = INF
 	nearest_name = ""
@@ -767,11 +767,14 @@ func refresh(ship_off: Vector3, delta: float, anchor := "") -> void:
 		# speed cap fold that used to sit here (and its inward-only gate)
 		# is removed; FlightMode.band_speed_cap_* is removed alongside it.
 		_surface.transform = Transform3D(body_basis, _rel.get(nearest_name, Vector3.ZERO))
+		var vel_body: Vector3 = body_basis.inverse() * ship_vel
 		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
-			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler)
+			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler, vel_body)
 		# The coarse globe has a different displacement and can protrude through
-		# valleys. The complete horizon-covering terrain replaces it in this band.
-		if _surface.visible and _surface.has_ground():
+		# valleys. Hide it only while the COMPLETE horizon-covering terrain is
+		# in place. If the tile lags, keep the globe UNDER the patch (depth test
+		# lets the patch win where it exists) instead of hiding the patch.
+		if _surface.visible and _surface.has_ground() and _surface.covers_horizon(from_centre):
 			for b in _bodies:
 				if str(b.name) == nearest_name:
 					b.sphere.visible = false

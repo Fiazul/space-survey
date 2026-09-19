@@ -24,26 +24,56 @@ func _ready() -> void:
 			planets.refresh(off, 0.0, body)
 			_check("%s_ground_while_building_%d" % [body, step],
 				_ground_covers_ship(planets, patch, body))
+			_check("%s_in_band_stays_visible_while_building_%d" % [body, step],
+				_in_band_ground_is_visible(patch))
 			if patch.get("_thread_pending"):
 				while not WorkerThreadPool.is_group_task_completed(patch.get("_thread_group_id")):
 					OS.delay_msec(1)
 			var moved := off.rotated(Vector3.UP, 78.6 * 0.25 / radius)
-			planets.refresh(moved, 0.0, body)
+			var vel: Vector3 = (moved - off) / 0.25
+			planets.refresh(moved, 0.0, body, vel)
 			_check("%s_ground_during_fast_flight_%d" % [body, step],
 				_ground_covers_ship(planets, patch, body))
+			_check("%s_in_band_stays_visible_during_fast_flight_%d" % [body, step],
+				_in_band_ground_is_visible(patch))
 			_check("%s_new_ground_commits_%d" % [body, step],
 				previous_anchor.distance_to(patch.get("_ring_anchor")[0]) > 1.0)
-			print("streaming: %s step %d terrain lag %.1f km" % [body, step,
-				(planets.surface_basis(body).inverse() * moved.normalized() * radius).distance_to(patch.get("_ring_anchor")[0])])
+			var commit_frames := 0
+			var max_one_frame := 0
+			for _drain in range(6):
+				planets.refresh(moved, 0.0, body, vel)
+				_check("%s_in_band_stays_visible_drain_%d_%d" % [body, step, _drain],
+					_in_band_ground_is_visible(patch))
+				var n: int = patch.rings_committed_this_update()
+				max_one_frame = maxi(max_one_frame, n)
+				if n > 0:
+					commit_frames += 1
+			_check("%s_rings_commit_at_most_one_per_frame_%d" % [body, step], max_one_frame <= 1)
+			_check("%s_rings_commit_across_frames_%d" % [body, step], commit_frames >= 2)
+			print("streaming: %s step %d terrain lag %.1f km lead %.1f km" % [body, step,
+				(planets.surface_basis(body).inverse() * moved.normalized() * radius).distance_to(patch.get("_ring_anchor")[0]),
+				float(patch.get("_thread_lead"))])
 			off = moved
+		# One more dispatch with velocity so lead is measurable on a drained tile.
+		var further := off.rotated(Vector3.UP, 120.0 / radius)
+		var v_lead: Vector3 = (further - off) / 0.25
+		planets.refresh(further, 0.0, body, v_lead)
+		_check("%s_dispatch_uses_velocity_lead" % body, float(patch.get("_thread_lead")) > 1.0)
 		patch.force_ready()
-		planets.refresh(off, 0.0, body)
+		planets.refresh(further, 0.0, body)
 		_check("%s_detail_returns_after_stopping" % body, patch.visible)
 		_check("%s_stopped_ground_coverage" % body, _ground_covers_ship(planets, patch, body))
+		_check("%s_in_band_stays_visible_after_stop" % body, _in_band_ground_is_visible(patch))
 	planets.queue_free()
 	await get_tree().process_frame
 	print("surface_streaming: ", "OK" if failures == 0 else "FAIL %d" % failures)
 	get_tree().quit(0 if failures == 0 else 1)
+
+
+func _in_band_ground_is_visible(patch: Node3D) -> bool:
+	if not bool(patch.get("_last_in_band")) or not patch.has_ground():
+		return true
+	return patch.visible
 
 
 func _ground_covers_ship(planets: Node3D, patch: Node3D, body: String) -> bool:

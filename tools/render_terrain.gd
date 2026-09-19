@@ -134,6 +134,7 @@ func _ready() -> void:
 		[0.0, -30.0, 25.0, 0.0, "parity_atlantic_25km", "Earth"],
 		[-3.0, -60.0, 45.0, 0.0, "parity_amazon_45km", "Earth"],
 		[-3.0, -60.0, 25.0, 0.0, "parity_amazon_25km", "Earth"],
+		[-3.0, -60.0, 0.3, 1.2, "amazon_300m", "Earth", {"sun_elev_deg": 22.0}],
 		[23.0, 10.0, 45.0, 0.0, "parity_sahara_45km", "Earth"],
 		[23.0, 10.0, 25.0, 0.0, "parity_sahara_25km", "Earth"],
 		# DEM ingest review (2026-09-09, docs/research/2026-09-09-dem-ingest.md):

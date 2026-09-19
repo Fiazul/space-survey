@@ -65,8 +65,10 @@ const NORMAL_STEP_FRAC := 0.5
 # measured 240 ms. Drifting an eighth of the reach off-centre still leaves
 # 1.2 km of fine ground ahead of the hull.
 const REBUILD_FRAC := 0.125
-# Rebuilds currently commit together to preserve the shared tangent frame.
-# A future double-buffered builder can spread work without displaying torn rings.
+# New rings / plants rise over this many seconds via stream_fade. Opaque albedo
+# only - ALPHA would put the tile on the transparent pipeline and starfield
+# would show through a planet (forbidden).
+const STREAM_FADE_S := 0.25
 # Rebuild everything once the altitude has moved the ring scale this far.
 const BASE_DRIFT_FRAC := 0.25
 # Start building while still this many ceilings out, so the rings exist by the
@@ -77,7 +79,11 @@ const PREBUILD_CEILINGS := 2.5
 # z-fight the globe under it. Lift the water MESH INSTANCE - not its vertices -
 # so vertex_error_km() is untouched.
 const WATER_LIFT_KM := 0.001
-const PROP_MAX := 220
+const PROP_MAX := 400
+const PROP_SLOTS := 3
+# Unscaled kit meshes are real size (1 scene unit = 1 km). Instance scale is
+# then 0.7–1.3 from the seat hash, so a 30 m tree stays in the 20–40 m band.
+
 # Design bound, not a flight speed limiter - the hard air-speed cap was
 # removed 2026-09-08 (player decision, see NEEDS-YOUR-EYES.md); ship speed is
 # Newton + drag only now. Moved here the same day from
@@ -123,6 +129,7 @@ var _ring_water: Array[MeshInstance3D] = []
 var _ring_skirt: Array[MeshInstance3D] = []
 var _ring_anchor: Array[Vector3] = []    # ZERO = that ring has never been built
 var _props: MultiMeshInstance3D
+var _prop_nodes: Array[MultiMeshInstance3D] = []
 # The SHARED height function. main's contact kill holds this same instance, which
 # is the only reason mesh and lethality cannot drift apart.
 var _sampler: TerrainSampler
@@ -139,18 +146,31 @@ var _rim_stitched: Array[bool] = []  # per ring: was its rim snapped to the coar
 # rings are at mismatched scales and their boundaries are torn open.
 var _ring_base: Array[float] = []
 # Background rebuild: all four rings' geometry is computed off the main
-# thread (WorkerThreadPool), one ring per group-task element, and committed
-# atomically only once the whole set is ready - the old, still-seamless set
-# keeps showing for however many frames the compute takes. Cold arrival,
-# rescale and recenter all go through this same path now: a scale change
-# invalidates every ring's stitch assumptions at once, so there is never a
-# partial commit of some rings at the new scale/anchor and some at the old.
+# thread (WorkerThreadPool), one ring per group-task element. Old meshes stay
+# on screen until their replacement is swapped in, one ring per frame
+# innermost first - committing all four in one frame was the visible pop.
+# A scale change still invalidates every ring's stitch, so a new batch never
+# starts while a previous batch is still computing or draining onto the GPU.
 var _thread_pending := false
 var _thread_group_id := -1
+var _batch_t0_msec := 0
+var _batch_times: Array[int] = []
 var _thread_hit := Vector3.ZERO
 var _thread_base := 0.0
 var _thread_radius := 1.0
+var _thread_lead := 0.0
 var _thread_results: Array = []   # Dictionary per ring, from _compute_ring
+var _commit_next := RING_COUNT    # RING_COUNT = drain complete
+var _rings_committed_this_update := 0
+var _complete_anchor := Vector3.ZERO
+var _complete_base := 0.0
+var _ring_fade: Array[float] = []
+var _prop_fade := 1.0
+var _fade_msec := 0
+var _pending_prop_xforms: Array = []
+var _pending_prop_vars := PackedByteArray()
+var _pending_prop_east := Vector3.ZERO
+var _pending_prop_north := Vector3.ZERO
 var _radius := 1.0             # the body's radius, for the colour palette's texel maths
 # The sun direction the ring last received via set_view(), reused by
 # _start_rebuild for the horizon-shadow march. Rebuild is dispatched
@@ -189,10 +209,8 @@ func _ready() -> void:
 		_ring_anchor.append(Vector3.ZERO)
 		_rim_stitched.append(false)
 		_ring_base.append(0.0)
-	_props = MultiMeshInstance3D.new()
-	_props.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	_props.multimesh = _make_prop_multimesh(_kit)
-	add_child(_props)
+		_ring_fade.append(1.0)
+	_rebuild_prop_nodes(_kit)
 	visible = false
 
 
@@ -301,14 +319,20 @@ func bind_recipe(recipe: Dictionary) -> void:
 	var exposure := _resolve_exposure(recipe)
 	for m in [_land_mat, _water_mat, _prop_mat]:
 		m.set_shader_parameter("exposure", exposure)
-	_props.material_override = _prop_mat
+		m.set_shader_parameter("stream_fade", 1.0)
 	var kit: String = PlanetGenerator.surface_kit(recipe)
 	# Geometry colours are recipe-derived, so a Moon -> Mars switch must repaint
 	# even though both bodies use the same morphology.
 	_kit = kit
-	_props.multimesh = _make_prop_multimesh(kit)
+	_rebuild_prop_nodes(kit)
+	for node in _prop_nodes:
+		node.material_override = _prop_mat
 	for i in RING_COUNT:
 		_ring_anchor[i] = Vector3.ZERO      # force every ring to rebuild
+	_complete_anchor = Vector3.ZERO
+	_complete_base = 0.0
+	_commit_next = RING_COUNT
+	_prop_fade = 1.0
 
 
 # SurfaceRecipe.resolve()'s own `exposure` is colour-only (no sampler exists at
@@ -373,11 +397,13 @@ func has_ground() -> bool:
 
 
 func covers_horizon(ship_pos: Vector3) -> bool:
-	if not has_ground() or _radius <= 0.0 or ship_pos.length_squared() < 0.001:
+	# A complete four-ring set, not a mid-drain mix. Hiding the globe against a
+	# lagging or half-committed tile is what used to blink the whole patch off.
+	if _complete_anchor == Vector3.ZERO or _radius <= 0.0 or ship_pos.length_squared() < 0.001:
 		return false
-	var offset_angle := acos(clampf(ship_pos.normalized().dot(_ring_anchor[0].normalized()), -1.0, 1.0))
+	var offset_angle := acos(clampf(ship_pos.normalized().dot(_complete_anchor.normalized()), -1.0, 1.0))
 	var horizon_angle := acos(clampf(_radius / maxf(ship_pos.length(), _radius), 0.0, 1.0))
-	var half_width := ring_reach_km(RING_COUNT - 1, _base_quad) * 0.5
+	var half_width := ring_reach_km(RING_COUNT - 1, _complete_base) * 0.5
 	# The square's inscribed cap must contain the observer's entire visible horizon.
 	return offset_angle + horizon_angle <= atan(half_width / _radius)
 
@@ -406,15 +432,14 @@ static func should_show(body: String, physical: bool, alt: float, kill: float,
 # showing, so leaving the band takes a real margin, not a coin flip.
 const BAND_HYSTERESIS := 0.02
 var _was_in_band := false
-# The `in_band` value the last `update_for` call computed. `_finish_rebuild`
-# runs both from `_poll_rebuild` (mid-`update_for`, where `in_band` is a local)
-# and from `force_ready` (a test/tool-only entry outside `update_for` entirely),
-# so it needs this to recompute `visible` after a commit lands - otherwise a
-# caller that dispatches then force_ready()s without a second `update_for` sees
-# `visible` still false from the frame the tile was cold, even though
-# `has_ground()` just became true.
+# The `in_band` value the last `update_for` call computed. `force_ready`
+# runs outside `update_for`, so it needs this to recompute `visible` after a
+# commit lands - otherwise a caller that dispatches then force_ready()s without
+# a second `update_for` sees `visible` still false from the frame the tile was
+# cold, even though `has_ground()` just became true.
 var _last_in_band := false
 var _last_ship_pos := Vector3.ZERO
+var _last_ship_vel := Vector3.ZERO
 
 
 func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
@@ -438,8 +463,9 @@ func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
 # the shipped path. They agreed only because the maths is deterministic.
 func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		alt: float, kill: float, ceiling: float, recipe: Dictionary,
-		sampler: TerrainSampler) -> void:
+		sampler: TerrainSampler, ship_vel: Vector3 = Vector3.ZERO) -> void:
 	_last_ship_pos = ship_pos
+	_last_ship_vel = ship_vel
 	if sampler == null:
 		visible = false
 		return
@@ -472,6 +498,7 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# needed, so a rebuild that completed between frames is never held an
 	# extra frame past when it could have shown.
 	_poll_rebuild()
+	_advance_fade()
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	# AGL can be tiny above a mountain while the sea-level horizon is far away.
 	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius, _base_quad)
@@ -479,13 +506,15 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	var rescaled: bool = not is_equal_approx(want_base, _base_quad)
 	var recentered := cold or hit.distance_to(_ring_anchor[0]) > ring_reach_km(0, want_base) * REBUILD_FRAC
 	# Cold arrival, rescale and recenter all dispatch the SAME way: compute
-	# every ring off-thread, keep whatever is already showing (nothing, for a
-	# cold tile) until the whole set lands, THEN swap atomically. A scale
-	# change invalidates every ring's stitch at once, so partial commits are
-	# never safe regardless of which of the three triggered this.
-	if (cold or rescaled or recentered) and not _thread_pending:
-		_start_rebuild(hit, radius, want_base)
-	visible = in_band and covers_horizon(ship_pos)
+	# every ring off-thread, keep whatever is already showing until each ring
+	# swaps in on its own frame. Never start a second batch while one is still
+	# computing or draining - that is what used to land already behind the ship.
+	if (cold or rescaled or recentered) and not _rebuild_busy():
+		_start_rebuild(hit, radius, want_base, ship_vel)
+	# Stay shown while in band with ground. Horizon coverage no longer gates
+	# visibility - the globe stays under the patch when the tile lags (see
+	# planet_system.gd) instead of blinking the whole tile off.
+	visible = in_band and has_ground()
 	_recount_tris()
 
 
@@ -506,39 +535,82 @@ func _tri_count(mi: MeshInstance3D) -> int:
 
 
 # Dispatch every ring's geometry to WorkerThreadPool as one group task (one
-# element per ring). `hit`/`radius`/`base` are captured by the lambda, not
-# read from `self` at run time, so a later frame changing `_base_quad` etc.
-# cannot leak into a batch already in flight. `results` is likewise a local
-# alias to a FRESH array, so a stale batch that finishes after being
-# abandoned writes into an array nobody reads any more, not into whatever
+# element per ring). `hit`/`radius`/`base`/`kit`/`sun_dir` are captured by the
+# lambda, not read from `self` at run time, so a later frame changing
+# `_base_quad`/`_kit` cannot leak into a batch already in flight. `results` is
+# likewise a local alias to a FRESH array, so a stale batch that finishes after
+# being abandoned writes into an array nobody reads any more, not into whatever
 # `_thread_results` points at by then.
-func _start_rebuild(hit: Vector3, radius: float, base: float) -> void:
+func _start_rebuild(hit: Vector3, radius: float, base: float, ship_vel: Vector3) -> void:
+	var pred := _predicted_hit(hit, radius, ship_vel, base)
 	_thread_pending = true
-	_thread_hit = hit
+	_thread_hit = pred
 	_thread_radius = radius
 	_thread_base = base
+	_batch_t0_msec = Time.get_ticks_msec()
 	_thread_results = []
 	_thread_results.resize(RING_COUNT)
 	var results := _thread_results
 	var sun_dir := _sun_dir
+	var kit := _kit
 	_thread_group_id = WorkerThreadPool.add_group_task(
-		func(ring: int) -> void: results[ring] = _compute_ring(ring, hit, radius, base, sun_dir),
+		func(ring: int) -> void: results[ring] = _compute_ring(ring, pred, radius, base, sun_dir, kit),
 		RING_COUNT, -1, false, "surface_patch_ring_rebuild")
 
 
-# Non-blocking: only collects and commits a batch that has already finished.
-# `update_for` calls this every frame, so the frame that happens to be the one
-# where the last ring lands pays for the (cheap) mesh commit; every other
-# frame pays only for the `is_group_task_completed` check.
+func _rebuild_busy() -> bool:
+	return _thread_pending or _commit_next < RING_COUNT
+
+
+func rings_committed_this_update() -> int:
+	return _rings_committed_this_update
+
+
+func _expected_batch_s() -> float:
+	if _batch_times.is_empty():
+		return 0.25
+	var sum := 0
+	for t in _batch_times:
+		sum += t
+	return clampf(float(sum) / float(_batch_times.size()) / 1000.0, 0.05, 0.8)
+
+
+func _predicted_hit(hit: Vector3, radius: float, vel: Vector3, base: float) -> Vector3:
+	var up := hit.normalized()
+	var tang: Vector3 = vel - up * vel.dot(up)
+	var speed := tang.length()
+	var lead := 0.0
+	if speed > 0.001:
+		lead = minf(speed * _expected_batch_s(), ring_reach_km(0, base) * 4.0)
+	_thread_lead = lead
+	if lead < 0.01:
+		return hit
+	return (hit + tang * (lead / speed)).normalized() * radius
+
+
+# Non-blocking: only collects a batch that has already finished, then commits
+# at most one ring this frame. `update_for` calls this every frame, so mesh
+# upload (the frame spike) is spread across four frames instead of landing as
+# one pop.
 func _poll_rebuild() -> void:
-	if not _thread_pending:
-		return
-	if not WorkerThreadPool.is_group_task_completed(_thread_group_id):
-		return
-	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
-	# Rejecting completed batches at speed starves updates forever. Commit the
-	# newest ground; covers_horizon keeps the globe visible if it still lags too far.
-	_finish_rebuild()
+	_rings_committed_this_update = 0
+	if _thread_pending and WorkerThreadPool.is_group_task_completed(_thread_group_id):
+		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
+		_batch_times.append(clampi(msec, 50, 800))
+		if _batch_times.size() > 4:
+			_batch_times.remove_at(0)
+		print("[stream] batch %d ms lead %.1f km" % [msec, _thread_lead])
+		_queue_batch_commits()
+	_commit_one_ring(false)
+
+
+func _queue_batch_commits() -> void:
+	_thread_pending = false
+	_base_quad = _thread_base
+	for i in RING_COUNT:
+		_ring_anchor[i] = _thread_hit
+	_commit_next = 0
 
 
 # Test/tool hook: block until any in-flight batch completes and commit it,
@@ -546,20 +618,32 @@ func _poll_rebuild() -> void:
 # frames a real background job needs. Production code never calls this -
 # `update_for` only polls, so a live frame never waits on the compute.
 func force_ready() -> void:
-	if not _thread_pending:
-		return
-	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
-	_finish_rebuild()
-
-
-func _finish_rebuild() -> void:
-	_thread_pending = false
-	_base_quad = _thread_base
-	for i in RING_COUNT:
-		_commit_ring(i, _thread_results[i], _thread_hit)
-		_ring_anchor[i] = _thread_hit
-	visible = _last_in_band and covers_horizon(_last_ship_pos)
+	if _thread_pending:
+		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
+		_batch_times.append(clampi(msec, 50, 800))
+		if _batch_times.size() > 4:
+			_batch_times.remove_at(0)
+		print("[stream] batch %d ms lead %.1f km" % [msec, _thread_lead])
+		_queue_batch_commits()
+	while _commit_next < RING_COUNT:
+		_commit_one_ring(true)
+	_snap_fades()
+	visible = _last_in_band and has_ground()
 	_recount_tris()
+
+
+func _commit_one_ring(snap_fade: bool) -> void:
+	if _commit_next >= RING_COUNT:
+		return
+	var i := _commit_next
+	_commit_next += 1
+	var fade := 1.0 if snap_fade else 0.0
+	_commit_ring(i, _thread_results[i], _thread_hit, fade)
+	_rings_committed_this_update += 1
+	if _commit_next >= RING_COUNT:
+		_complete_anchor = _thread_hit
+		_complete_base = _thread_base
 
 
 # The rare frame this tile leaves the band, or changes body: wait out
@@ -567,10 +651,10 @@ func _finish_rebuild() -> void:
 # is not the per-frame hot path) and drop it without committing, since it
 # was computed against a sampler/recipe we are about to stop using.
 func _abandon_rebuild() -> void:
-	if not _thread_pending:
-		return
-	WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
-	_thread_pending = false
+	if _thread_pending:
+		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
+		_thread_pending = false
+	_commit_next = RING_COUNT
 
 
 # Freeing the node while a batch is in flight must not leave an uncollected
@@ -585,9 +669,9 @@ func _exit_tree() -> void:
 # Write one already-computed ring into its live mesh nodes. The ONLY place
 # that touches RenderingServer resources (ArrayMesh, MultiMesh) for a ring -
 # `_compute_ring` produces plain arrays instead, precisely so it can run on a
-# background thread. Always called from the main thread (`_finish_rebuild`/
+# background thread. Always called from the main thread (`_commit_one_ring` /
 # `force_ready`, both driven by `update_for` or a test).
-func _commit_ring(ring: int, r: Dictionary, hit: Vector3) -> void:
+func _commit_ring(ring: int, r: Dictionary, hit: Vector3, fade: float = 1.0) -> void:
 	_rim_stitched[ring] = r.stitch
 	_ring_base[ring] = _base_quad
 	_ring_land[ring].mesh = _mesh_from_buffer(r.land_buf)
@@ -597,8 +681,26 @@ func _commit_ring(ring: int, r: Dictionary, hit: Vector3) -> void:
 	_ring_water[ring].mesh = null
 	_ring_skirt[ring].mesh = _mesh_from_buffer(r.skirt_buf) if r.skirt_buf != null else null
 	_ring_skirt[ring].material_override = _land_mat
-	if ring == 0:
-		_place_props(r.prop_xforms, hit, r.east, r.north)
+	_ring_fade[ring] = fade
+	_apply_ring_fade(ring)
+	if ring == 0 or ring == 1:
+		var xf: Array = r.get("prop_xforms", [])
+		var pv := PackedByteArray()
+		var raw: Variant = r.get("prop_vars", pv)
+		if raw is PackedByteArray:
+			pv = raw
+		if ring == 0:
+			_pending_prop_xforms = xf.duplicate()
+			_pending_prop_vars = pv.duplicate()
+			_pending_prop_east = r.east
+			_pending_prop_north = r.north
+		else:
+			_pending_prop_xforms.append_array(xf)
+			_pending_prop_vars.append_array(pv)
+			_place_props(_pending_prop_xforms, _pending_prop_vars, hit,
+				_pending_prop_east, _pending_prop_north)
+			_prop_fade = fade
+			_apply_prop_fade()
 
 
 func _mesh_from_buffer(buf: Dictionary) -> ArrayMesh:
@@ -616,6 +718,42 @@ func _mesh_from_buffer(buf: Dictionary) -> ArrayMesh:
 	return m
 
 
+func _advance_fade() -> void:
+	var now := Time.get_ticks_msec()
+	var dt := 0.016
+	if _fade_msec > 0:
+		dt = clampf(float(now - _fade_msec) / 1000.0, 0.0, 0.05)
+	_fade_msec = now
+	var step: float = dt / STREAM_FADE_S
+	for i in RING_COUNT:
+		if _ring_fade[i] < 1.0:
+			_ring_fade[i] = minf(_ring_fade[i] + step, 1.0)
+			_apply_ring_fade(i)
+	if _prop_fade < 1.0:
+		_prop_fade = minf(_prop_fade + step, 1.0)
+		_apply_prop_fade()
+
+
+func _snap_fades() -> void:
+	for i in RING_COUNT:
+		_ring_fade[i] = 1.0
+		_apply_ring_fade(i)
+	_prop_fade = 1.0
+	_apply_prop_fade()
+
+
+func _apply_ring_fade(ring: int) -> void:
+	var f: float = _ring_fade[ring]
+	_ring_land[ring].set_instance_shader_parameter("stream_fade", f)
+	_ring_skirt[ring].set_instance_shader_parameter("stream_fade", f)
+	_ring_water[ring].set_instance_shader_parameter("stream_fade", f)
+
+
+func _apply_prop_fade() -> void:
+	if _prop_mat != null:
+		_prop_mat.set_shader_parameter("stream_fade", _prop_fade)
+
+
 func _tri_buffer() -> Dictionary:
 	return {
 		"v": PackedVector3Array(), "n": PackedVector3Array(),
@@ -630,7 +768,7 @@ func _tri_buffer() -> Dictionary:
 # that `update_for` guarantees are frozen for the whole time a batch is in
 # flight (see `_abandon_rebuild`).
 func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
-		sun_dir: Vector3) -> Dictionary:
+		sun_dir: Vector3, kit: String = "") -> Dictionary:
 	var up := hit.normalized()
 	var east := up.cross(Vector3.UP)
 	if east.length_squared() < 0.0001:
@@ -644,7 +782,8 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 	var land_buf := _tri_buffer()
 	var skirt_buf := _tri_buffer()
 	var skirted := false
-	var prop_xforms: Array[Transform3D] = []
+	var prop_xforms: Array = []
+	var prop_vars := PackedByteArray()
 	# ANALYTIC NORMALS, from central finite differences of the height function
 	# itself at a FIXED WORLD STEP - the same step regardless of which ring is
 	# being built. Replaces per-mesh cross-product normals, which sampled
@@ -774,27 +913,35 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 			if j == RING_SEGS - 1:
 				_skirt_arr(skirt_buf, p11, p01, up, _skirt_drop(p11, p01, radius, cap))
 				skirted = true
-			# Props ride ring 0 only this slice; slice D revisits density per ring.
-			if ring == 0:
-				var seedn := _hash(Vector2(float(i), float(j)))
-				if _prop_here(wet, float(p00.h), seedn):
-					var t := Transform3D()
-					var sc: float = 0.004 + seedn * 0.012
-					# Stand the prop on the vertex's own SMOOTH normal, so a
-					# boulder on a slope leans with the slope instead of with the
-					# quad it happened to land in.
+			# Rings 0 and 1: a 7 km coastal plate's inner ring can sit entirely
+			# in a water texel (~20 km), so the next ring out has to carry the
+			# land seats or earth_7km plants nothing.
+			if ring <= 1:
+				var seedn := _seat_hash(p00.p, 1.7)
+				if _prop_here(wet, float(p00.h), seedn, kit):
+					var h_var := _seat_hash(p00.p, 8.3)
+					var h_yaw := _seat_hash(p00.p, 14.9)
+					var h_sc := _seat_hash(p00.p, 21.0)
+					var variant := _prop_variant(h_var, kit)
+					var sc: float = 0.7 + h_sc * 0.6
 					var stand: Vector3 = p00.n
-					t.basis = Basis(east, stand, north).orthonormalized().scaled(
-						Vector3(sc, sc * _prop_aspect(seedn), sc))
-					# Kit meshes already have their base at y=0. Lifting by nearly
-					# a full scale made floating, building-sized lunar boulders.
-					t.origin = p00.p - stand * sc * 0.08
+					var t := Transform3D()
+					var b := Basis(east, stand, north).orthonormalized()
+					b = b.rotated(stand, h_yaw * TAU)
+					if kit == "rock" or variant == 3:
+						b = b.scaled(Vector3(sc, sc * (0.55 + h_yaw * 0.30), sc))
+					else:
+						b = b.scaled(Vector3(sc, sc, sc))
+					t.basis = b
+					t.origin = p00.p - stand * 0.00015
 					prop_xforms.append(t)
+					prop_vars.append(variant)
 	return {
 		"land_buf": land_buf,
 		"skirt_buf": skirt_buf if skirted else null,
 		"stitch": stitch,
 		"prop_xforms": prop_xforms,
+		"prop_vars": prop_vars,
 		"east": east,
 		"north": north,
 	}
@@ -860,25 +1007,60 @@ func _skirt_arr(buf: Dictionary, a: Dictionary, b: Dictionary, up: Vector3, drop
 
 
 # Where a kit prop is allowed to stand. Placement rules, not just a recolour:
-# trees want dry mid-slope ground, boulders scatter over any dry crust, and ice
-# spires collect on the high cold ground.
-func _prop_here(wet: float, h: float, seedn: float) -> bool:
-	match _kit:
+# trees want dry ground (lowland forest plus a sparser desert/coast scatter),
+# boulders scatter over any dry crust, and ice spires stand on frozen ground.
+func _prop_here(wet: float, h: float, seedn: float, kit: String = "") -> bool:
+	if kit.is_empty():
+		kit = _kit
+	match kit:
 		"tree":
-			return wet < 0.35 and h > 0.06 and h < 0.55 and seedn > 0.82
+			# Lowland forests (Amazon ~100 m) sit near h=0 on Earth's DEM; the
+			# old h>0.06 cut was a mid-slope rule that left the basin bare.
+			# Coast/desert plates (earth_7km) are dry crust, not canopy - still
+			# plant, just a little sparser, so a 20 km ring over the Sahara
+			# coast is not a bare sheet.
+			if wet >= 0.35:
+				return false
+			if h < 0.55 and seedn > 0.82:
+				return true
+			return h < 0.75 and seedn > 0.91
 		"rock":
 			return wet < 0.5 and seedn > 0.86
 		"ice":
-			return wet < 0.5 and h > 0.3 and seedn > 0.84
+			# Frozen ground, not only peaks. Europa's relief is tens of metres,
+			# so an h>0.3 cut left the ice site with zero spires.
+			return wet < 0.5 and seedn > 0.84
 		_:
 			return false
 
 
-# Vertical stretch. A tree is tall, a boulder is squat, an ice spire is tallest.
+func _prop_variant(h_var: float, kit: String = "") -> int:
+	if kit.is_empty():
+		kit = _kit
+	match kit:
+		"tree":
+			if h_var < 0.18:
+				return 3
+			return int(clampf((h_var - 0.18) / 0.82, 0.0, 0.999) * 3.0)
+		"rock", "ice":
+			return int(clampf(h_var, 0.0, 0.999) * 3.0)
+		_:
+			return 0
+
+
+func _seat_hash(p: Vector3, salt: float) -> float:
+	var qx := snappedf(p.x, 0.002)
+	var qy := snappedf(p.y, 0.002)
+	var qz := snappedf(p.z, 0.002)
+	return _hash(Vector2(qx * 0.71 + qz * 0.43 + salt, qy * 0.67 + salt * 5.3))
+
+
+# Vertical stretch. Ice/rock keep a squat-vs-spire rule for callers; trees are
+# uniform — height lives in the mesh.
 func _prop_aspect(seedn: float) -> float:
 	match _kit:
 		"tree":
-			return 1.6 + seedn
+			return 1.0
 		"rock":
 			return 0.55 + seedn * 0.35
 		"ice":
@@ -1071,49 +1253,97 @@ func _mat(water: bool) -> StandardMaterial3D:
 	return m
 
 
-func _make_prop_multimesh(kit: String) -> MultiMesh:
+func _rebuild_prop_nodes(kit: String) -> void:
+	if _prop_nodes.size() != PROP_SLOTS:
+		for node in _prop_nodes:
+			if node != null:
+				node.queue_free()
+		_prop_nodes.clear()
+		for slot in PROP_SLOTS:
+			var n := MultiMeshInstance3D.new()
+			n.name = "props_%d" % slot
+			n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			add_child(n)
+			_prop_nodes.append(n)
+	for slot in PROP_SLOTS:
+		_prop_nodes[slot].multimesh = _make_prop_multimesh(kit, slot)
+	_props = _prop_nodes[0]
+
+
+func _make_prop_multimesh(kit: String, slot: int = 0) -> MultiMesh:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
-	mm.mesh = _kit_mesh(kit)
+	if kit == "tree" and slot == 2:
+		mm.use_custom_data = true
+	mm.mesh = _kit_mesh(kit, slot)
 	mm.instance_count = PROP_MAX
 	mm.visible_instance_count = 0
 	return mm
 
 
-# The kit, generated. No GLB per world and no GLB at all yet: the CC0 pack in
-# docs/specs/2026-08-22-universal-planet-asset-kit-design.md is not acquired, so
-# these are project-owned primitives standing in for its rock / plant / crystal
-# morphologies. Unshaded on purpose — shaded boxes in a dark scene were the
-# "black boxes" bug in PLANET_GENERATOR.md.
-func _kit_mesh(kit: String) -> ArrayMesh:
+# Project-owned primitives (the CC0 pack is not acquired). Built once on bind,
+# never on the ring worker. Real scale: a 30 m tree is 0.03 units.
+func _kit_mesh(kit: String, slot: int = 0) -> ArrayMesh:
 	match kit:
 		"tree":
-			return _tree_mesh()
+			if slot == 0:
+				return _tree_mesh(0)
+			if slot == 1:
+				return _tree_mesh(1)
+			return _tree_with_boulder_mesh()
 		"rock":
-			return _rock_mesh()
+			return _rock_mesh(slot)
 		"ice":
-			return _ice_mesh()
+			return _ice_mesh(slot)
 		_:
-			return _rock_mesh()
+			return _rock_mesh(0)
 
 
-func _tree_mesh() -> ArrayMesh:
+func _tree_with_boulder_mesh() -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var brown := Color(0.28, 0.18, 0.08)
-	var green := Color(0.12, 0.32, 0.10)
-	_box(st, Vector3(0, 0.35, 0), Vector3(0.12, 0.7, 0.12), brown)
-	_cone(st, Vector3(0, 1.35, 0), 0.55, 1.4, green)
-	st.set_material(_kit_material())
+	_build_tree(st, 2, 0.0)
+	_build_rock(st, 1, 1.0)
 	return st.commit()
 
 
-# A fractured boulder with five irregular cross-sections and a capped crown.
-# The shared prop shader supplies stone grain, strata, sunlight and haze.
-func _rock_mesh() -> ArrayMesh:
+func _tree_mesh(variant: int = 0) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_build_tree(st, variant, 0.0)
+	return st.commit()
+
+
+func _build_tree(st: SurfaceTool, variant: int, part: float) -> void:
+	var bark := Color(0.28, 0.18, 0.08)
+	match variant:
+		1:
+			_cylinder(st, 0.0, 0.012, 0.0011, bark, 6, part)
+			_icosphere(st, Vector3(0.0, 0.021, 0.0), 0.011, 1, Color(0.14, 0.34, 0.12), 3.0, part, 0.08)
+		2:
+			_cylinder(st, 0.0, 0.016, 0.0009, bark, 6, part)
+			_cone(st, Vector3(0.0, 0.022, 0.0), 0.013, 0.008, Color(0.18, 0.32, 0.08), 7, part)
+			_cone(st, Vector3(0.0, 0.028, 0.0), 0.007, 0.007, Color(0.16, 0.30, 0.07), 7, part)
+		_:
+			_cylinder(st, 0.0, 0.010, 0.0012, bark, 6, part)
+			var needle := Color(0.10, 0.28, 0.10)
+			_cone(st, Vector3(0.0, 0.018, 0.0), 0.0075, 0.010, needle, 7, part)
+			_cone(st, Vector3(0.0, 0.024, 0.0), 0.0055, 0.010, needle.lightened(0.04), 7, part)
+			_cone(st, Vector3(0.0, 0.030, 0.0), 0.0035, 0.009, needle.lightened(0.08), 7, part)
+
+
+func _rock_mesh(variant: int = 0) -> ArrayMesh:
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	_build_rock(st, variant, 0.0)
+	return st.commit()
+
+
+func _build_rock(st: SurfaceTool, variant: int, part: float) -> void:
 	var stone := _crust_a.lerp(Color(0.38, 0.36, 0.33), 0.6)
+	# Same ring construction as the pre-real-scale kit (first face +X, clockwise
+	# winding). Uniform scale only — 1 scene unit = 1 km, so ~2 / 4.5 / 6.5 m.
+	var s := [0.00270, 0.00608, 0.00878][clampi(variant, 0, 2)] as float
 	const SEGMENTS := 11
 	var rings: Array[PackedVector3Array] = []
 	for layer in 5:
@@ -1124,39 +1354,36 @@ func _rock_mesh() -> ArrayMesh:
 			var a := TAU * float(i) / SEGMENTS
 			var irregular := 0.78 + _hash(Vector2(i, layer + 13)) * 0.40
 			ring.append(Vector3(cos(a) * radius * irregular + y * 0.16,
-				y + _hash(Vector2(i + 11, layer)) * 0.06, sin(a) * radius * irregular))
+				y + _hash(Vector2(i + 11, layer)) * 0.06, sin(a) * radius * irregular) * s)
 		rings.append(ring)
 	for layer in 4:
 		for i in SEGMENTS:
 			var j := (i + 1) % SEGMENTS
-			_face(st, rings[layer][i], rings[layer + 1][j], rings[layer + 1][i], stone)
-			_face(st, rings[layer][i], rings[layer][j], rings[layer + 1][j], stone.darkened(0.05))
+			_face(st, rings[layer][i], rings[layer + 1][j], rings[layer + 1][i], stone, part)
+			_face(st, rings[layer][i], rings[layer][j], rings[layer + 1][j], stone.darkened(0.05), part)
 	for i in SEGMENTS:
-		_face(st, Vector3(0.1, 0.74, 0.0), rings[4][i], rings[4][(i + 1) % SEGMENTS], stone)
-	st.set_material(_kit_material())
-	return st.commit()
+		_face(st, Vector3(0.1, 0.74, 0.0) * s, rings[4][i], rings[4][(i + 1) % SEGMENTS], stone, part)
 
 
-# An ice spire: two stacked faceted prisms. Pale, translucent-looking, and NOT a
-# recoloured tree — a cold world gets cold geometry.
-func _ice_mesh() -> ArrayMesh:
+func _ice_mesh(variant: int = 0) -> ArrayMesh:
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	var pale := Color(0.74, 0.84, 0.92)
 	var deep := Color(0.42, 0.58, 0.72)
+	var h := [0.014, 0.020, 0.011][clampi(variant, 0, 2)] as float
+	var r := [0.0032, 0.0026, 0.0038][clampi(variant, 0, 2)] as float
 	var nseg := 5
 	var ring: Array[Vector3] = []
 	for i in nseg:
 		var a := TAU * float(i) / float(nseg)
-		var r := 0.26 + _hash(Vector2(float(i), 11.0)) * 0.10
-		ring.append(Vector3(cos(a) * r, 0.30, sin(a) * r))
-	var tip := Vector3(0.03, 1.25, -0.02)
+		var rr := r * (0.82 + _hash(Vector2(float(i), 11.0 + float(variant))) * 0.28)
+		ring.append(Vector3(cos(a) * rr, h * 0.22, sin(a) * rr))
+	var tip := Vector3(0.0004, h, -0.0003)
 	for i in nseg:
 		var p0: Vector3 = ring[i]
 		var p1: Vector3 = ring[(i + 1) % nseg]
-		_face(st, tip, p0, p1, pale)
-		_face(st, Vector3(0, 0, 0), p1, p0, deep)
-	st.set_material(_kit_material())
+		_face(st, tip, p0, p1, pale, 0.0)
+		_face(st, Vector3.ZERO, p1, p0, deep, 0.0)
 	return st.commit()
 
 
@@ -1168,16 +1395,22 @@ func _kit_material() -> StandardMaterial3D:
 	return mat
 
 
-func _face(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
+func _face(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, col: Color, part: float = 0.0) -> void:
 	# Godot front faces are clockwise; their outward normal is the NEGATIVE cross.
 	var n: Vector3 = -(b - a).cross(c - a)
-	if n.length_squared() < 1e-10:
+	# 1e-10 was a km-scale placeholder epsilon; a 1 m tri has |cross|^2 ~1e-12
+	# and used to be replaced with Vector3.UP (unlit sides, winding test fail).
+	if n.length_squared() < 1e-30:
 		n = Vector3.UP
 	else:
 		n = n.normalized()
-	st.set_normal(n); st.set_color(col); st.add_vertex(a)
-	st.set_normal(n); st.set_color(col); st.add_vertex(b)
-	st.set_normal(n); st.set_color(col); st.add_vertex(c)
+	var uv := Vector2(part, 0.0)
+	st.set_uv(uv)
+	st.set_normal(n); st.set_color(col); st.set_uv2(uv); st.add_vertex(a)
+	st.set_uv(uv)
+	st.set_normal(n); st.set_color(col); st.set_uv2(uv); st.add_vertex(b)
+	st.set_uv(uv)
+	st.set_normal(n); st.set_color(col); st.set_uv2(uv); st.add_vertex(c)
 
 
 func _box(st: SurfaceTool, mid: Vector3, size: Vector3, col: Color) -> void:
@@ -1199,52 +1432,120 @@ func _box(st: SurfaceTool, mid: Vector3, size: Vector3, col: Color) -> void:
 		st.set_normal(n); st.set_color(col); st.add_vertex(p[f[3]])
 
 
-func _cone(st: SurfaceTool, tip: Vector3, rad: float, ht: float, col: Color) -> void:
+func _cone(st: SurfaceTool, tip: Vector3, rad: float, ht: float, col: Color, nseg: int = 6, part: float = 0.0) -> void:
 	var base := tip - Vector3(0, ht, 0)
-	var nseg := 6
 	for i in nseg:
 		var a0 := TAU * float(i) / float(nseg)
 		var a1 := TAU * float(i + 1) / float(nseg)
 		var p0 := base + Vector3(cos(a0) * rad, 0, sin(a0) * rad)
 		var p1 := base + Vector3(cos(a1) * rad, 0, sin(a1) * rad)
-		_face(st, tip, p0, p1, col)
+		_face(st, tip, p0, p1, col, part)
+
+
+func _cylinder(st: SurfaceTool, y0: float, y1: float, radius: float, col: Color, nseg: int, part: float) -> void:
+	for i in nseg:
+		var a0 := TAU * float(i) / float(nseg)
+		var a1 := TAU * float(i + 1) / float(nseg)
+		var b0 := Vector3(cos(a0) * radius, y0, sin(a0) * radius)
+		var b1 := Vector3(cos(a1) * radius, y0, sin(a1) * radius)
+		var t0 := Vector3(cos(a0) * radius, y1, sin(a0) * radius)
+		var t1 := Vector3(cos(a1) * radius, y1, sin(a1) * radius)
+		_face(st, b0, b1, t1, col, part)
+		_face(st, b0, t1, t0, col, part)
+
+
+func _icosphere(st: SurfaceTool, origin: Vector3, radius: float, subdiv: int, col: Color, jitter_seed: float, part: float, jitter: float) -> void:
+	var faces: Array = [
+		[Vector3(0, 1, 0), Vector3(1, 0, 0), Vector3(0, 0, 1)],
+		[Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(-1, 0, 0)],
+		[Vector3(0, 1, 0), Vector3(-1, 0, 0), Vector3(0, 0, -1)],
+		[Vector3(0, 1, 0), Vector3(0, 0, -1), Vector3(1, 0, 0)],
+		[Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0)],
+		[Vector3(0, -1, 0), Vector3(-1, 0, 0), Vector3(0, 0, 1)],
+		[Vector3(0, -1, 0), Vector3(0, 0, -1), Vector3(-1, 0, 0)],
+		[Vector3(0, -1, 0), Vector3(1, 0, 0), Vector3(0, 0, -1)],
+	]
+	for _s in subdiv:
+		var next: Array = []
+		for tri in faces:
+			var a: Vector3 = tri[0]
+			var b: Vector3 = tri[1]
+			var c: Vector3 = tri[2]
+			var ab := (a + b).normalized()
+			var bc := (b + c).normalized()
+			var ca := (c + a).normalized()
+			next.append([a, ab, ca])
+			next.append([ab, b, bc])
+			next.append([ca, bc, c])
+			next.append([ab, bc, ca])
+		faces = next
+	var i := 0
+	for tri in faces:
+		var pts: Array[Vector3] = []
+		for v in tri:
+			var n: Vector3 = (v as Vector3).normalized()
+			var mag: float = 1.0 + (jitter * 2.0) * (_hash(Vector2(float(i) + jitter_seed, n.x * 9.1 + n.z)) - 0.5)
+			pts.append(origin + n * radius * mag)
+			i += 1
+		_face(st, pts[0], pts[1], pts[2], col, part)
 
 
 # Push at most PROP_MAX props to the GPU. When the plate offers more, walk the
 # candidate list at an even fractional stride rather than truncating it: the
 # candidates arrive in row-major order, so a plain cut would dress the first few
 # rows and leave the rest of the ground empty.
-func _place_props(xforms: Array[Transform3D], hit: Vector3, east: Vector3, north: Vector3) -> void:
-	var mm := _props.multimesh
-	if mm == null:
+func _place_props(xforms: Array, variants: PackedByteArray, hit: Vector3, east: Vector3, north: Vector3) -> void:
+	if _prop_nodes.size() != PROP_SLOTS:
+		_rebuild_prop_nodes(_kit)
+	if _prop_nodes.size() != PROP_SLOTS:
 		return
-	mm.instance_count = PROP_MAX
 	var total := xforms.size()
 	var n := mini(total, PROP_MAX)
-	mm.visible_instance_count = n
-	if n == 0:
-		return
-	var step := float(total) / float(n)
-	var e_lo := INF
-	var e_hi := -INF
-	var n_lo := INF
-	var n_hi := -INF
-	for i in n:
-		var pick := mini(int(float(i) * step), total - 1)
-		var xf: Transform3D = xforms[pick]
-		mm.set_instance_transform(i, xf)
-		var off: Vector3 = xf.origin - hit
-		var de: float = off.dot(east)
-		var dn: float = off.dot(north)
-		e_lo = minf(e_lo, de)
-		e_hi = maxf(e_hi, de)
-		n_lo = minf(n_lo, dn)
-		n_hi = maxf(n_hi, dn)
-	# How far the PLACED props reach across ring 0, along the ring itself. Both
-	# axes matter: a row-major truncate keeps east at full width and collapses
-	# north, so a world-axis AABB cannot see the failure.
-	_prop_cover = Vector2(e_hi - e_lo, n_hi - n_lo)
+	var buckets: Array = []
+	var customs: Array = []
+	for _s in PROP_SLOTS:
+		var xf_slot: Array[Transform3D] = []
+		buckets.append(xf_slot)
+		customs.append([])
+	if n > 0:
+		var step := float(total) / float(n)
+		var e_lo := INF
+		var e_hi := -INF
+		var n_lo := INF
+		var n_hi := -INF
+		for i in n:
+			var pick := mini(int(float(i) * step), total - 1)
+			var xf: Transform3D = xforms[pick]
+			var variant := 0
+			if pick < variants.size():
+				variant = int(variants[pick])
+			var slot := mini(variant, PROP_SLOTS - 1)
+			var custom := 1.0 if variant >= 3 else 0.0
+			buckets[slot].append(xf)
+			customs[slot].append(custom)
+			var off: Vector3 = xf.origin - hit
+			var de: float = off.dot(east)
+			var dn: float = off.dot(north)
+			e_lo = minf(e_lo, de)
+			e_hi = maxf(e_hi, de)
+			n_lo = minf(n_lo, dn)
+			n_hi = maxf(n_hi, dn)
+		_prop_cover = Vector2(e_hi - e_lo, n_hi - n_lo)
+	else:
+		_prop_cover = Vector2.ZERO
 	_prop_pool = total
+	for slot in PROP_SLOTS:
+		var mm: MultiMesh = _prop_nodes[slot].multimesh
+		if mm == null:
+			continue
+		var packed: Array = buckets[slot]
+		if mm.instance_count != PROP_MAX:
+			mm.instance_count = PROP_MAX
+		mm.visible_instance_count = packed.size()
+		for i in packed.size():
+			mm.set_instance_transform(i, packed[i])
+			if mm.use_custom_data:
+				mm.set_instance_custom_data(i, Color(float(customs[slot][i]), 0.0, 0.0, 1.0))
 
 
 # What the tile is actually made of right now — read by tools/test_surface_band.gd
@@ -1343,6 +1644,14 @@ func uses_sampler(sampler: TerrainSampler) -> bool:
 	return _sampler == sampler
 
 
+func _prop_visible_count() -> int:
+	var n := 0
+	for node in _prop_nodes:
+		if node != null and node.multimesh != null:
+			n += node.multimesh.visible_instance_count
+	return n
+
+
 func report() -> Dictionary:
 	return {
 		"body": _body,
@@ -1351,7 +1660,7 @@ func report() -> Dictionary:
 		"water_source": "mask" if _simg != null else ("albedo" if _aimg != null else "noise"),
 		"albedo_source": "map" if _aimg != null else "recipe-colors",
 		"seed": _seed,
-		"props": 0 if _props == null or _props.multimesh == null else _props.multimesh.visible_instance_count,
+		"props": _prop_visible_count(),
 		"visible": visible,
 		# Geometry actually committed. Zero here means the rings are empty meshes —
 		# which is exactly the state the band sat in before it was ever reachable.

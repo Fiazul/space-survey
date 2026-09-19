@@ -54,6 +54,9 @@ uniform float lava_amount = 0.0;
 uniform float ice_surface = 0.0;
 uniform float wave_scale = 1.0;
 uniform float surface_seed = 0.0;
+// Per-ring fade for streamed commits. Default 1 so a cold bind matches the
+// pre-stream look; only a freshly swapped ring ever writes a value below 1.
+instance uniform float stream_fade : hint_range(0.0, 1.0) = 1.0;
 
 // Mirrors TerrainSampler.ICE_ALBEDO_LUM_MIN (0.45, measured on the RAW sRGB PNG
 // bytes). Textures bound `source_color` are linearized by the GPU sampler, so the
@@ -292,5 +295,5 @@ void fragment() {
 	// dark hemisphere ends up brighter than the ground it is covering.
 	haze_col *= lit;
 
-	ALBEDO = mix(col, haze_col, clamp(haze, 0.0, 1.0));
+	ALBEDO = mix(col, haze_col, clamp(haze, 0.0, 1.0)) * stream_fade;
 }

@@ -18,9 +18,11 @@ You do not land. A billion stars stay sky points until you are there.
 
 Limits: Earth/Mars/Moon maps are still kilometre-resolution (4 pixels/degree for
 Mars/Moon), with procedural finer relief below the map's own texel, not
-satellite-detail scenery. Synchronous ring rebuilds keep seams coherent but may
-hitch; asynchronous terrain streaming remains future work. This is not general
-ship-to-object rigid-body collision.
+satellite-detail scenery. Ring batches compute off-thread and swap in one ring
+per frame (old mesh stays until its replacement is committed), so flying does
+not blink to the bare globe; a lagging tile keeps the globe under the patch
+instead of hiding the ground. This is not general ship-to-object rigid-body
+collision.
 
 Checks: `tools/test_surface_integration.tscn` exercises live Moon placement and Earth/Moon death entry; `test_earth_terrain.gd`, `test_surface_band.gd`, `test_terrain_light.gd`, and `test_skin_kill.gd` cover geometry, coverage, materials and contact. `test_dem_calibration.tscn` covers Mars/Moon's real DEM calibration, the RG16 import path, and the CPU/GPU decode mirror. `tools/render_terrain.tscn` captures Earth/Moon bird's-eye and low-altitude views.
 
@@ -70,8 +72,8 @@ Kit rocks/ice/trees remain decorative and do not have individual colliders.
 
 The new boulders and landmarks are procedural project geometry, **not scanned
 assets or geographically surveyed volcano/crater locations**. Existing maps are
-preserved; fine scenery remains synthetic. Terrain streaming and optimization
-are deliberately unchanged in this pass.
+preserved; fine scenery remains synthetic. Ring streaming (predictive lead,
+spread commit, albedo fade-in) is the live close-flight path.
 
 `tools/test_surface_recipes.gd` covers recipe routing, caldera/crater geometry,
 height bounds, contact, seeded repeatability and level procedural oceans.
@@ -108,7 +110,7 @@ Named so we do not “fix the wrong thing”:
 
 1. **Pacman balls** — Voyager / incomplete mosaics paint unmapped limbs as **black void**. Wrapped on a sphere that is a bite taken out of the world. The cook fills near-black texels with invented crust of the recipe colors. Stars skip this (dark sunspots stay).
 2. **Sheet text** — some albedo files still carry USGS grid / labels (Ganymede named). Same slot; swap the file, do not special-case the mesh.
-3. **Black boxes** — 101 m tree placeholders were shaded boxes in a dark scene. Unshaded kit primitives until real props land. Missing GLB textures are the other source; craft keep models, worlds do not.
+3. **Black boxes** — 101 m tree placeholders were shaded boxes in a dark scene. Kit meshes are now lit procedural trees/rocks at real scale. Missing GLB textures are the other source; craft keep models, worlds do not.
 
 ## Render log
 
@@ -166,7 +168,7 @@ terrain remains active at 7–20 km". Rationale for 35 specifically: not recorde
 
 **The kit is chosen by physics, not colour.** `PlanetGenerator.surface_kit()`: `tree` needs real air AND standing liquid (a biosphere), `ice` needs `ice_amount > 0.25`, everything else is bare `rock`, and a gas giant or star gets `none` — no surface to stand a plate on. Earth=tree, Moon=rock, Mars=rock, Europa=ice. Separate meshes, because recolouring a tree blue does not make it an ice spire.
 
-The kit meshes are still **project-owned primitives**, not the CC0 pack in `docs/specs/2026-08-22-universal-planet-asset-kit-design.md` — that library is not acquired. Unshaded, per the black-boxes bug.
+The kit meshes are still **project-owned primitives**, not the CC0 pack in `docs/specs/2026-08-22-universal-planet-asset-kit-design.md` — that library is not acquired. Lit procedural trees (trunk + cones/canopy) and jittered boulders, seated at real scale.
 
 **Props cover the plate, not a corner of it.** Candidates are collected row-major and thinned at an even fractional stride; bailing out at `PROP_MAX` mid-walk dresses the first rows and leaves the rest bare. The test measures coverage along the plate's **own** east/north axes and asserts both, because a world-axis AABB cannot see this failure: a truncate keeps east at full width and only collapses north (9.8 × 7.1 of a 10 km plate, versus 9.8 × 9.8 when thinned).
 

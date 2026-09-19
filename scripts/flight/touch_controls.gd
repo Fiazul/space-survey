@@ -26,7 +26,7 @@ extends CanvasLayer
 #                 pinches the chase-camera zoom instead of steering the look (see
 #                 pinch_zoom(), unit-tested in tools/test_touch_controls.gd).
 #   TOP-RIGHT   — a small DEV tap button (ship._debug_toggle_dev_speed); while dev mode
-#                 is on it reveals NODEATH/FASTAIR tap buttons next to it.
+#                 is on it reveals NODEATH/FASTAIR/TP (dev-sites teleport, = Ctrl+P) tap buttons next to it.
 # BOOST/CAP still hold a synthesised key (Shift/V) — keys aren't touch-emulated.
 # INTERACT/MAP/HOME still tap a one-shot key (F/M/H). THRUST still toggles
 # ship.auto_cruise. Mouse-emulation stays ON globally so menus/map/hangar work by touch —
@@ -55,6 +55,7 @@ var _finger := {}             # touch index -> button dict, or the string "joyst
 var _dev_btn: Dictionary
 var _nodeath_btn: Dictionary
 var _fastair_btn: Dictionary
+var _tp_btn: Dictionary
 var _cruise_btn: Dictionary
 var _zoom_held := {}
 
@@ -135,6 +136,7 @@ func _build() -> void:
 	_dev_btn = _add("DEV", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEV, "TR", 0.0)
 	_nodeath_btn = _add("NODEATH", 114.0, 100, 40, Color(1.0, 0.4, 0.4), K_TAP_DEBUG_SUB, "TR", 0.0, 0)
 	_fastair_btn = _add("FASTAIR", 224.0, 100, 40, Color(0.4, 1.0, 0.9), K_TAP_DEBUG_SUB, "TR", 0.0, 1)
+	_tp_btn = _add("TP", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEBUG_SUB, "TR", 46.0, 2)
 
 	_joy_ring = Control.new()
 	_joy_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -212,6 +214,7 @@ func _process(delta: float) -> void:
 	_highlight(_dev_btn, ship.dev_speed)
 	_nodeath_btn.node.visible = ship.dev_speed
 	_fastair_btn.node.visible = ship.dev_speed
+	_tp_btn.node.visible = ship.dev_speed
 	if ship.dev_speed:
 		_highlight(_nodeath_btn, ship._FM.dev_no_death)
 		_highlight(_fastair_btn, ship._FM.dev_fast_air)
@@ -407,7 +410,8 @@ func _press(b: Dictionary) -> void:
 		K_TAP_DEBUG_SUB:
 			if ship != null:
 				if b.code == 0: ship._debug_toggle_dev_no_death()
-				else: ship._debug_toggle_dev_fast_air()
+				elif b.code == 1: ship._debug_toggle_dev_fast_air()
+				elif main != null and main.dev_sites != null: main.dev_sites.toggle()
 
 
 func _release(b: Dictionary) -> void:

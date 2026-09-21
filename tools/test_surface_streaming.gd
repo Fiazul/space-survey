@@ -36,6 +36,8 @@ func _ready() -> void:
 				_ground_covers_ship(planets, patch, body))
 			_check("%s_in_band_stays_visible_during_fast_flight_%d" % [body, step],
 				_in_band_ground_is_visible(patch))
+			_check("%s_warm_rings_stay_lit_%d" % [body, step],
+				_warm_rings_stay_lit(patch))
 			_check("%s_new_ground_commits_%d" % [body, step],
 				previous_anchor.distance_to(patch.get("_ring_anchor")[0]) > 1.0)
 			var commit_frames := 0
@@ -74,6 +76,18 @@ func _in_band_ground_is_visible(patch: Node3D) -> bool:
 	if not bool(patch.get("_last_in_band")) or not patch.has_ground():
 		return true
 	return patch.visible
+
+
+func _warm_rings_stay_lit(patch: Node3D) -> bool:
+	if not patch.has_ground():
+		return true
+	var fades: Array = patch.get("_ring_fade")
+	for i in fades.size():
+		if patch.get("_ring_land")[i].mesh == null:
+			continue
+		if float(fades[i]) < 0.99:
+			return false
+	return true
 
 
 func _ground_covers_ship(planets: Node3D, patch: Node3D, body: String) -> bool:

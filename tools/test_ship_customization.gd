@@ -145,7 +145,41 @@ func _initialize() -> void:
 	state.load_from(cfg)
 	failed += _check("customization_round_trip",
 		state.customization == {"Class II Galactic Cruiser": {"color": "teal", "finish": "glassy"}})
+	state.customization = {"Base Basic PBR": {"color": "#c0331f"}}
+	state.save_into(cfg)
+	state.customization = {}
+	state.load_from(cfg)
+	failed += _check("manual_hex_round_trip",
+		state.customization == {"Base Basic PBR": {"color": "#c0331f"}})
 	state.free()
+
+	failed += _check("hangar_offers_manual_picker",
+		hud_source.contains("ColorPickerButton") and hud_source.contains("_on_manual_color") \
+		and hud_source.contains("_picker_popup_open"))
+	failed += _check("manual_hex_keys_parsed",
+		ship_source.contains("func color_from_key") and ship_source.contains("html_is_valid"))
+
+	var custom := Color(0.752941, 0.2, 0.117647)
+	var basic_scene := load("res://assets/base_basic_pbr.glb") as PackedScene
+	failed += _check("base_basic_glb", basic_scene != null)
+	if basic_scene != null:
+		var basic: Node3D = basic_scene.instantiate()
+		MeshStyler.style_base_basic_pbr(basic, custom)
+		var basic_tints := _glass_tints(basic)
+		failed += _check("base_basic_glass_takes_manual_tint",
+			basic_tints.size() >= 4 and _all_tints_match(basic_tints, custom))
+		basic.free()
+
+	var van_mesh := load("res://assets/vanguard/vanguard.obj") as Mesh
+	failed += _check("vanguard_obj", van_mesh != null)
+	if van_mesh != null:
+		var van := MeshInstance3D.new()
+		van.mesh = van_mesh
+		MeshStyler.style_vanguard(van, custom)
+		var van_tints := _glass_tints(van)
+		failed += _check("vanguard_glass_takes_manual_tint",
+			van_tints.size() >= 1 and _all_tints_match(van_tints, custom))
+		van.free()
 
 	if failed == 0:
 		print("ship_customization: OK")
@@ -153,6 +187,40 @@ func _initialize() -> void:
 	else:
 		print("ship_customization: FAIL %d" % failed)
 		quit(1)
+
+
+func _glass_tints(root: Node) -> Array:
+	var out := []
+	for mi in MeshStyler.gather_mesh_instances(root):
+		var mats: Array = []
+		if mi.material_override is ShaderMaterial:
+			mats.append(mi.material_override)
+		if mi.mesh != null:
+			for si in mi.mesh.get_surface_count():
+				mats.append(mi.get_surface_override_material(si))
+		for material in mats:
+			if material is ShaderMaterial \
+					and (material as ShaderMaterial).shader == MeshStyler.BASE_BASIC_WING_GLASS_SHADER:
+				out.append((material as ShaderMaterial).get_shader_parameter("hull_tint"))
+	return out
+
+
+func _all_tints_match(tints: Array, expected: Color) -> bool:
+	if tints.is_empty():
+		return false
+	for tint in tints:
+		if tint == null:
+			return false
+		var c: Color
+		if tint is Color:
+			c = tint
+		elif tint is Vector3:
+			c = Color(tint.x, tint.y, tint.z)
+		else:
+			return false
+		if not _rgb_equal(c, expected):
+			return false
+	return true
 
 
 func _rgb_equal(a: Color, b: Color) -> bool:

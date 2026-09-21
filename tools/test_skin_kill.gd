@@ -50,12 +50,12 @@ func _initialize() -> void:
 	# like the band itself was broken.
 	var ship_src := FileAccess.get_file_as_string("res://scripts/flight/ship.gd")
 	failed += _check("ground_clamp_follows_the_terrain",
-		ship_src.find("terrain.ground_radius_km") >= 0)
+		ship_src.find("terrain.resolve_motion") >= 0)
 	failed += _check("no_flat_radius_clamp_remains",
 		ship_src.find("EARTH_MIN_R_KM") < 0)
 	var main_src := FileAccess.get_file_as_string("res://scripts/core/main.gd")
 	failed += _check("kill_sweeps_the_frames_movement",
-		main_src.find("swept_contact") >= 0)
+		main_src.find("resolve_motion") >= 0)
 
 	# The park must clear the BAND, not the retired bubble. At the old kill * 4 it
 	# would now be 80 m — respawning you inside the terrain you just died on.

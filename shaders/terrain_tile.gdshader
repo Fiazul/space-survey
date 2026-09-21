@@ -52,6 +52,7 @@ uniform float rock_amount = 1.0;
 uniform float liquid_amount = 0.0;
 uniform float lava_amount = 0.0;
 uniform float ice_surface = 0.0;
+uniform float snow_line_km = 0.0;
 uniform float wave_scale = 1.0;
 uniform float surface_seed = 0.0;
 // Per-ring fade for streamed commits. Default 1 so a cold bind matches the
@@ -222,6 +223,16 @@ void fragment() {
 	vec3 water_col = mix(ocean_base, shallow_col, shallow_t);
 	alb = mix(alb, water_col, clamp(wet, 0.0, 1.0));
 	alb = mix(alb, vec3(0.80, 0.86, 0.92), ice_mask * 0.85);
+	// Alpine snow cover from height. Slope fade waits until `slope` exists below.
+	float snow = 0.0;
+	if (snow_line_km > 0.001) {
+		// Broad accumulation follows terrain rather than a ruler-straight height
+		// contour. Smaller wind drifts soften its edge without a cracked-ice net.
+		float drift = grain(v_surface * 0.65) - 0.5;
+		float local_line = snow_line_km + drift * 0.7;
+		snow = smoothstep(local_line - 0.15, local_line + 0.85, v_height);
+		snow *= (1.0 - clamp(wet, 0.0, 1.0)) * (1.0 - ice_mask);
+	}
 	// Fade the fine octave when pixels become larger than it, avoiding distant
 	// shimmer.
 	float coarse = grain(v_surface * 0.8) - 0.5;
@@ -232,16 +243,23 @@ void fragment() {
 	vec3 view_w = normalize((INV_VIEW_MATRIX * vec4(normalize(VERTEX), 0.0)).xyz);
 	vec3 radial = normalize(v_radial);
 	float slope = 1.0 - clamp(dot(n, radial), 0.0, 1.0);
+	// Snow collects on shelves and releases from steep rock faces.
+	snow *= 1.0 - smoothstep(0.12, 0.42, slope);
+	vec3 snow_albedo = mix(vec3(0.68, 0.77, 0.86), vec3(0.91, 0.94, 0.97),
+		0.65 + coarse * 0.35 + fine * 0.12);
+	alb = mix(alb, snow_albedo, snow);
 	vec3 p = v_surface + vec3(surface_seed);
-	float rock_fine = grain(p * 32.0);
+	float rock_fine = mix(0.5, grain(p * 32.0), 1.0 - smoothstep(0.008, 0.04, footprint));
 	float strata = sin(v_height * 110.0 + grain(p * 0.3) * 12.0);
-	float exposed = rock_amount * (1.0 - wet) * (1.0 - ice_surface) * (1.0 - ice_mask);
+	float exposed = rock_amount * (1.0 - wet) * (1.0 - ice_surface) * (1.0 - ice_mask) * (1.0 - snow);
 	alb *= 1.0 + exposed * (0.13 * strata * smoothstep(0.005, 0.12, slope) + (rock_fine - 0.5) * 0.20);
 	// Fractures across frozen ground: no liquid mask or water glint on Europa.
-	float crack_noise = grain(p * 0.6) + 0.16 * grain(p * 3.0);
-	float crack = (1.0 - smoothstep(0.012, 0.04, abs(crack_noise - 0.56))) * ice_surface;
-	alb = mix(alb, vec3(0.19, 0.32, 0.40), crack * 0.65);
-	alb = mix(alb, vec3(0.62, 0.76, 0.84), ice_surface * 0.22 * (1.0 - crack));
+	if (ice_surface > 0.001) {
+		float crack_noise = grain(p * 0.6) + 0.16 * grain(p * 3.0);
+		float crack = (1.0 - smoothstep(0.012, 0.04, abs(crack_noise - 0.56))) * ice_surface;
+		alb = mix(alb, vec3(0.19, 0.32, 0.40), crack * 0.65);
+		alb = mix(alb, vec3(0.62, 0.76, 0.84), ice_surface * 0.22 * (1.0 - crack));
+	}
 	// Two travelling layers at unrelated scales AND a relative rotation, so their
 	// sum never lines up into a repeating grid. The old single 3-axis sin sum's
 	// wavelengths (about 70/77/86 m) beat against the ring quad sizes
@@ -274,14 +292,20 @@ void fragment() {
 	col += wet * day * (vec3(1.0, 0.84, 0.59) * glint * 1.4 + vec3(0.08, 0.16, 0.24) * fresnel);
 	float ice_glint = pow(max(dot(reflect(-l, n), -view_w), 0.0), 60.0);
 	col += ice_mask * day * vec3(0.9, 0.95, 1.0) * ice_glint * 0.55;
+	// Snow is a rough diffuse surface, with a subdued broad highlight.
+	float snow_glint = pow(max(dot(reflect(-l, n), -view_w), 0.0), 12.0);
+	col += snow * day * sun_shadow * vec3(0.92, 0.96, 1.0) * snow_glint * 0.08;
 	col += foam_t * lit * vec3(0.85, 0.9, 0.92) * 0.6 * liquid_amount;
 	// UV2 carries the SAME volcanic regions that generated the caldera geometry.
-	float volcanic = clamp(UV2.x * lava_amount, 0.0, 1.0);
-	float channels = 1.0 - smoothstep(0.015, 0.055, abs(grain(p * 1.6) + grain(p * 4.0) * 0.2 - 0.58));
-	float molten = max(smoothstep(0.975, 0.995, volcanic), channels * smoothstep(0.08, 0.8, volcanic) * 0.8);
-	col = mix(col, vec3(0.025, 0.018, 0.014) * lit, volcanic * 0.72);
-	float pulse = 0.82 + 0.18 * sin(TIME * 1.7 + grain(p * 3.0) * 9.0);
-	col += mix(vec3(1.6, 0.075, 0.003), vec3(3.2, 0.85, 0.035), molten) * molten * pulse;
+	// Uniform branch: Earth pays no per-pixel volcanic noise cost.
+	if (lava_amount > 0.001) {
+		float volcanic = clamp(UV2.x * lava_amount, 0.0, 1.0);
+		float channels = 1.0 - smoothstep(0.015, 0.055, abs(grain(p * 1.6) + grain(p * 4.0) * 0.2 - 0.58));
+		float molten = max(smoothstep(0.975, 0.995, volcanic), channels * smoothstep(0.08, 0.8, volcanic) * 0.8);
+		col = mix(col, vec3(0.025, 0.018, 0.014) * lit, volcanic * 0.72);
+		float pulse = 0.82 + 0.18 * sin(TIME * 1.7 + grain(p * 3.0) * 9.0);
+		col += mix(vec3(1.6, 0.075, 0.003), vec3(3.2, 0.85, 0.035), molten) * molten * pulse;
+	}
 
 	float haze = (1.0 - exp(-dist_km / max(haze_km, 0.001)));
 	haze *= air_amount * haze_density;

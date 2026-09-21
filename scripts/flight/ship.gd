@@ -185,6 +185,10 @@ const LOOK_RETURN := 8.0        # how fast the view snaps to target / eases back
 # step (rad/s, not a flat per-frame cap) so any fps sweeps at the same angular
 # speed and only a genuine backlog spike gets absorbed instead of presented at once.
 const LOOK_MAX_RATE_RAD_S := 12.0   # ~690 deg/s
+# Terrain-ring rebuilds near a body hitch the frame. `rate * delta` would then
+# ALLOW a half-second of orbit in one tick — the T-look 180° flip over Earth.
+# Cap the look clock so a hitch dumps at most one 20 fps slice.
+const LOOK_DT_CAP := 1.0 / 20.0
 const FOV_BASE := 70.0
 const FOV_KICK := 14.0        # extra FOV at full speed (sense of speed) — gentle
 
@@ -209,6 +213,7 @@ const HULL_FILL_PITCH_DEG := -24.0       # - = from above, shining down onto the
 # --- State ---
 var velocity := Vector3.ZERO
 var anchor_name := "Earth"     # body the physical state is measured from
+var surface_position_revision := 0 # explicit relocations invalidate contact sweeps
 var anchor_off := Vector3.ZERO # km from that body's centre — the real position
 # Exclusion-shell edge state (docs/adr/0002 finding 2): the entry handshake
 # fires on an exact outside->inside transition, tracked here, never on
@@ -227,6 +232,7 @@ var true_pos: Vector3:
 		return _AF.absolute(anchor64(), anchor_off)
 	set(value):
 		anchor_off = _AF.decompose(value, anchor64())
+		surface_position_revision += 1
 var speed_limit := INF         # set by main from PlanetSystem; eases us down near a body
 # The nearest body's shared height function, assigned by main each frame. The SAME
 # instance the ground rings and the contact kill use - three readers, one function.
@@ -435,6 +441,7 @@ func _debug_circularize() -> void:
 func _debug_geo_park() -> void:
 	pending_frame_shift += set_anchor("Earth")
 	anchor_off = Ephemeris.geo_start_pos()
+	surface_position_revision += 1
 	velocity = Vector3.ZERO
 	face_toward(-anchor_off)
 	_kill_turn_rates()
@@ -461,7 +468,7 @@ func _debug_toggle_dev_fast_air() -> void:
 
 func _debug_toggle_dev_no_death() -> void:
 	_FM.dev_no_death = not _FM.dev_no_death
-	debug_toast = "Ctrl+D  NODEATH on  ·  contact kill off" \
+	debug_toast = "Ctrl+D  NODEATH on  ·  solid contact stays on" \
 		if _FM.dev_no_death else "Ctrl+D  NODEATH off"
 
 
@@ -650,6 +657,7 @@ func _newton_advance(sim: float) -> void:
 		# Snap onto the exclusion shell exactly on crossing (velocity is kept
 		# as-is, no cap) so an interplanetary-speed step can't land arbitrarily
 		# deep past the shell before this reads it as a crossing.
+		var ground_from := anchor_off
 		var hit: Dictionary = _FM.break_at_exclusion(anchor_off, velocity, dt, ez_center, ez_km)
 		var step_dt := dt
 		if bool(hit.dropped):
@@ -659,7 +667,7 @@ func _newton_advance(sim: float) -> void:
 		velocity += _newton_g() * step_dt
 		_newton_atmo_drag(step_dt)
 		anchor_off += velocity * step_dt
-		_newton_ground()
+		_newton_ground(ground_from)
 		_newton_corotate(step_dt)
 		# Entry handshake fires on the exact outside->inside EDGE, tracked here —
 		# never on break_at_exclusion's own tolerance-swallowed `dropped` flag
@@ -726,37 +734,23 @@ func _newton_corotate(dt: float) -> void:
 	_cam_basis = _cam_basis.rotated(Vector3.UP, ang)
 
 
-func _newton_ground() -> void:
-	# anchor_off is measured from the anchor's centre, so this clamp is the
-	# anchor's — on any world, not just Earth. When the nearest body is something
-	# else, main's body-local sweep owns the kill instead.
+func surface_clearance_km() -> float:
+	# Conservative bounding sphere until landing-gear contact points are authored.
+	return maxf(_surface_hull_radius_km, 0.02)
+
+
+func _newton_ground(previous: Vector3 = Vector3.INF) -> void:
 	if not nearest_name.is_empty() and nearest_name != anchor_name:
 		return
-	# Backstop so a physics substep can never put the hull INSIDE the rock. This
-	# used to pin at a flat 6400 km from Earth's centre, which is 29 km altitude -
-	# an independent blocker on the Earth flyover: removing the kill bubble alone
-	# would still have stopped every descent 29 km up and looked like the band was
-	# broken. Now it pins at the terrain beneath you plus the contact margin, so the
-	# impact latch in main._update_skin_kill sees contact and fires, even when
-	# projection rounds the final position just above the contact threshold.
-	#
-	var rad := anchor_radius_km()
-	var r := anchor_off.length()
-	if rad <= 0.0 or r < 0.001:
-		return
-	var n := anchor_off / r
-	var contact: float = Ephemeris.surface_kill_km(anchor_name)
-	var min_r: float = rad + contact
-	if terrain != null:
-		min_r = terrain.ground_radius_km(terrain_basis.inverse() * n, rad) + contact
-	if r >= min_r:
-		return
-	# Preserve the impact before projection/rotation can round it into clear air.
-	surface_impact = true
-	anchor_off = n * min_r
-	var inward := velocity.dot(n)
-	if inward < 0.0:
-		velocity -= n * inward
+	if terrain == null:
+		return  # first-frame fallback is resolved by main after binding the body
+	var start := anchor_off if previous == Vector3.INF else previous
+	var inverse := terrain_basis.inverse()
+	var contact := terrain.resolve_motion(inverse * start, inverse * anchor_off,
+		inverse * velocity, anchor_radius_km(), surface_clearance_km())
+	anchor_off = terrain_basis * (contact.position as Vector3)
+	velocity = terrain_basis * (contact.velocity as Vector3)
+	surface_impact = surface_impact or bool(contact.hit)
 
 # True while the galactic drive is carrying us — the drive hull, spooled up, in clear deep space.
 # main uses it to loom the core; the HUD uses it for the drive readout; streaks use it for the blur.
@@ -802,6 +796,7 @@ var _streak_mat: StandardMaterial3D
 var _cam_zoom := 1.0          # target zoom (mouse wheel / pinch)
 var _cam_zoom_smooth := 1.0   # eased toward _cam_zoom
 var touch_active := false     # set true by main.gd when the touch overlay is built
+var _surface_hull_radius_km := HULL_KM * 0.87
 var _hull_km := HULL_KM       # live fitted hull length (km); camera sits in hull-lengths
 var _cam_basis := Basis()
 var _bank := 0.0
@@ -988,8 +983,7 @@ func fly(delta: float) -> void:
 	# HOLD RMB or T for free-look: the mouse orbits the camera (full 360°) around the ship
 	# while it keeps flying. Release to steer normally again.
 	# (On laser ships RMB fires the nose beam instead, so free-look there is T-only.)
-	_free_look = (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not has_laser) \
-		or Input.is_physical_key_pressed(KEY_T)
+	_free_look = _want_free_look(delta)
 	var md := _mouse_delta
 	_mouse_delta = Vector2.ZERO
 	var turn := 0.0   # this frame's mouse yaw (drives cosmetic banking below)
@@ -1407,24 +1401,49 @@ func _ensure_hull_fill() -> void:
 # SECOND (not a flat per-frame degree cap) so 60 fps and 30 fps sweep at the same
 # angular speed, and only a genuine backlog spike (far above any human flick) gets
 # absorbed rather than presented in one frame.
+func _look_dt(delta: float) -> float:
+	return minf(delta, LOOK_DT_CAP)
+
+
+# Terrain-ring rebuilds hitch the frame and can drop Input for that tick (T
+# reads as up). Treating that as a release zeros look and slams the camera
+# home — the T-look flip over Earth. Hold an in-progress look through a stall;
+# a real release still lands on the next normal-length frame.
+func _want_free_look(delta: float) -> bool:
+	var held := (Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT) and not has_laser) \
+		or Input.is_physical_key_pressed(KEY_T)
+	if held:
+		return true
+	return _free_look and delta > LOOK_DT_CAP
+
+
 func _apply_free_look(md: Vector2, delta: float) -> void:
-	var max_step := LOOK_MAX_RATE_RAD_S * delta
+	var max_step := LOOK_MAX_RATE_RAD_S * _look_dt(delta)
 	var dyaw := clampf(-md.x * mouse_sens, -max_step, max_step)
 	var dpitch := clampf(-md.y * mouse_sens, -max_step, max_step)
 	_look_yaw = wrapf(_look_yaw + dyaw, -PI, PI)
 	_look_pitch = clampf(_look_pitch + dpitch, -LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT)
 
 
+func _stable_basis_slerp(from: Basis, to: Basis, t: float) -> Basis:
+	var q0 := from.get_rotation_quaternion()
+	var q1 := to.get_rotation_quaternion()
+	if q0.dot(q1) < 0.0:
+		q1 = -q1
+	return Basis(q0.slerp(q1, t)).orthonormalized()
+
+
 func _update_camera(delta: float) -> void:
 	if camera == null:
 		return
 	_ensure_hull_fill()
+	var dt := _look_dt(delta)
 	# Camera basis lags the ship's a touch -> gentle sway / sense of speed.
-	_cam_basis = _cam_basis.slerp(transform.basis, clampf(CAM_LAG * delta, 0.0, 1.0))
-	_cam_zoom_smooth = lerpf(_cam_zoom_smooth, _cam_zoom, clampf(10.0 * delta, 0.0, 1.0))
+	_cam_basis = _stable_basis_slerp(_cam_basis, transform.basis, clampf(CAM_LAG * dt, 0.0, 1.0))
+	_cam_zoom_smooth = lerpf(_cam_zoom_smooth, _cam_zoom, clampf(10.0 * dt, 0.0, 1.0))
 	# Free-look orbit: ease the applied angles toward target (0 = straight behind).
 	# Rotating the whole chase rig keeps the ship framed, so at 0 it's the usual cam.
-	var lk := clampf(LOOK_RETURN * delta, 0.0, 1.0)
+	var lk := clampf(LOOK_RETURN * dt, 0.0, 1.0)
 	# lerp_angle, not lerpf: _look_yaw wraps at +-PI (full 360 deg orbit), so a
 	# plain lerpf between +179 deg and -179 deg swings the SMOOTHED value the
 	# long way through 0 (a ~358 deg spin over a few frames). lerp_angle always
@@ -1639,6 +1658,7 @@ func _build_ship_model(idx: int) -> void:
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
 	_fit_streaks()   # the debris field is measured in hull lengths; this hull just changed
 	var box := ShipMesh.fit_model(_mesh_root, model, _hull_km)
+	_surface_hull_radius_km = box.size.length() * 0.5
 	# The Class II source only supplies six flat propulsion patches. Fit the hull
 	# first, then extend those exact sockets into visible two-layer torch plumes so
 	# exhaust volume cannot alter the intended ship scale.
@@ -1719,18 +1739,42 @@ func _color_for(ship_name: String, info: Dictionary) -> String:
 	return String(saved)
 
 
-func _palette_for(key: String) -> Dictionary:
+static func color_from_key(key: String) -> Color:
+	var k := key.strip_edges().to_lower()
 	for palette in SHIP_PALETTES:
-		if String(palette.key) == key:
+		if String(palette.key) == k:
+			return palette.swatch
+	if k.begins_with("#") and Color.html_is_valid(k):
+		return Color.html(k)
+	return SHIP_PALETTES[0].swatch
+
+
+static func is_color_key(key: String) -> bool:
+	var k := key.strip_edges().to_lower()
+	for palette in SHIP_PALETTES:
+		if String(palette.key) == k:
+			return true
+	return k.begins_with("#") and Color.html_is_valid(k)
+
+
+func _palette_for(key: String) -> Dictionary:
+	var k := key.strip_edges().to_lower()
+	for palette in SHIP_PALETTES:
+		if String(palette.key) == k:
 			return palette
+	if k.begins_with("#") and Color.html_is_valid(k):
+		var swatch := Color.html(k)
+		return {
+			"key": k,
+			"name": "Custom",
+			"swatch": swatch,
+			"accent": swatch.lightened(0.22),
+		}
 	return SHIP_PALETTES[0]
 
 
 func _has_palette(key: String) -> bool:
-	for palette in SHIP_PALETTES:
-		if String(palette.key) == key:
-			return true
-	return false
+	return is_color_key(key)
 
 
 func _finish_for(ship_name: String) -> String:
@@ -1759,9 +1803,10 @@ func current_finish() -> String:
 
 func set_ship_color(_part: String, key: String) -> void:
 	var info: Dictionary = SHIP_MODELS[_current_model]
-	if not info.get("color_pick", false) or not _has_palette(key):
+	var k := key.strip_edges().to_lower()
+	if not info.get("color_pick", false) or not is_color_key(k):
 		return
-	_color_choice[info.name] = key
+	_color_choice[info.name] = k
 	_rebuild_customized_ship()
 
 

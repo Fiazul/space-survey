@@ -115,13 +115,14 @@ func _calibration() -> void:
 
 	# Earth: signed rg16 (real bathymetry), water-mask-gated clamp in
 	# TerrainSampler.height_m() - see scripts/world/terrain_sampler.gd's
-	# height_m(). Everest is the array's OWN global max at 8k (7198.3 m), not
-	# the real ~8849 m summit: 4.89 km/px area-averages the peak down, this is
-	# the map's own calibration anchor, not a bug (PLANET_GENERATOR.md).
+	# height_m(). The 8k array's own global max is 7198.3 m (4.89 km/px
+	# area-averages the real ~8848 m summit). Named-peak restore puts the
+	# summit back in height_m(); the FILE sample is base_height_m().
 	var earth := G.terrain_sampler(G.recipe_for({"name": "Earth"}))
 	var everest := _dir_of(27.99, 86.93)
-	var everest_m: float = earth.height_m(everest)
-	check("earth_everest_sampled", absf(everest_m - 7198.3) < 300.0)
+	var everest_map_m: float = earth.base_height_m(everest)
+	check("earth_everest_map_sampled", absf(everest_map_m - 7198.3) < 300.0)
+	check("earth_everest_height_is_restored", earth.height_m(everest) > 8500.0)
 
 	# Dead Sea: masked LAND below sea level. The water mask must say "not
 	# water" here, so height_m() must NOT clamp it to 0 - the whole point of

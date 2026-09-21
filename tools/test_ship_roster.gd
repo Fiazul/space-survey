@@ -2,6 +2,7 @@ extends Node3D
 
 const ShipScript := preload("res://scripts/flight/ship.gd")
 const Styler := preload("res://scripts/flight/ship_mesh.gd")
+const HudScript := preload("res://scripts/ui/hud.gd")
 const WEDGE_HULL := preload("res://shaders/wedge_hull.gdshader")
 var failures := 0
 
@@ -52,6 +53,14 @@ func _ready() -> void:
 			paints[0].size() > 0 and paints[0] != paints[1])
 		_check("boosters_ignore_the_pick_%d" % (idx + 1),
 			boosters[0].size() > 0 and boosters[0] == boosters[1])
+	for idx in [2, 3]:
+		ship.swap_ship(idx)
+		ship.set_ship_color("body", "#c0331f")
+		_check("manual_hex_accepted_%d" % (idx + 1), ship.current_body_color() == "#c0331f")
+		var glasses := _hull_glasses(ship.get("_mesh_root").get_child(0))
+		_check("hull_glass_on_%d" % (idx + 1), glasses.size() >= 1)
+		_check("manual_hex_tints_glass_%d" % (idx + 1),
+			_glass_matches(glasses, Color.html("#c0331f")))
 
 	# NEWTON_BALLISTIC (2026-09-12 rescale) is a static var whose initializer calls
 	# FlightMode.air_ballistic against the LIVE Ephemeris autoload - a plain SceneTree
@@ -63,6 +72,44 @@ func _ready() -> void:
 	_check("newton_ballistic_positive", ballistic > 0.0)
 	_check("newton_ballistic_matches_live_derivation", is_equal_approx(ballistic,
 		FlightMode.air_ballistic(ShipScript.NEWTON_THRUST, ShipScript.BOOST_MULT, Ephemeris.RHO0)))
+
+	# Colour-picker popup is a child of the hangar button. A per-frame set_hangar
+	# rebuild (body_key in the layout sig) queue_frees it — that's the RGB tab
+	# vanishing mid-pick. Colour-only refreshes must keep the same button alive,
+	# even when the popup is not currently reporting visible.
+	var hud := HudScript.new()
+	add_child(hud)
+	hud.ship = ship
+	ship.swap_ship(2)
+	var hangar_names := PackedStringArray()
+	for i in ship.ship_count():
+		hangar_names.append(ship.ship_name_at(i))
+	ship.set_ship_color("body", "burgundy")
+	hud.set_hangar(true, hangar_names, 2, "Test Dock")
+	var picker: ColorPickerButton = hud.get("_color_picker")
+	_check("hangar_has_picker", picker != null and is_instance_valid(picker))
+	if picker != null:
+		var picker_id := picker.get_instance_id()
+		# Popup not open: the race where color_changed already closed it,
+		# or Godot reports the picker window as hidden. Colour-only must
+		# still keep this button, not queue_free it.
+		ship.set_ship_color("body", "#1f4cc0")
+		hud.set_hangar(true, hangar_names, 2, "Test Dock")
+		var after: ColorPickerButton = hud.get("_color_picker")
+		_check("picker_survives_color_only_refresh",
+			after != null and after.get_instance_id() == picker_id)
+		if after != null:
+			var popup := after.get_popup()
+			if popup != null:
+				popup.popup()
+			ship.set_ship_color("body", "#33c07a")
+			hud.set_hangar(true, hangar_names, 2, "Test Dock")
+			var still: ColorPickerButton = hud.get("_color_picker")
+			_check("picker_survives_refresh_while_popup_open",
+				still != null and still.get_instance_id() == picker_id)
+			_check("picker_popup_still_open",
+				still != null and still.get_popup() != null and still.get_popup().visible)
+	hud.queue_free()
 
 	ship.queue_free()
 	await get_tree().process_frame
@@ -85,12 +132,44 @@ func _hull_paints(model: Node3D) -> Array:
 	return out
 
 
+func _hull_glasses(model: Node3D) -> Array:
+	var out := []
+	for mi in Styler.gather_mesh_instances(model):
+		var mats: Array = []
+		if mi.material_override is ShaderMaterial:
+			mats.append(mi.material_override)
+		if mi.mesh != null:
+			for si in mi.mesh.get_surface_count():
+				mats.append(mi.get_surface_override_material(si))
+		for material in mats:
+			if material is ShaderMaterial \
+					and (material as ShaderMaterial).shader == Styler.BASE_BASIC_WING_GLASS_SHADER:
+				out.append(material)
+	return out
+
+
+func _glass_matches(glasses: Array, expected: Color) -> bool:
+	if glasses.is_empty():
+		return false
+	for material in glasses:
+		var tint: Variant = (material as ShaderMaterial).get_shader_parameter("hull_tint")
+		if tint == null:
+			return false
+		var c: Color = tint if tint is Color else Color(tint.x, tint.y, tint.z)
+		if not (is_equal_approx(c.r, expected.r) and is_equal_approx(c.g, expected.g) \
+				and is_equal_approx(c.b, expected.b)):
+			return false
+	return true
+
+
 # Every uniform on every driven propulsion material, so a paint pass that touched one
 # by any route - plasma colour, gain, nozzle shape - shows up as a changed signature.
 func _propulsion_signature(driven: Array) -> Array:
 	var out := []
 	for material in driven:
 		var shader_material := material as ShaderMaterial
+		if shader_material == null or shader_material.shader == Styler.BASE_BASIC_WING_GLASS_SHADER:
+			continue
 		var row := [shader_material.shader.resource_path]
 		for uniform in RenderingServer.get_shader_parameter_list(shader_material.shader.get_rid()):
 			row.append("%s=%s" % [uniform.name, shader_material.get_shader_parameter(uniform.name)])

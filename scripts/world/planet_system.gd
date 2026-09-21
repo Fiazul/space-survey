@@ -770,11 +770,15 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var vel_body: Vector3 = body_basis.inverse() * ship_vel
 		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler, vel_body)
-		# The coarse globe has a different displacement and can protrude through
-		# valleys. Hide it only while the COMPLETE horizon-covering terrain is
-		# in place. If the tile lags, keep the globe UNDER the patch (depth test
-		# lets the patch win where it exists) instead of hiding the patch.
-		if _surface.visible and _surface.has_ground() and _surface.covers_horizon(from_centre):
+		# The coarse globe has a different displacement and pokes through
+		# valleys — z-fight flicker, worst as you close in. Hide it when the
+		# tile covers the horizon, AND whenever we are low enough that the
+		# two surfaces share the view (the reported close-range strobe).
+		# Higher up, a lagging tile may not cover the limb yet; keep the
+		# globe as the gap fill so the body does not vanish.
+		const CLOSE_GLOBE_HIDE_KM := 8.0
+		if _surface.visible and _surface.has_ground() \
+				and (_surface.covers_horizon(from_centre) or salt < CLOSE_GLOBE_HIDE_KM):
 			for b in _bodies:
 				if str(b.name) == nearest_name:
 					b.sphere.visible = false

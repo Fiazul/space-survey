@@ -215,8 +215,33 @@ func _free_look_no_flip() -> int:
 	var spike_step := absf(ship._look_yaw - before_yaw)
 	var cap_step := ShipScript.LOOK_MAX_RATE_RAD_S * dt60
 	failed += _check("free_look_spike_bounded_to_rate_cap", spike_step <= cap_step + 1.0e-6)
-	print("chase_rig: free-look 60fps %.2f deg/s, 30fps %.2f deg/s, spike step %.5f rad (cap %.5f rad)"
-		% [deg_per_s_60, deg_per_s_30, spike_step, cap_step])
+	# Terrain rebuilds near Earth hitch the frame (dt ~0.5s). The old cap was
+	# LOOK_MAX_RATE * delta, so a hitch dumped a half-second of orbit — T-look
+	# flipped to the opposite side. A hitch must not be allowed more yaw than a
+	# 20 fps slice.
+	ship._look_yaw = 0.0
+	var hitch_dt := 0.5
+	var hitch_before: float = ship._look_yaw
+	ship._apply_free_look(Vector2(4000.0, 0.0), hitch_dt)
+	var hitch_step := absf(wrapf(ship._look_yaw - hitch_before, -PI, PI))
+	var hitch_cap := ShipScript.LOOK_MAX_RATE_RAD_S * ShipScript.LOOK_DT_CAP
+	failed += _check("free_look_hitch_does_not_dump_a_half_second_of_orbit",
+		hitch_step <= hitch_cap + 1.0e-6)
+	failed += _check("free_look_hitch_cap_is_tighter_than_raw_delta",
+		hitch_cap < ShipScript.LOOK_MAX_RATE_RAD_S * hitch_dt * 0.5)
+	# Terrain hitch can drop Input for one frame (T reads as up). Zeroing look
+	# then slams the camera home — the other half of the T-look flip over Earth.
+	ship._free_look = true
+	failed += _check("hitch_keeps_held_t_look",
+		ship._want_free_look(hitch_dt) == true)
+	ship._free_look = true
+	failed += _check("normal_frame_releases_t_look",
+		ship._want_free_look(dt60) == false)
+	ship._free_look = false
+	failed += _check("hitch_does_not_start_t_look",
+		ship._want_free_look(hitch_dt) == false)
+	print("chase_rig: free-look 60fps %.2f deg/s, 30fps %.2f deg/s, spike step %.5f rad (cap %.5f rad), hitch step %.5f rad (cap %.5f rad)"
+		% [deg_per_s_60, deg_per_s_30, spike_step, cap_step, hitch_step, hitch_cap])
 	# Reported bug: orbiting past +-180 deg spun the CAMERA a full turn. _look_yaw
 	# itself was already rate-limited above; the flip was in _update_camera's
 	# SMOOTHING (_look_yaw_s = lerpf(...)), which has no notion of the wrap — when

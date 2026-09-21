@@ -3,7 +3,7 @@ extends RefCounted
 ## Landmarks below are seeded scenery, not claims about surveyed feature locations.
 
 const WORLD_DEFAULTS := {
-	"Earth": {"liquid_amount": 1.0, "crater_count": 0, "mountain_m": 0.0, "volcano_count": 3, "volcano_m": 240.0, "crater_density": 0.0, "hills_m": 0.0},
+	"Earth": {"liquid_amount": 1.0, "crater_count": 0, "mountain_m": 0.0, "volcano_count": 3, "volcano_m": 240.0, "crater_density": 0.0, "hills_m": 0.0, "snow_line_m": 5200.0},
 	"Moon": {"crater_count": 28, "crater_m": 700.0, "mountain_m": 0.0, "crater_density": 0.12, "crater_scale_km": 30.0, "hills_m": 100.0},
 	"Mercury": {"crater_count": 32, "crater_m": 450.0, "crater_density": 0.15, "crater_scale_km": 30.0, "hills_m": 90.0},
 	"Callisto": {"crater_count": 30, "crater_m": 500.0, "mountain_m": 0.0, "crater_density": 0.15, "crater_scale_km": 30.0, "hills_m": 90.0},
@@ -67,6 +67,25 @@ const EXPOSURE_GAIN_MAX := 3.5
 static func _luminance(c: Color) -> float:
 	var lin := c.srgb_to_linear()
 	return lin.r * 0.299 + lin.g * 0.587 + lin.b * 0.114
+
+# Named summits the global DEM cannot resolve (Earth's 8k ETOPO texel is
+# ~4.9 km, so Everest area-averages to ~7.2 km). Restored in height_m so the
+# ring mesh and the contact kill agree. lat/lon match TerrainSampler / DevSites.
+const EARTH_R_KM := 6371.0
+const NAMED_PEAKS := {
+	"Earth": [
+		{"name": "Everest", "lat_deg": 27.9881, "lon_deg": 86.9250, "height_m": 8848.0, "radius_km": 12.0, "sharpness": 1.4},
+		{"name": "Lhotse", "lat_deg": 27.9617, "lon_deg": 86.9333, "height_m": 8516.0, "radius_km": 8.0, "sharpness": 1.4},
+		{"name": "Nuptse", "lat_deg": 27.9660, "lon_deg": 86.8900, "height_m": 7861.0, "radius_km": 7.0, "sharpness": 1.35},
+		{"name": "Makalu", "lat_deg": 27.8897, "lon_deg": 87.0885, "height_m": 8485.0, "radius_km": 10.0, "sharpness": 1.4},
+		{"name": "Cho Oyu", "lat_deg": 28.0942, "lon_deg": 86.6608, "height_m": 8188.0, "radius_km": 10.0, "sharpness": 1.35},
+		{"name": "Kangchenjunga", "lat_deg": 27.7025, "lon_deg": 88.1475, "height_m": 8586.0, "radius_km": 12.0, "sharpness": 1.4},
+		{"name": "Dhaulagiri", "lat_deg": 28.6967, "lon_deg": 83.4950, "height_m": 8167.0, "radius_km": 10.0, "sharpness": 1.35},
+		{"name": "Annapurna I", "lat_deg": 28.5961, "lon_deg": 83.8203, "height_m": 8091.0, "radius_km": 10.0, "sharpness": 1.35},
+		{"name": "Manaslu", "lat_deg": 28.5497, "lon_deg": 84.5597, "height_m": 8163.0, "radius_km": 10.0, "sharpness": 1.35},
+		{"name": "Shishapangma", "lat_deg": 28.3525, "lon_deg": 85.7792, "height_m": 8027.0, "radius_km": 10.0, "sharpness": 1.3},
+	],
+}
 
 const HILLS_WAVELENGTH_KM := 10.0  # base of the 2-20 km mid-scale relief band
 # ridge_noise's own nominal wavelength (frequency=160 below), same
@@ -138,6 +157,8 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		"wave_scale": 1.0, "granulation": 1.0 if kind == "star" else 0.0,
 		"storm_strength": 1.0 if not solid and kind != "star" else 0.0,
 		"height_texel_km": 0.0,
+		"peaks": [],
+		"snow_line_m": 0.0,
 	}
 	if solid and kind != "ice" and float(recipe.get("water_shine", 0.0)) > 0.3:
 		p.liquid_amount = 1.0
@@ -172,15 +193,19 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		p[key] = clampf(float(p[key]), 0.0, 10000.0)
 	p.crater_scale_km = clampf(float(p.crater_scale_km), 0.1, 200.0)
 	p.wave_scale = clampf(float(p.wave_scale), 0.1, 8.0)
+	p.snow_line_m = clampf(float(p.get("snow_line_m", 0.0)), 0.0, 12000.0)
 	if not solid:
 		for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "mountain_m", "crater_density", "hills_m"]:
 			p[key] = 0.0
 		p.crater_count = 0
 		p.volcano_count = 0
+		p.snow_line_m = 0.0
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(p.seed * 10000.0) + 713
 	p.craters = _landmarks(rng, clampi(int(p.crater_count), 0, 48), 0.003, 0.009, 1.7)
 	p.volcanoes = _landmarks(rng, clampi(int(p.volcano_count), 0, 32), 0.003, 0.008, 1.0)
+	var extra_peaks: Array = overrides.get("peaks", []) if overrides is Dictionary else []
+	p.peaks = _peaks_for(name, extra_peaks) if solid else []
 	var ridge := FastNoiseLite.new()
 	ridge.seed = int(p.seed * 101.0)
 	ridge.frequency = 160.0
@@ -234,6 +259,49 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 # pre-filter (not an approximation) for `dir.distance_to(direction) < r_max*width`.
 static func _dot_reach(width: float, r_max: float) -> float:
 	return cos(2.0 * asin(clampf(r_max * width * 0.5, 0.0, 1.0)))
+
+static func _peaks_for(body: String, extra: Array) -> Array:
+	var rows: Array = []
+	for row in NAMED_PEAKS.get(body, []):
+		rows.append(row)
+	for row in extra:
+		rows.append(row)
+	var result := []
+	for row in rows:
+		if not (row is Dictionary):
+			continue
+		var lat := deg_to_rad(float(row.get("lat_deg", 0.0)))
+		var lon := deg_to_rad(float(row.get("lon_deg", 0.0)))
+		var d := Vector3(cos(lat) * cos(lon), sin(lat), cos(lat) * sin(lon)).normalized()
+		var width := float(row.get("width", 0.0))
+		if width <= 0.0:
+			width = float(row.get("radius_km", 6.0)) / EARTH_R_KM
+		width = clampf(width, 0.0001, 0.05)
+		result.append({
+			"name": str(row.get("name", "")),
+			"direction": d,
+			"width": width,
+			"height_m": clampf(float(row.get("height_m", 0.0)), 0.0, 12000.0),
+			"sharpness": clampf(float(row.get("sharpness", 1.8)), 1.0, 4.0),
+			"dot_reach": _dot_reach(width, 1.0),
+		})
+	return result
+
+
+# Lift a DEM-flattened summit toward its real height. `base_m` is the map
+# sample without detail, so the restore is independent of mesh spacing.
+static func peak_restore_m(dir: Vector3, base_m: float, p: Dictionary) -> float:
+	var lift := 0.0
+	for peak in p.get("peaks", []):
+		if dir.dot(peak.direction) < float(peak.dot_reach):
+			continue
+		var r: float = dir.distance_to(peak.direction) / float(peak.width)
+		if r >= 1.0:
+			continue
+		var w: float = pow(1.0 - r, float(peak.sharpness))
+		lift = maxf(lift, (float(peak.height_m) - base_m) * w)
+	return maxf(lift, 0.0)
+
 
 static func _landmarks(rng: RandomNumberGenerator, count: int, lo: float, hi: float, r_max: float) -> Array:
 	var result := []

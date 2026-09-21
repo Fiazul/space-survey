@@ -46,6 +46,16 @@ const RECIPES := {
 	},
 	"Earth": {
 		"kind": "rocky",
+		# Material identities for the gameplay layer; not mining yields or grades.
+		# Crafting resolves these through material classes (see gameplay roadmap).
+		"materials": {
+			"crust": ["iron", "silicon", "aluminium"],
+			"ocean": ["water", "sodium_chloride"],
+			"atmosphere": ["nitrogen", "oxygen", "argon"],
+			"port_salvage_only": true,
+			"salvage": ["iron", "aluminium", "silicon", "reclaimed_polymer"],
+		},
+		"crafting_recipes": ["hull_patch", "survival_module", "survey_scanner"],
 		"albedo": "res://assets/planets/earth_2k.jpg",
 		"clouds": "res://assets/planets/earth_clouds_2k.jpg",
 		"night": "res://assets/planets/earth_night_2k.jpg",
@@ -453,7 +463,7 @@ static func catalog_planet(row: Dictionary) -> Dictionary:
 static func recipe_for(spec: Dictionary) -> Dictionary:
 	var name := str(spec.get("name", ""))
 	if RECIPES.has(name):
-		var r: Dictionary = (RECIPES[name] as Dictionary).duplicate()
+		var r: Dictionary = (RECIPES[name] as Dictionary).duplicate(true)
 		r["name"] = name
 		r["features"] = r.get("features", [])
 		if spec.has("surface"):
@@ -872,6 +882,7 @@ static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMate
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
 	for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "wave_scale"]:
 		mat.set_shader_parameter(key, surface[key])
+	mat.set_shader_parameter("snow_line_km", float(surface.get("snow_line_m", 0.0)) / 1000.0)
 	mat.set_shader_parameter("surface_seed", surface.seed)
 	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
 	mat.set_shader_parameter("term_hi", TERMINATOR_HI)

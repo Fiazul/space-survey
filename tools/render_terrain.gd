@@ -77,12 +77,11 @@ func _ready() -> void:
 		# Above the Himalaya rather than inside it - the ground there is 7626 m.
 		[27.95, 86.80, 12.0, 40.0, "himalaya_12km"],
 		[27.95, 86.80, 9.0, 18.0, "himalaya_9km"],
-		# 2026-09-09 8k rg16 re-wiring review: Everest's own argmax texel
-		# (27.99N, 86.93E, assets/planets/SOURCES.txt/tools/test_dem_calibration.gd),
-		# 3 km above whatever height_m() samples there (not a fixed absolute
-		# altitude - the summit itself decodes to ~7.2 km on this map, not the
-		# real ~8.85 km, expected: 4.89 km/px area-averages the peak down).
+		# 3 km above the restored Everest summit (8848 m). The 8k DEM still
+		# area-averages the peak; TerrainSampler.peak_restore_m puts it back.
 		[27.99, 86.93, 3.0, 9.0, "everest_3km"],
+		# South of the massif, looking north at the restored pyramid.
+		[27.82, 86.925, 4.0, 20.0, "everest_face_4km"],
 		# Mariana Trench (11.35N, 142.2E) - real bathymetry is carried
 		# (base_height_m() ~ -10 km here) but height_m() clamps it to the
 		# liquid datum, so this must look like flat open sea, not a canyon.

@@ -135,6 +135,7 @@ func go(site: Dictionary) -> void:
 				if main.planets != null else null
 			var ground_r := sampler.ground_radius_km(dir, radius) if sampler != null else radius
 			ship.anchor_off = DS.surface_anchor_off(dir, ground_r, float(site.alt_km))
+	ship.surface_position_revision += 1
 	ship.velocity = Vector3.ZERO
 	ship.reset_mesh_pose()
 	if mode == "geo" or mode == "park":

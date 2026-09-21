@@ -144,6 +144,14 @@ const BASE_BASIC_HOUSING_SHADE := 0.56
 const VANGUARD_TRIM_SHADE := 0.78
 const VANGUARD_HOUSING_SHADE := 0.55
 
+# Twin bells on Base Basic, in mesh space. Rear lip is the AABB min-Z of root.1/root.3;
+# the 0.082 radius is the measured outlet, not the full housing.
+const BASE_BASIC_BOOSTER_GAIN := 2.2
+const BASE_BASIC_BOOSTER_SOCKETS := [
+	{ "center": Vector3(0.169, 0.233, -0.8264), "radius": 0.082 },
+	{ "center": Vector3(-0.169, 0.233, -0.8264), "radius": 0.082 },
+]
+
 # --- THE booster brightness knob -------------------------------------------------
 # Change this number, press F5, look at the ship. It is the single lever for how hot
 # the exhaust reads, and it scales EVERY booster layer on all four ships: the authored
@@ -694,7 +702,7 @@ static func add_snarkrans_booster_plumes(model: Node3D,
 
 
 static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
-		center: Vector3, radius: float) -> ShaderMaterial:
+		center: Vector3, radius: float, gain := SNARKRANS_BOOSTER_GAIN) -> ShaderMaterial:
 	var plug_depth := radius * 0.24
 	var plug_mesh := CylinderMesh.new()
 	plug_mesh.height = plug_depth
@@ -710,7 +718,7 @@ static func _add_dense_booster_plug(parent: Node3D, plug_name: String,
 	material.shader = CRUISER_PROPULSION_SHADER
 	material.set_shader_parameter("plasma_color", Color.WHITE)
 	# Snarkrans-only, and it sits right on top of the booster faces above.
-	material.set_shader_parameter("brightness", booster_gain(SNARKRANS_BOOSTER_GAIN))
+	material.set_shader_parameter("brightness", booster_gain(gain))
 	# The plug IS the throat, so it keeps the core boost and only loses its outer rim.
 	# CylinderMesh runs along +Y and this node is rotated, not the mesh, so the shaping
 	# axis is Y in the plug's own vertex space and the socket sits at its origin.
@@ -749,96 +757,121 @@ static func _apply_authored_hull_tint(material: BaseMaterial3D, tint: Color) -> 
 
 # The supplied GLB names its two engine meshes root.1 and root.3. Match authored
 # names, never traversal order; the paint pass leaves their propulsion intact.
+# Hull, canopy, wings, and the booster bells share the same glass-panel language.
+# The bells get a denser overlay so they read as thicker engine glass, not a
+# different material.
+const BASE_BASIC_BOOSTER_GLASS_DENSITY := 1.7
+
 static func style_base_basic_pbr(model: Node3D,
 		tint := Color.WHITE) -> Array[ShaderMaterial]:
 	var materials: Array[ShaderMaterial] = []
 	for mi in gather_mesh_instances(model):
 		if mi.mesh == null:
 			continue
-		if String(mi.name) not in ["root.1", "root.3", "root_1", "root_3"]:
+		if _is_base_basic_engine(mi.name):
 			for si in mi.mesh.get_surface_count():
+				var drive := ShaderMaterial.new()
+				drive.shader = CRUISER_PROPULSION_SHADER
+				drive.set_shader_parameter("plasma_color", Color.WHITE)
+				drive.set_shader_parameter("brightness", booster_gain(BASE_BASIC_BOOSTER_GAIN))
+				var bounds := mi.get_aabb()
+				drive.set_shader_parameter("rear_only", true)
+				drive.set_shader_parameter("rear_start", bounds.position.z)
+				drive.set_shader_parameter("rear_band", bounds.size.z * 0.18)
+				var side := 0 if bounds.get_center().x > 0.0 else 1
+				_wire_nozzle_shape(drive, [BASE_BASIC_BOOSTER_SOCKETS[side]],
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, -1.0))
 				var source := mi.get_active_material(si) as BaseMaterial3D
-				if source == null:
-					continue
-				var hull := source.duplicate() as BaseMaterial3D
-				_apply_authored_hull_tint(hull, tint)
-				# A low neutral fill keeps the unlit underside readable.
-				hull.emission_enabled = true
-				hull.emission = Color(0.16, 0.18, 0.22)
-				hull.emission_energy_multiplier = 0.45
-				mi.set_surface_override_material(si, hull)
+				if source != null:
+					var housing := _paint_base_basic_shell(source, tint)
+					housing.resource_name = "base_basic_engine_housing"
+					housing.cull_mode = BaseMaterial3D.CULL_DISABLED
+					housing.next_pass = drive
+					mi.set_surface_override_material(si, housing)
+				materials.append(drive)
+			materials.append(_add_hull_glass_overlay(mi, tint, "", BASE_BASIC_BOOSTER_GLASS_DENSITY))
 			continue
 		for si in mi.mesh.get_surface_count():
-			var drive := ShaderMaterial.new()
-			drive.shader = CRUISER_PROPULSION_SHADER
-			drive.set_shader_parameter("plasma_color", Color.WHITE)
-			drive.set_shader_parameter("brightness", 1.6)
-			var bounds := mi.get_aabb()
-			drive.set_shader_parameter("rear_only", true)
-			drive.set_shader_parameter("rear_start", bounds.position.z)
-			drive.set_shader_parameter("rear_band", bounds.size.z * 0.10)
 			var source := mi.get_active_material(si) as BaseMaterial3D
-			if source != null:
-				var housing := source.duplicate() as BaseMaterial3D
-				# The housing is the metal AROUND the outlet, not the outlet: it takes
-				# the pick at the authored 0.56 of the hull's value. `drive` below is the
-				# propulsion pass and is never touched by a colour choice.
-				_apply_authored_hull_tint(housing, shade(tint, BASE_BASIC_HOUSING_SHADE))
-				housing.next_pass = drive
-				mi.set_surface_override_material(si, housing)
-			materials.append(drive)
-	for mi in gather_mesh_instances(model):
-		if mi.mesh == null or String(mi.name) not in ["root.2", "root.4", "root_2", "root_4"]:
-			continue
-		var glass := ShaderMaterial.new()
-		glass.shader = BASE_BASIC_WING_GLASS_SHADER
-		glass.set_shader_parameter("brightness", booster_gain(0.72))
-		var lens := MeshInstance3D.new()
-		lens.name = "BaseBasicWingGlassPort" if "2" in String(mi.name) else "BaseBasicWingGlassStarboard"
-		lens.mesh = mi.mesh
-		lens.material_override = glass
-		lens.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		lens.set_meta("ship_bounds_exclude", true)
-		mi.add_child(lens)
-		materials.append(glass)
+			if source == null:
+				continue
+			mi.set_surface_override_material(si, _paint_base_basic_shell(source, tint))
+		materials.append(_add_hull_glass_overlay(mi, tint))
 	return materials
+
+
+static func _is_base_basic_engine(mesh_name: String) -> bool:
+	return String(mesh_name) in ["root.1", "root.3", "root_1", "root_3"]
+
+
+static func _paint_base_basic_shell(source: BaseMaterial3D, tint: Color) -> BaseMaterial3D:
+	var hull := source.duplicate() as BaseMaterial3D
+	_apply_authored_hull_tint(hull, tint)
+	hull.metallic = maxf(hull.metallic, 0.08)
+	hull.roughness = minf(hull.roughness, 0.12)
+	hull.emission_enabled = true
+	hull.emission = Color(tint.r * 0.55, tint.g * 0.55, tint.b * 0.55)
+	hull.emission_energy_multiplier = 0.55
+	return hull
+
+
+static func _make_hull_glass(tint: Color, box: AABB, density := 1.0) -> ShaderMaterial:
+	var glass := ShaderMaterial.new()
+	glass.shader = BASE_BASIC_WING_GLASS_SHADER
+	glass.set_shader_parameter("brightness", booster_gain(0.72) * density)
+	glass.set_shader_parameter("aabb_min", box.position)
+	glass.set_shader_parameter("aabb_max", box.position + box.size)
+	glass.set_shader_parameter("hull_tint", tint)
+	glass.set_shader_parameter("density", density)
+	return glass
+
+
+static func _add_hull_glass_overlay(mi: MeshInstance3D, tint: Color,
+		skip_surface := "", density := 1.0) -> ShaderMaterial:
+	var glass := _make_hull_glass(tint, mi.get_aabb(), density)
+	var lens := MeshInstance3D.new()
+	lens.name = "HullGlass_%s" % String(mi.name)
+	lens.mesh = mi.mesh
+	lens.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	lens.set_meta("ship_bounds_exclude", true)
+	if skip_surface.is_empty() or mi.mesh == null:
+		lens.material_override = glass
+	else:
+		for si in mi.mesh.get_surface_count():
+			var tag := ""
+			if mi.mesh.has_method("surface_get_name"):
+				tag = String(mi.mesh.surface_get_name(si))
+			if tag == skip_surface:
+				var hide := StandardMaterial3D.new()
+				hide.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				hide.albedo_color = Color(0, 0, 0, 0)
+				lens.set_surface_override_material(si, hide)
+			else:
+				lens.set_surface_override_material(si, glass)
+	mi.add_child(lens)
+	return glass
 
 
 static func add_base_basic_booster_plumes(model: Node3D,
 		accent := Color(0.35, 0.68, 1.0)) -> Array[ShaderMaterial]:
 	var materials: Array[ShaderMaterial] = []
-	var sockets: Array = []
 	var rig := Node3D.new()
 	rig.name = "BaseBasicAuthoredBoosterPlumes"
 	model.add_child(rig)
-	var inv := model.global_transform.affine_inverse()
-	for mi in gather_mesh_instances(model):
-		if String(mi.name) not in ["root.1", "root.3", "root_1", "root_3"] or mi.mesh == null:
-			continue
-		var box: AABB = (inv * mi.global_transform) * mi.get_aabb()
-		# Both engines face local -Z; yaw 180 presents their exhaust aft in game.
-		var center := Vector3(box.get_center().x, box.get_center().y, box.position.z)
-		# The rear outlet is narrower than the complete engine housing.
-		# Measured rear lip spans ~0.164 x 0.182 in the supplied GLB.
-		var radius := 0.082
-		center.x = 0.169 if box.get_center().x > 0.0 else -0.169
-		center.y = 0.233
-		sockets.append({"center": center, "radius": radius})
-		# Length as a MULTIPLE OF THE SOCKET RADIUS, the way every other ship in the
-		# fleet states it. The absolute 0.90 / 0.55 that stood here were in this GLB's
-		# own local units, and this is a small model: its hull is 1.898 units long, so
-		# the haze ran 47% of the whole ship and the core 29% - by a wide margin the
-		# longest exhaust in the fleet (class_ii 24%/15%, snarkrans 36%/22%).
-		# 6.0 / 3.6 put it alongside class_ii at 26% / 16%.
-		materials.append(_add_torch_layer(rig, "BoosterFog%d" % sockets.size(),
+	var world_scale: float = model.scale.x
+	for i in BASE_BASIC_BOOSTER_SOCKETS.size():
+		var socket: Dictionary = BASE_BASIC_BOOSTER_SOCKETS[i]
+		var center: Vector3 = socket.center
+		var radius: float = float(socket.radius)
+		materials.append(_add_dense_booster_plug(
+			rig, "BoosterFill%d" % (i + 1), center, radius, BASE_BASIC_BOOSTER_GAIN))
+		materials.append(_add_torch_layer(rig, "BoosterFog%d" % (i + 1),
 			center, radius, radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42,
-			false, -1.0, model.scale.x))
-		materials.append(_add_torch_layer(rig, "BoosterCore%d" % sockets.size(),
+			false, -1.0, world_scale))
+		materials.append(_add_torch_layer(rig, "BoosterCore%d" % (i + 1),
 			center, radius, radius * 3.6, 0.90, 0.05, 3.20, 0.82, 0.995,
-			true, -1.0, model.scale.x))
-	# lock_nozzle_width and the radius-relative seating that used to be set here, and
-	# only here, are now _add_torch_layer's behaviour for every ship - which is what
-	# made this the one engine that read as exhaust leaving a nozzle.
+			true, -1.0, world_scale))
+	_attach_socket_extras(model, BASE_BASIC_BOOSTER_SOCKETS, -1.0, world_scale, accent)
 	return materials
 
 
@@ -887,6 +920,7 @@ static func style_vanguard(model: Node3D,
 				hull.next_pass = drive
 				materials.append(drive)
 			mi.set_surface_override_material(si, hull)
+		materials.append(_add_hull_glass_overlay(mi, tint, VANGUARD_BOOSTER_SURFACE))
 	var glass := ShaderMaterial.new()
 	glass.shader = VANGUARD_VENT_SHADER
 	glass.set_shader_parameter("brightness", booster_gain(1.0))

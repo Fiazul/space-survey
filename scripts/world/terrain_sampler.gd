@@ -164,6 +164,14 @@ var _land := 1.0                   # recipe land_amount, the water cut with no m
 var _has_map := false
 var _crust_color := Color(0.5, 0.5, 0.5)
 var _ocean_color := Color(0.5, 0.5, 0.5)
+# Named peaks copied out of the recipe Dictionary so ring rebuilds (WorkerThreadPool)
+# and the contact kill read the same bytes. Nested Dictionary access from a
+# worker was dropping the Everest restore, so the mesh sat ~80 m under height_m().
+var _peak_dir := PackedVector3Array()
+var _peak_width := PackedFloat32Array()
+var _peak_height := PackedFloat32Array()
+var _peak_sharp := PackedFloat32Array()
+var _peak_dot := PackedFloat32Array()
 
 
 func _init(recipe: Dictionary) -> void:
@@ -193,6 +201,7 @@ func _init(recipe: Dictionary) -> void:
 	_crust_color = recipe.get("color_a", Color(0.5, 0.5, 0.5))
 	_ocean_color = recipe.get("color_ocean", PlanetGenerator.DEFAULT_COLOR_OCEAN)
 	_has_map = _h_w > 0
+	_bind_peaks(surface.get("peaks", []))
 
 
 # Metres above sea level at a point on the crust. `dir` is an outward unit vector
@@ -202,6 +211,10 @@ func height_m(dir: Vector3, detail_km: float = 0.0) -> float:
 	if _has_map and base <= 0.0 and not _dem_signed:
 		return 0.0                 # ocean floor is not modelled; sea level is the floor
 	var ground := base + _detail_m(dir, base, detail_km) + geology_height_m(dir, detail_km)
+	# Restore against BASE, not the composited sample: the peak term must not
+	# depend on detail_km, or the ring mesh (banded) and the contact kill
+	# (full detail) disagree by tens of metres on every flank.
+	ground += _peak_restore_m(dir, base)
 	if _has_map and _dem_signed and float(surface.liquid_amount) > 0.0 and is_water(dir):
 		# Bathymetry-carrying map (Earth): the real seafloor depth is decoded
 		# (base_height_m/slope01/etc. all see it), but the water plate sits at
@@ -215,6 +228,35 @@ func height_m(dir: Vector3, detail_km: float = 0.0) -> float:
 		var dry := 1.0 - water01(dir)
 		return maxf(ground, 0.0) * smoothstep(0.05, 0.75, dry)
 	return ground
+
+
+func _bind_peaks(peaks: Array) -> void:
+	_peak_dir.clear()
+	_peak_width.clear()
+	_peak_height.clear()
+	_peak_sharp.clear()
+	_peak_dot.clear()
+	for peak in peaks:
+		if not (peak is Dictionary):
+			continue
+		_peak_dir.append(peak.direction)
+		_peak_width.append(float(peak.width))
+		_peak_height.append(float(peak.height_m))
+		_peak_sharp.append(float(peak.sharpness))
+		_peak_dot.append(float(peak.dot_reach))
+
+
+func _peak_restore_m(dir: Vector3, base_m: float) -> float:
+	var lift := 0.0
+	for i in _peak_dir.size():
+		if dir.dot(_peak_dir[i]) < _peak_dot[i]:
+			continue
+		var r: float = dir.distance_to(_peak_dir[i]) / _peak_width[i]
+		if r >= 1.0:
+			continue
+		var w: float = pow(1.0 - r, _peak_sharp[i])
+		lift = maxf(lift, (_peak_height[i] - base_m) * w)
+	return maxf(lift, 0.0)
 
 
 # `detail_km` is the LOCAL sample spacing at this point (0.0 = full detail,
@@ -266,6 +308,12 @@ func _detail_m(dir: Vector3, base_m: float, detail_km: float = 0.0) -> float:
 	# are legitimately below the datum and must still get their detail.
 	if _has_map and base_m < 1.0:
 		return 0.0                 # keep water flat
+	# If even the broadest octave is below the mesh resolution, no detail can
+	# survive. Avoid the DEM slope probes and, crucially, do not turn an empty
+	# noise sum into (0 - 0.5), a spurious downward displacement.
+	var detail_weight := SurfaceRecipe._band_weight(DETAIL_BASE_KM, detail_km)
+	if detail_weight <= 0.0:
+		return 0.0
 	# RIDGED, not smooth: ridged noise creases, which is what reads as a mountain
 	# ridgeline instead of a dune, and it gets that structure without paying for
 	# more octaves.
@@ -296,7 +344,7 @@ func _detail_m(dir: Vector3, base_m: float, detail_km: float = 0.0) -> float:
 	# Ridged noise is 0..1 with its mass toward 1, so centre it before scaling or
 	# it becomes a uniform lift rather than relief.
 	var dampen: float = DETAIL_GEOLOGY_DAMPEN if float(surface.crater_density) > 0.0 else 1.0
-	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope * dampen
+	return (n - 0.5) * 2.0 * DETAIL_MAX_M * slope * dampen * detail_weight
 
 
 # 0..1 steepness from the DEM's own neighbourhood. Public because surface_color()
@@ -382,6 +430,24 @@ func ice01(dir: Vector3) -> float:
 	return smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.15, lum)
 
 
+# Alpine snow from the recipe snow line, not the sea-ice mask. ice01 stays the
+# water-mask + bright-albedo path (Ross Ice Shelf); this is frozen high ground
+# (Everest). 0 when the recipe has no snow line (Moon, Europa uses ice_surface).
+const SNOW_FADE_M := 1500.0
+
+
+func snow01(dir: Vector3) -> float:
+	var line_m := float(surface.get("snow_line_m", 0.0))
+	if line_m <= 0.0:
+		return 0.0
+	var h := height_m(dir)
+	if h < line_m:
+		return 0.0
+	var cover := smoothstep(line_m, line_m + SNOW_FADE_M, h)
+	cover *= 1.0 - smoothstep(0.28, 0.72, slope01(dir)) * 0.65
+	return clampf(cover, 0.0, 1.0)
+
+
 func is_water(dir: Vector3) -> bool:
 	if float(surface.liquid_amount) <= 0.0:
 		return false
@@ -407,11 +473,16 @@ func is_water(dir: Vector3) -> bool:
 # arrive inside a mountain.
 func max_height_km() -> float:
 	var geology_bound := SurfaceRecipe.max_offset_m(surface) / 1000.0
+	var bound := 0.0
 	if _has_map:
 		var top_m := (_dem_max - _dem_datum) * _dem_m_per_unit
-		return (top_m + DETAIL_MAX_M) / 1000.0 + geology_bound
-	# Centred, so the peak ABOVE the datum is only the half-range.
-	return (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0 + geology_bound
+		bound = (top_m + DETAIL_MAX_M) / 1000.0 + geology_bound
+	else:
+		# Centred, so the peak ABOVE the datum is only the half-range.
+		bound = (FBM_CEILING - FBM_MEAN) * NOISE_RELIEF_KM + DETAIL_MAX_M / 1000.0 + geology_bound
+	for peak in surface.get("peaks", []):
+		bound = maxf(bound, (float(peak.height_m) + DETAIL_MAX_M) / 1000.0)
+	return bound
 
 
 # Did the hull touch ground anywhere along this frame's movement? Samples the
@@ -443,6 +514,108 @@ func swept_contact(from: Vector3, to: Vector3, body_radius_km: float,
 		if alt_above_ground_km(p, body_radius_km) <= contact_km:
 			return true
 	return false
+
+
+# Collision reads the same immutable height function as the terrain renderer.
+# Kilometres throughout. Contact never depends on a damage/death setting.
+const CONTACT_STEP_KM := 0.025
+const CONTACT_SAMPLE_BUDGET := 4096
+const CONTACT_SLOP_KM := 0.002
+const CONTACT_RESTITUTION := 0.08
+const CONTACT_BOUNCE_MAX_KMS := 0.005
+const CONTACT_SETTLE_KMS := 0.003
+
+func normal_at(position: Vector3, radius: float) -> Vector3:
+	var up := position.normalized()
+	if up.length_squared() < 0.5:
+		up = Vector3.UP
+	var east := up.cross(Vector3.UP)
+	if east.length_squared() < 0.001:
+		east = up.cross(Vector3.RIGHT)
+	east = east.normalized()
+	var north := east.cross(up).normalized()
+	var step := 0.02
+	var de1 := (position + east * step).normalized()
+	var de0 := (position - east * step).normalized()
+	var dn1 := (position + north * step).normalized()
+	var dn0 := (position - north * step).normalized()
+	var e := de1 * ground_radius_km(de1, radius) - de0 * ground_radius_km(de0, radius)
+	var n := dn1 * ground_radius_km(dn1, radius) - dn0 * ground_radius_km(dn0, radius)
+	var result := n.cross(e).normalized()
+	if result.dot(up) < 0.0:
+		result = -result
+	return result if result.length_squared() > 0.5 else up
+
+
+func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
+		radius: float, clearance: float) -> Dictionary:
+	var result := {"hit": false, "position": to, "velocity": velocity,
+		"normal": Vector3.ZERO, "budget_limited": false}
+	if not bool(surface.get("solid", false)) or radius <= 0.0:
+		return result
+	# Support a resting hull inside the numerical contact margin before gravity
+	# accumulates enough speed to fall through it and produce a repeated bounce.
+	var contact_distance := clearance
+	if velocity.length() < CONTACT_SETTLE_KMS and velocity.dot(from.normalized()) < 0.0:
+		contact_distance += CONTACT_SLOP_KM + 0.0005
+	var delta := to - from
+	var travel := delta.length()
+	var begin := 0.0
+	var end := 1.0
+	# Clip the sweep to the outer terrain envelope. Interplanetary clear space
+	# must not consume terrain samples, even during accelerated time.
+	var envelope := radius + max_height_km() + clearance + CONTACT_SLOP_KM
+	if travel > 0.000001:
+		var ray := delta / travel
+		var b := from.dot(ray)
+		var discriminant := b*b - (from.length_squared() - envelope*envelope)
+		if discriminant < 0.0:
+			return result
+		var root := sqrt(discriminant)
+		begin = maxf(0.0, (-b-root) / travel)
+		end = minf(1.0, (-b+root) / travel)
+		if begin > end:
+			return result
+	var count := maxi(1, int(ceil(travel * (end-begin) / CONTACT_STEP_KM)))
+	var last := begin
+	var contact_pos := to
+	for i in range(mini(count, CONTACT_SAMPLE_BUDGET) + 1):
+		var t := lerpf(begin, end, float(i) / float(count))
+		var pos := from.lerp(to, t)
+		if alt_above_ground_km(pos, radius) <= contact_distance:
+			var lo := last
+			var hi := t
+			for _refine in 12:
+				var mid := (lo + hi) * 0.5
+				if alt_above_ground_km(from.lerp(to, mid), radius) <= contact_distance:
+					hi = mid
+				else:
+					lo = mid
+			contact_pos = from.lerp(to, lo)
+			result.hit = true
+			break
+		last = t
+	if not result.hit:
+		if count > CONTACT_SAMPLE_BUDGET:
+			# Never increase spacing and silently tunnel at extreme speed/timewarp.
+			# Stop at the last verified safe point and resume next simulation step.
+			result.position = from.lerp(to, last)
+			result.velocity = Vector3.ZERO
+			result.budget_limited = true
+		return result
+	var up := contact_pos.normalized()
+	if up.length_squared() < 0.5:
+		up = Vector3.UP
+	var normal := normal_at(up * ground_radius_km(up, radius), radius)
+	# Radial clearance must grow on slopes to accommodate the hull's sphere.
+	var separation := (clearance + CONTACT_SLOP_KM) / maxf(normal.dot(up), 0.15)
+	result.position = up * (ground_radius_km(up, radius) + separation)
+	result.normal = normal
+	var inward := velocity.dot(normal)
+	if inward < 0.0:
+		var bounce := minf(-inward * CONTACT_RESTITUTION, CONTACT_BOUNCE_MAX_KMS) if -inward > CONTACT_SETTLE_KMS else 0.0
+		result.velocity = velocity - normal * inward + normal * bounce
+	return result
 
 
 # Nearest-texel albedo colour. Nearest is fine here: at these altitudes the map
@@ -496,17 +669,23 @@ func map_weight(plate_km: float, body_radius_km: float) -> float:
 func land_color(dir: Vector3, _body_radius_km: float) -> Color:
 	# Airless/rocky worlds must not inherit Earth's grass and snow palette.
 	# Mapped geography also remains the broad tint when flying below one texel.
+	var proc: Color
 	if _a_w > 0:
-		return albedo_color(dir)
-	if _land >= 1.0:
-		return _crust_color.darkened(slope01(dir) * 0.25)
-	var h_m := height_m(dir)
-	var span: float = maxf(max_height_km() * 1000.0, 1.0)
-	var h01 := clampf(h_m / span, 0.0, 1.0)
-	var slope := slope01(dir)
-	var proc: Color = PALETTE_GRASS.lerp(PALETTE_DIRT, clampf(h01 * 2.2, 0.0, 1.0))
-	proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
-	return proc.lerp(PALETTE_ROCK, slope * 0.65)
+		proc = albedo_color(dir)
+	elif _land >= 1.0:
+		proc = _crust_color.darkened(slope01(dir) * 0.25)
+	else:
+		var h_m := height_m(dir)
+		var span: float = maxf(max_height_km() * 1000.0, 1.0)
+		var h01 := clampf(h_m / span, 0.0, 1.0)
+		var slope := slope01(dir)
+		proc = PALETTE_GRASS.lerp(PALETTE_DIRT, clampf(h01 * 2.2, 0.0, 1.0))
+		proc = proc.lerp(PALETTE_ICE, smoothstep(0.45, 0.78, h01))
+		proc = proc.lerp(PALETTE_ROCK, slope * 0.65)
+	var snow := snow01(dir)
+	if snow > 0.0:
+		proc = proc.lerp(PALETTE_ICE, snow)
+	return proc
 
 
 # UNREACHABLE as of 2026-09-09 (grepped: no caller anywhere in scripts/ or

@@ -24,6 +24,15 @@ func _initialize() -> void:
 		var mat := G.terrain_material(G.recipe_for({"name": row[0]}), {})
 		check("%s_liquid_selection" % row[0], mat.get_shader_parameter("liquid_amount") == row[1])
 		check("%s_lava_selection" % row[0], mat.get_shader_parameter("lava_amount") == row[2])
+	var earth_tile := G.terrain_material(G.recipe_for({"name": "Earth"}), {})
+	check("earth_tile_binds_snow_line",
+		float(earth_tile.get_shader_parameter("snow_line_km")) >= 4.0)
+	var moon_tile := G.terrain_material(G.recipe_for({"name": "Moon"}), {})
+	check("moon_tile_has_no_snow_line",
+		float(moon_tile.get_shader_parameter("snow_line_km")) <= 0.001)
+	var tile_src := FileAccess.get_file_as_string("res://shaders/terrain_tile.gdshader")
+	check("tile_shader_applies_alpine_snow",
+		tile_src.find("snow_line_km") >= 0 and tile_src.find("v_height") >= 0)
 	var moon := G.terrain_sampler(_airless_moon_recipe())
 	var profile = moon.get("surface")
 	check("geology_profile_reaches_sampler", profile is Dictionary)
@@ -54,6 +63,21 @@ func _initialize() -> void:
 	check("procedural_ocean_has_level_surface", absf(ocean.height_m(Vector3.RIGHT)) < 0.01 and absf(ocean.height_m(Vector3.UP)) < 0.01)
 	var custom := G.recipe_for({"name": "Custom volcano", "kind": "rocky", "surface": {"lava_amount": 1.0, "volcano_count": 4}})
 	check("invented_world_accepts_surface_recipe", G.terrain_sampler(custom).surface.volcanoes.size() == 4)
+	var earth_s := G.terrain_sampler(G.recipe_for({"name": "Earth"}))
+	var earth_peaks: Array = earth_s.surface.get("peaks", [])
+	check("earth_carries_named_peaks", earth_peaks.size() >= 5)
+	var everest_dir := Vector3.ZERO
+	for peak in earth_peaks:
+		if str(peak.get("name", "")) == "Everest":
+			everest_dir = peak.direction
+			break
+	check("earth_names_everest", everest_dir != Vector3.ZERO)
+	if everest_dir != Vector3.ZERO:
+		check("everest_restored_near_8848m", earth_s.height_m(everest_dir) > 8500.0)
+		var pac_lat := 0.0
+		var pac_lon := deg_to_rad(-150.0)
+		var pacific := Vector3(cos(pac_lat) * cos(pac_lon), sin(pac_lat), cos(pac_lat) * sin(pac_lon))
+		check("everest_restore_leaves_the_pacific_flat", absf(earth_s.height_m(pacific)) < 1.0)
 	var moon_s := G.terrain_sampler(_airless_moon_recipe())
 	check("ice_profile_prevents_false_oceans", G.terrain_sampler(G.recipe_for({"name": "Europa"})).water01(Vector3.UP) == 0.0)
 	for features in [moon_s.surface.craters, moon_s.surface.volcanoes]:

@@ -59,11 +59,13 @@ judged against the reference frame.
 Landing. Unique mesh per world. Google Earth tiles. Volumetric air. Store-page scope
 (Steam, achievements, localization).
 
-## Gameplay layer — locked 2026-09-12, not started
+## Gameplay layer — foundation started 2026-09-21
 
 Spec: `docs/specs/2026-09-12-astryx-gameplay-layer-spec.md` (progression spine, material
 classes + grades, probes/relays/stations, data archive, procedural quests, map UI).
-Locked as the goal for the next phase; no code yet. Thesis: no loss ever, difficulty from
+Starter material classes, qualification resources, Earth recipes, and non-lethal
+surface contact are implemented. Inventory/fabrication are next. See
+`docs/specs/2026-09-21-surface-contact-and-gameplay-readiness.md`. Thesis: no loss ever, difficulty from
 scale and distance. Earth = permanent graveyard port.
 
 Implementation order (from spec §7, systems before spine): (1) MaterialClass / ElementDef /
@@ -72,9 +74,9 @@ fabricator → (4) probe deploy, async build, relay persistence → (5) station 
 travel (fuel, mass cap) → (6) scan data value + archive unlock tree → (7) quest composer,
 3 shapes first → (8) map filtering / relay collapse → (9) spine beats 1–8 last.
 
-Open tensions to resolve before slice 4 (spec vs this repo's locked "no landing, ever"):
-- Spec §3 "Landing on any large body unlocks a deploy prompt" and beat 3 "Return to Earth
-  surface" assume landing. Candidate reconciliation: deploy prompt fires from low skim
-  altitude / orbit, beat 3 is a low pass over ruins. Decision pending.
-- Gas skimming (§2) maps cleanly onto existing atmospheric flight modes — natural first
-  gathering loop for this codebase.
+Landing direction updated by the user on 2026-09-21: ships need solid terrain contact
+and future landing support; player landing controls are not part of the current pass.
+The old “no landing, ever” constraint is superseded. Choose the probe deployment trigger
+when implementing the relay loop; free, unlimited probes remain required.
+
+Gas skimming (§2) maps onto atmospheric flight and is a candidate gathering loop.

@@ -45,6 +45,7 @@ func _initialize() -> void:
 	failed += _rings()
 	failed += _cap()
 	failed += _descent()
+	failed += _warm_rebuild_keeps_albedo()
 	failed += _kill()
 	if failed == 0:
 		print("earth_terrain: OK")
@@ -107,6 +108,20 @@ func _ice() -> int:
 	failed += _check("sahara_is_land", not s.is_water(sahara))
 	failed += _check("sahara_is_not_ice", is_equal_approx(s.ice01(sahara), 0.0))
 	failed += _check("everest_is_not_ice", is_equal_approx(s.ice01(everest), 0.0))
+	# Alpine snow is a height/recipe effect, not the sea-ice mask. Everest sits
+	# well above Earth's snow line; the Sahara and the Pacific do not.
+	failed += _check("earth_recipe_has_a_snow_line",
+		float(s.surface.get("snow_line_m", 0.0)) >= 4000.0)
+	failed += _check("everest_has_alpine_snow", s.snow01(everest) > 0.75)
+	failed += _check("sahara_has_no_alpine_snow", s.snow01(sahara) < 0.05)
+	failed += _check("pacific_has_no_alpine_snow", s.snow01(pacific) < 0.05)
+	var e_col := s.land_color(everest, EARTH_R)
+	var e_lum := e_col.r * 0.299 + e_col.g * 0.587 + e_col.b * 0.114
+	failed += _check("everest_ground_reads_as_snow", e_lum > 0.70)
+	var moon := G.terrain_sampler(_airless_moon_recipe())
+	failed += _check("airless_worlds_have_no_snow_line",
+		float(moon.surface.get("snow_line_m", 0.0)) <= 0.0)
+	failed += _check("airless_summit_is_not_snow", moon.snow01(Vector3.UP) < 0.01)
 	return failed
 
 
@@ -126,17 +141,18 @@ func _sampler() -> int:
 	var p_m: float = s.height_m(pacific)
 	var d_m: float = s.height_m(denali)
 
-	# 2026-09-09 8k rg16 re-wiring (docs/research/2026-09-09-dem-ingest.md): a
-	# 4.89 km texel still smooths every summit, so these are ballparks, not
-	# equalities. Everest's own global-max texel decodes to 7198.3 m
-	# (assets/planets/SOURCES.txt); this file's slightly different probe
-	# coordinate + bilinear + detail lands lower, same as the old map's 8848 m
-	# real summit never came back exact either.
-	failed += _check("everest_is_high_ground", e_m > 6000.0)
-	failed += _check("everest_is_not_absurd", e_m < 10000.0)
+	# Named-peak restore (the 8k DEM area-averages the summit to ~7.2 km).
+	# 8848 m is the real height; a few tens of metres of DETAIL_MAX_M ride on top.
+	failed += _check("everest_is_the_real_summit", e_m > 8500.0)
+	failed += _check("everest_is_not_absurd", e_m < 9200.0)
+	var east := everest.cross(Vector3.UP)
+	if east.length_squared() < 0.0001:
+		east = Vector3.RIGHT
+	var near_flank := everest.rotated(east.normalized(), 5.0 / EARTH_R)
+	failed += _check("everest_stands_above_its_flank", e_m > s.height_m(near_flank) + 300.0)
 	failed += _check("denali_is_high_ground", d_m > 4500.0)
 	failed += _check("open_ocean_is_at_sea_level", absf(p_m) < 1.0)
-	failed += _check("mountains_are_above_the_ocean", e_m > p_m + 6000.0)
+	failed += _check("mountains_are_above_the_ocean", e_m > p_m + 8000.0)
 	failed += _check("open_ocean_is_water", s.is_water(pacific))
 	failed += _check("everest_is_not_water", not s.is_water(everest))
 
@@ -194,13 +210,12 @@ func _sampler() -> int:
 	failed += _check("the_texel_walk_actually_covers_relief", span > 80.0)
 	failed += _check("sampling_is_smooth_across_a_texel_boundary", worst_step < 60.0)
 
-	# Ceiling source: the file's max, plus detail headroom. 2026-09-09: the 8k
-	# rg16 map's own global max is 7198.3 m (assets/planets/SOURCES.txt), down
-	# from the old unsigned map's ~9.0 km ceiling (that file's own max sample
-	# was inflated by a different calibration, not a real higher peak).
+	# Ceiling source: the file's max, plus named-peak restore (Everest 8848 m)
+	# and detail headroom. Must bound the restored summit, must not admit a
+	# 12 km invented spike.
 	failed += _check("earth_max_height_covers_the_file_max", s.max_height_km() > 7.0)
-	failed += _check("earth_max_height_is_not_wild", s.max_height_km() < 8.5)
-	failed += _check("earth_max_height_bounds_everest", s.max_height_km() * 1000.0 > e_m)
+	failed += _check("earth_max_height_is_not_wild", s.max_height_km() < 9.5)
+	failed += _check("earth_max_height_bounds_everest", s.max_height_km() * 1000.0 >= e_m)
 
 	# A world with no DEM still answers, from the shader's own crust noise.
 	var moon := _airless_moon_recipe()
@@ -483,8 +498,11 @@ func _rings() -> int:
 		absf(tris_high - tris_low) < float(tris_low) * 0.05)
 	failed += _check("triangle_budget_does_not_grow_with_reach",
 		float(tris_high) < float(tris_low) * 1.05)
+	# 4 rings × RING_SEGS² quads × 2 tris, plus skirts. The budget is the
+	# point of rings; it must stay in that class, not grow with altitude.
+	var nominal := SP.RING_COUNT * SP.RING_SEGS * SP.RING_SEGS * 2
 	failed += _check("triangle_budget_is_within_range",
-		tris_low > 15000 and tris_low < 60000)
+		tris_low > nominal / 3 and tris_low < nominal * 2)
 
 	# THE BOUNDARY GAP - the property that actually broke, measured directly.
 	#
@@ -693,6 +711,47 @@ func _descent() -> int:
 
 	print("earth_terrain: descent  %d frames from 16 km to 0.3 km: %d mixed-scale, %d missing a ring, %d rescales"
 		% [frames, mixed, empty, rescales])
+	patch.free()
+	return failed
+
+
+# Close flight rebuilds often (small ring 0). Replacing a live ring must not
+# multiply albedo by stream_fade=0 — that is the black flash reported as
+# "the surface flickers when I get closer".
+func _warm_rebuild_keeps_albedo() -> int:
+	var failed := 0
+	var earth := G.recipe_for({"name": "Earth"})
+	var s: TerrainSampler = G.terrain_sampler(earth)
+	var ceiling: float = G.band_ceiling_km(s)
+	var patch := SP.new()
+	patch._ready()
+	var pos := Vector3.RIGHT * (EARTH_R + 0.4)
+	patch.update_for(pos, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s)
+	patch.force_ready()
+	failed += _check("close_tile_is_visible", patch.visible)
+	failed += _check("close_tile_has_ground", patch.has_ground())
+	var fades: Array = patch.get("_ring_fade")
+	failed += _check("cold_ready_snaps_fade_to_one", float(fades[0]) > 0.99)
+	# 8 km is well past ring 0's rebuild fraction at this altitude.
+	var pos2: Vector3 = pos.rotated(Vector3.UP, 8.0 / EARTH_R)
+	patch.update_for(pos2, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s,
+		(pos2 - pos) / 0.25)
+	failed += _check("close_recenter_dispatched", bool(patch.get("_thread_pending")))
+	var spins := 0
+	if bool(patch.get("_thread_pending")):
+		var gid: int = patch.get("_thread_group_id")
+		while not WorkerThreadPool.is_group_task_completed(gid) and spins < 8000:
+			OS.delay_msec(1)
+			spins += 1
+	failed += _check("close_recenter_finished_off_thread", spins < 8000)
+	# Live poll path — the game never force_ready()s. The first committed
+	# replacement ring is the one that used to land at stream_fade=0.
+	patch.update_for(pos2, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s)
+	fades = patch.get("_ring_fade")
+	var committed: int = patch.rings_committed_this_update()
+	failed += _check("warm_poll_commits_a_ring", committed >= 1)
+	failed += _check("warm_commit_does_not_black_the_ground", float(fades[0]) > 0.99)
+	failed += _check("close_tile_stays_visible_while_streaming", patch.visible)
 	patch.free()
 	return failed
 

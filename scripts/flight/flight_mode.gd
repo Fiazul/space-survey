@@ -126,10 +126,12 @@ const DEV_AIR_DRAG_MULT := 0.01
 # _update_core_hazard) read kill_allowed() at the top of their per-frame check;
 # nothing else should read this flag directly.
 static var dev_no_death := false
+# Gameplay roadmap: progress is never lost. Hazards remain non-lethal by default.
+static var death_enabled := false
 
 
 static func kill_allowed() -> bool:
-	return not dev_no_death
+	return death_enabled and not dev_no_death
 
 
 # The only body with a modelled density profile so far (Earth's RHO0 + scale

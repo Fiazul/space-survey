@@ -68,6 +68,9 @@ var _hangar_bg: TextureRect
 var _hangar_title: Label
 var _hangar_rows: VBoxContainer
 var _hangar_sig := ""   # rebuild the rows only when the contents actually change
+var _hangar_color_key := ""
+var _color_picker: ColorPickerButton
+var _color_swatch_buttons: Array[Button] = []
 var _combat_label: Label
 var _boss_label: Label
 var _hull_label: Label       # "HULL  170 / 220" sitting over the hull bar
@@ -1087,10 +1090,16 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 	var tp_sig := ""
 	for t in teleports:
 		tp_sig += String(t.id) + ","
-	var sig := ("%d|%s|%s|%s|%s|%s" % [current, station, ",".join(names), body_key, finish, tp_sig]) if open else ""
+	# Colour is NOT in this sig. A pick (or a drag on the RGB tab) used to
+	# change body_key, rebuild the rows, and queue_free the ColorPickerButton
+	# popup — that's the RGB tab vanishing. Layout changes still rebuild.
+	var sig := ("%d|%s|%s|%s|%s" % [current, station, ",".join(names), finish, tp_sig]) if open else ""
 	if sig == _hangar_sig:
+		if open and has_color:
+			_sync_hangar_color(body_key)
 		return
 	_hangar_sig = sig
+	_hangar_color_key = body_key
 	_hangar.visible = open
 	# Bottom-centre network button rides with the dock state.
 	_tp_net_button.visible = open
@@ -1102,6 +1111,8 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 	if not open:
 		return
 	_hangar_title.text = "HANGAR · %s" % station
+	_color_swatch_buttons.clear()
+	_color_picker = null
 	for c in _hangar_rows.get_children():
 		c.queue_free()
 	for i in names.size():
@@ -1174,6 +1185,7 @@ func _make_color_swatches(title: String, current_key: String) -> Control:
 	grid.add_theme_constant_override("h_separation", 5)
 	grid.add_theme_constant_override("v_separation", 5)
 	wrap.add_child(grid)
+	_color_swatch_buttons.clear()
 	for palette in Ship.SHIP_PALETTES:
 		var selected: bool = String(palette.key) == current_key
 		var button := Button.new()
@@ -1187,9 +1199,76 @@ func _make_color_swatches(title: String, current_key: String) -> Control:
 		style.set_corner_radius_all(4)
 		for state in ["normal", "hover", "pressed", "focus", "disabled"]:
 			button.add_theme_stylebox_override(state, style)
+		button.set_meta("palette_key", String(palette.key))
+		button.set_meta("swatch_color", palette.swatch)
 		button.pressed.connect(_on_swatch_pressed.bind(String(palette.key)))
+		_color_swatch_buttons.append(button)
 		grid.add_child(button)
+	var picker := ColorPickerButton.new()
+	picker.custom_minimum_size = Vector2(24, 24)
+	picker.tooltip_text = "Custom colour"
+	picker.edit_alpha = false
+	picker.color = Ship.color_from_key(current_key)
+	picker.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	if current_key.begins_with("#"):
+		var picked := StyleBoxFlat.new()
+		picked.bg_color = picker.color
+		picked.set_border_width_all(3)
+		picked.border_color = Color(1, 1, 1, 0.95)
+		picked.set_corner_radius_all(4)
+		for state in ["normal", "hover", "pressed", "focus"]:
+			picker.add_theme_stylebox_override(state, picked)
+	picker.color_changed.connect(_on_manual_color)
+	_color_picker = picker
+	grid.add_child(picker)
 	return pad
+
+
+func _picker_popup_open() -> bool:
+	if _color_picker == null or not is_instance_valid(_color_picker):
+		return false
+	var popup := _color_picker.get_popup()
+	return popup != null and popup.visible
+
+
+func _sync_hangar_color(body_key: String) -> void:
+	if body_key == _hangar_color_key:
+		return
+	_hangar_color_key = body_key
+	for button in _color_swatch_buttons:
+		if not is_instance_valid(button):
+			continue
+		var selected: bool = String(button.get_meta("palette_key")) == body_key
+		var style := StyleBoxFlat.new()
+		style.bg_color = button.get_meta("swatch_color")
+		style.set_border_width_all(3 if selected else 1)
+		style.border_color = Color(1, 1, 1, 0.95) if selected else Color(0.35, 0.5, 0.65, 0.8)
+		style.set_corner_radius_all(4)
+		for state in ["normal", "hover", "pressed", "focus", "disabled"]:
+			button.add_theme_stylebox_override(state, style)
+	if _color_picker == null or not is_instance_valid(_color_picker):
+		return
+	# Don't write picker.color while the RGB tab is open — that fights the drag.
+	if not _picker_popup_open():
+		_color_picker.color = Ship.color_from_key(body_key)
+	if body_key.begins_with("#"):
+		var picked := StyleBoxFlat.new()
+		picked.bg_color = Ship.color_from_key(body_key)
+		picked.set_border_width_all(3)
+		picked.border_color = Color(1, 1, 1, 0.95)
+		picked.set_corner_radius_all(4)
+		for state in ["normal", "hover", "pressed", "focus"]:
+			_color_picker.add_theme_stylebox_override(state, picked)
+	else:
+		for state in ["normal", "hover", "pressed", "focus"]:
+			_color_picker.remove_theme_stylebox_override(state)
+
+
+func _on_manual_color(c: Color) -> void:
+	var key := "#" + c.to_html(false)
+	if ship != null and ship.current_body_color() == key:
+		return
+	ship_color_selected.emit("body", key)
 
 
 func _on_swatch_pressed(key: String) -> void:

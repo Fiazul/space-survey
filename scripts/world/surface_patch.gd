@@ -34,11 +34,12 @@ const RING_STEP := 4.0              # each ring out is this much coarser
 # edges, and the pale diagonal band in the 15 km screenshot was one of their
 # edges seen nearly end-on.
 #
-# RING_STEP^3 * RING_SEGS = 4096, so ring 3 reaches base_quad * 4096. Setting
-# that to the horizon makes the terrain cover exactly the ground you can see, at
-# every altitude, for the same constant triangle count. Screen-space quad density
-# was already uniform across rings (~49 px each); coverage was the actual fault.
-const RING_SPAN := 4096.0           # RING_STEP^3 * RING_SEGS
+# RING_STEP^(RING_COUNT-1) * RING_SEGS = RING_SPAN, so ring 3 reaches
+# base_quad * RING_SPAN. Setting that to the horizon makes the terrain cover
+# exactly the ground you can see, at every altitude, for a constant triangle
+# count. Screen-space quad density was already uniform across rings; coverage
+# was the actual fault.
+const RING_SPAN := RING_STEP * RING_STEP * RING_STEP * float(RING_SEGS)
 const BASE_QUAD_MIN_KM := 0.01      # 10 m; the DEM has nothing finer
 const BASE_QUAD_MAX_KM := 1.0
 # Rings 1..3 are DONUTS: the footprint the finer ring inside already covers is
@@ -478,15 +479,17 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		and alt > kill and alt < ceiling * PREBUILD_CEILINGS
 	if not in_band and not warming:
 		visible = false
-		# A brief blocking wait here (bounded by one ring-compute duration) is
-		# fine: this only runs on the rare frame the tile leaves the band or
-		# changes body, never in the steady-flight hot path.
-		_abandon_rebuild()
+		# Leaving the atmosphere is still a live flight frame. Keep the worker's
+		# sampler alive and collect only once finished; never join a running task.
+		if not _thread_pending or WorkerThreadPool.is_group_task_completed(_thread_group_id):
+			_abandon_rebuild()
 		return
 	if _body != body or _sampler != sampler:
-		# Wait out any in-flight batch BEFORE rebinding - it still reads the
-		# OLD _sampler/_kit/_crust colours, and committing it after a rebind
-		# would paint one body's ground with another's palette for a frame.
+		# Workers still read the old sampler. Defer rebinding until they finish;
+		# the destination globe supplies coverage during this short transition.
+		if _thread_pending and not WorkerThreadPool.is_group_task_completed(_thread_group_id):
+			visible = false
+			return
 		_abandon_rebuild()
 		bind_body(recipe, sampler)
 		_body = body
@@ -502,6 +505,7 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	# AGL can be tiny above a mountain while the sea-level horizon is far away.
 	var want_base: float = base_quad_km(maxf(alt, ship_pos.length() - radius), radius, _base_quad)
+	want_base = _flight_base(want_base, hit, ship_vel)
 	var cold: bool = _ring_anchor[0] == Vector3.ZERO
 	var rescaled: bool = not is_equal_approx(want_base, _base_quad)
 	var recentered := cold or hit.distance_to(_ring_anchor[0]) > ring_reach_km(0, want_base) * REBUILD_FRAC
@@ -572,7 +576,19 @@ func _expected_batch_s() -> float:
 	var sum := 0
 	for t in _batch_times:
 		sum += t
-	return clampf(float(sum) / float(_batch_times.size()) / 1000.0, 0.05, 0.8)
+	return clampf(float(sum) / float(_batch_times.size()) / 1000.0, 0.05, 4.0)
+
+
+# At orbital speeds near the ground, a fixed tiny detail tile can be crossed
+# before its replacement finishes. Trade mesh resolution for coverage using
+# measured worker latency, then restore normal resolution as the ship slows.
+func _flight_base(base: float, hit: Vector3, vel: Vector3) -> float:
+	var up := hit.normalized()
+	var speed := (vel - up * vel.dot(up)).length()
+	var travel := speed * (_expected_batch_s() + 4.0 / 30.0)
+	var needed := maxf(base, travel * 4.0 / float(RING_SEGS))
+	var bucket: float = ceil(log(needed / BASE_QUAD_MIN_KM) / log(2.0) - 0.0001)
+	return clampf(BASE_QUAD_MIN_KM * pow(2.0, bucket), base, BASE_QUAD_MAX_KM)
 
 
 func _predicted_hit(hit: Vector3, radius: float, vel: Vector3, base: float) -> Vector3:
@@ -581,7 +597,7 @@ func _predicted_hit(hit: Vector3, radius: float, vel: Vector3, base: float) -> V
 	var speed := tang.length()
 	var lead := 0.0
 	if speed > 0.001:
-		lead = minf(speed * _expected_batch_s(), ring_reach_km(0, base) * 4.0)
+		lead = minf(speed * _expected_batch_s(), ring_reach_km(0, base) * 0.25)
 	_thread_lead = lead
 	if lead < 0.01:
 		return hit
@@ -597,7 +613,7 @@ func _poll_rebuild() -> void:
 	if _thread_pending and WorkerThreadPool.is_group_task_completed(_thread_group_id):
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
-		_batch_times.append(clampi(msec, 50, 800))
+		_batch_times.append(clampi(msec, 50, 4000))
 		if _batch_times.size() > 4:
 			_batch_times.remove_at(0)
 		print("[stream] batch %d ms lead %.1f km" % [msec, _thread_lead])
@@ -608,8 +624,6 @@ func _poll_rebuild() -> void:
 func _queue_batch_commits() -> void:
 	_thread_pending = false
 	_base_quad = _thread_base
-	for i in RING_COUNT:
-		_ring_anchor[i] = _thread_hit
 	_commit_next = 0
 
 
@@ -621,7 +635,7 @@ func force_ready() -> void:
 	if _thread_pending:
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
-		_batch_times.append(clampi(msec, 50, 800))
+		_batch_times.append(clampi(msec, 50, 4000))
 		if _batch_times.size() > 4:
 			_batch_times.remove_at(0)
 		print("[stream] batch %d ms lead %.1f km" % [msec, _thread_lead])
@@ -638,8 +652,12 @@ func _commit_one_ring(snap_fade: bool) -> void:
 		return
 	var i := _commit_next
 	_commit_next += 1
-	var fade := 1.0 if snap_fade else 0.0
+	var replacing := _ring_land[i].mesh != null
+	# Cold first appearance may fade in; replacing live ground at stream_fade=0
+	# blacks the albedo for STREAM_FADE_S (the close-range flicker).
+	var fade := 1.0 if snap_fade or replacing else 0.0
 	_commit_ring(i, _thread_results[i], _thread_hit, fade)
+	_ring_anchor[i] = _thread_hit
 	_rings_committed_this_update += 1
 	if _commit_next >= RING_COUNT:
 		_complete_anchor = _thread_hit
@@ -919,10 +937,14 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 			if ring <= 1:
 				var seedn := _seat_hash(p00.p, 1.7)
 				if _prop_here(wet, float(p00.h), seedn, kit):
+					if kit == "tree" and _sampler.ice01((p00.p as Vector3).normalized()) > 0.5:
+						continue  # permanent ice is not a forest or boulder field
 					var h_var := _seat_hash(p00.p, 8.3)
 					var h_yaw := _seat_hash(p00.p, 14.9)
 					var h_sc := _seat_hash(p00.p, 21.0)
 					var variant := _prop_variant(h_var, kit)
+					if kit == "tree" and not _vegetation_at((p00.p as Vector3).normalized(), (p00.p as Vector3).length() - radius):
+						variant = 3  # barren ground uses the kit's boulder, never a tree
 					var sc: float = 0.7 + h_sc * 0.6
 					var stand: Vector3 = p00.n
 					var t := Transform3D()
@@ -1021,6 +1043,12 @@ func _prop_here(wet: float, h: float, seedn: float, kit: String = "") -> bool:
 			# coast is not a bare sheet.
 			if wet >= 0.35:
 				return false
+			var snow_m := 0.0
+			if _sampler != null:
+				snow_m = float(_sampler.surface.get("snow_line_m", 0.0))
+			if snow_m > 0.0 and _sampler != null \
+					and h * _sampler.max_height_km() * 1000.0 >= snow_m:
+				return false
 			if h < 0.55 and seedn > 0.82:
 				return true
 			return h < 0.75 and seedn > 0.91
@@ -1032,6 +1060,17 @@ func _prop_here(wet: float, h: float, seedn: float, kit: String = "") -> bool:
 			return wet < 0.5 and seedn > 0.84
 		_:
 			return false
+
+
+# The Earth kit contains vegetation AND stone. The global color map is only a
+# coarse biome hint, but still prevents forests on polar ice and desert sand.
+func _vegetation_at(dir: Vector3, height_km: float) -> bool:
+	if absf(dir.y) > 0.90 or height_km > 3.5:
+		return false
+	if _sampler == null:
+		return false
+	var color := _sampler.albedo_color(dir)
+	return color.g > color.r * 1.05 and color.g > color.b * 1.05
 
 
 func _prop_variant(h_var: float, kit: String = "") -> int:

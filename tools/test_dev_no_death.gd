@@ -15,7 +15,9 @@ func _initialize() -> void:
 	var failed := 0
 
 	failed += _check("default_false", FM.dev_no_death == false)
-	failed += _check("kill_allowed_when_flag_clear", FM.kill_allowed())
+	failed += _check("death_disabled_by_default", not FM.kill_allowed())
+	FM.death_enabled = true
+	failed += _check("death_can_be_explicitly_enabled", FM.kill_allowed())
 
 	FM.dev_no_death = true
 	failed += _check("kill_blocked_when_flag_set", not FM.kill_allowed())
@@ -38,9 +40,10 @@ func _initialize() -> void:
 	var skin_kill_at := main_src.find("func _update_skin_kill(")
 	var core_hazard_at := main_src.find("func _update_core_hazard(")
 	failed += _check("skin_kill_and_core_hazard_found", skin_kill_at >= 0 and core_hazard_at >= 0)
-	failed += _check("skin_kill_checks_kill_allowed",
-		main_src.find("FlightMode.kill_allowed()", skin_kill_at) >= 0 \
-		and main_src.find("FlightMode.kill_allowed()", skin_kill_at) < main_src.find("func _skin_begin("))
+	var contact_src := main_src.substr(skin_kill_at, main_src.find("func _skin_begin(") - skin_kill_at)
+	failed += _check("contact_is_not_death_gated", contact_src.find("if not FlightMode.kill_allowed()") < 0)
+	failed += _check("contact_resolves_motion", contact_src.find("resolve_motion") >= 0)
+
 	failed += _check("core_hazard_checks_kill_allowed",
 		main_src.find("FlightMode.kill_allowed()", core_hazard_at) >= 0 \
 		and main_src.find("FlightMode.kill_allowed()", core_hazard_at) < main_src.find("func _core_kill("))

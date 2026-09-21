@@ -40,8 +40,8 @@ func _ready() -> void:
 		if ship.surface_impact:
 			touched += 1
 		ship.surface_impact = false
-	check("clamped_contact_always_lethal", touched == 20)
-	# Exercise the real death entry point, not just the sampler or source text.
+	check("clamped_contact_detected", touched == 20)
+	# Exercise the real non-lethal collision path, including non-anchor bodies.
 	var main := MainScript.new()
 	var hud := HudScript.new()
 	var flash := ColorRect.new()
@@ -55,8 +55,9 @@ func _ready() -> void:
 	planets.refresh(ship.true_pos, 0.0)
 	ship.surface_impact = true
 	main.call("_update_skin_kill", 0.016)
-	check("earth_impact_starts_death", bool(main.get("_skin_dying")) and ship.locked)
-	check("impact_consumed_once", not ship.surface_impact)
+	check("earth_impact_is_nonlethal", not bool(main.get("_skin_dying")) and not ship.locked)
+	check("earth_hull_stays_outside", planets.ground_altitude_km("Earth") >= ship.surface_clearance_km() - 0.002)
+	check("contact_does_not_disable_controls", not ship.locked)
 	main.set("_skin_dying", false)
 	ship.locked = false
 	ship.nearest_name = "Moon"
@@ -65,8 +66,38 @@ func _ready() -> void:
 	ship.true_pos = moon + planets.surface_basis("Moon") * moon_local
 	planets.refresh(ship.true_pos, 0.0)
 	main.call("_update_skin_kill", 0.016)
-	check("moon_contact_starts_death", bool(main.get("_skin_dying")) and ship.locked)
-	check("death_discards_pre_respawn_sweep", str(main.get("_prev_body")).is_empty())
+	check("moon_contact_is_nonlethal", not bool(main.get("_skin_dying")) and not ship.locked)
+	check("non_anchor_moon_hull_stays_outside", planets.ground_altitude_km("Moon") >= ship.surface_clearance_km() - 0.002)
+	check("contact_tracks_correct_body", str(main.get("_prev_body")) == "Moon")
+	FlightMode.dev_no_death = true
+	ship.true_pos = moon + planets.surface_basis("Moon") * moon_local
+	planets.refresh(ship.true_pos, 0.0)
+	main.call("_update_skin_kill", 0.016)
+	check("nodeath_keeps_solidity", planets.ground_altitude_km("Moon") >= ship.surface_clearance_km() - 0.002)
+	FlightMode.dev_no_death = false
+	# Real Newton substeps must support a ship at rest while gravity and the
+	# Earth's co-rotation still run. This catches integration-only sinking.
+	ship.nearest_name = "Earth"
+	ship.set_anchor("Earth")
+	ship.terrain = planets.terrain_sampler_for("Earth")
+	ship.terrain_basis = planets.surface_basis("Earth")
+	var sea_dir := Vector3(-0.8660254, 0.0, -0.5).normalized()
+	ship.anchor_off = ship.terrain_basis * sea_dir * (6371.0 + ship.surface_clearance_km() + 0.002)
+	ship.velocity = Vector3.ZERO
+	for _frame in 180:
+		ship._newton_advance(1.0 / 60.0)
+		var agl := ship.terrain.alt_above_ground_km(ship.terrain_basis.inverse() * ship.anchor_off, 6371.0)
+		check("newton_rest_does_not_sink", agl >= ship.surface_clearance_km() - 0.001)
+	check("newton_rest_stays_slow", ship.velocity.length() < 0.003)
+	# A same-body teleport must not collide with the segment from its old site.
+	ship.true_pos = Vector3.UP * 6500.0
+	planets.refresh(ship.anchor_off, 0.0, ship.anchor_name)
+	main.call("_update_skin_kill", 0.016)
+	var teleport_target := Vector3.DOWN * 6500.0
+	ship.true_pos = teleport_target
+	planets.refresh(ship.anchor_off, 0.0, ship.anchor_name)
+	main.call("_update_skin_kill", 0.016)
+	check("teleport_does_not_sweep_through_planet", ship.anchor_off.distance_to(teleport_target) < 0.01)
 	main.free()
 	flash.free()
 	hud.free()

@@ -1574,66 +1574,42 @@ func _update_core_hazard(rem: float, delta: float) -> void:
 # not sweep a segment across interplanetary space and report a false crash.
 var _prev_from_centre := Vector3.ZERO
 var _prev_body := ""
+var _surface_position_revision := -1
 
 
-func _update_skin_kill(delta: float) -> void:
-	var impact: bool = ship.surface_impact
+func _update_skin_kill(_delta: float) -> void:
+	# Historical name retained for callers. Surface contact is now non-lethal
+	# and independent of FlightMode.kill_allowed()/the developer death toggle.
 	ship.surface_impact = false
-	if _skin_dying:
-		_skin_t += delta
-		ship.locked = true
-		ship.velocity = Vector3.ZERO
-		hud.flash(0.55, Color(0.85, 0.08, 0.06))
-		if planets != null and planets.has_method("hush_surface"):
-			planets.hush_surface()
-		if _skin_t >= Ephemeris.SURFACE_KILL_SECS:
-			_skin_finish()
-		return
-	if not FlightMode.kill_allowed():
-		# DEV NODEATH: consume the impact flag and drop the sweep's memory of the
-		# last frame so no stale segment fires a false kill the instant the flag
-		# flips back off (same reasoning as the anchor-change reset below).
+	if _surface_position_revision != ship.surface_position_revision:
+		_prev_body = ""
+		_surface_position_revision = ship.surface_position_revision
+	if _tp_active or ship.transiting or docked or not ship.newton:
 		_prev_body = ""
 		return
-	if _tp_active or ship.transiting or docked or _core_dying:
+	var body: String = planets.nearest_name
+	if not planets.is_physical(body) or planets.nearest_radius <= 0.0:
 		_prev_body = ""
 		return
-	if not ship.newton:
+	var sampler := planets.terrain_sampler_for(body)
+	if sampler == null or not bool(sampler.surface.get("solid", false)):
 		_prev_body = ""
 		return
-	if not planets.is_physical(planets.nearest_name):
-		return
-	if planets.nearest_dist >= INF or planets.nearest_radius <= 0.0:
-		return
-	# The ship's substep clamp fires in its ANCHOR's frame, so it is authoritative
-	# wherever the anchor and the nearest body agree — not just at Earth. Anywhere
-	# else the sweep below owns the kill.
-	if impact and planets.nearest_name == ship.anchor_name:
-		_skin_begin(planets.nearest_name)
-		return
-	var sampler := planets.terrain_sampler_for(planets.nearest_name)
-	if sampler == null:
-		return
-	# The sampler works in the BODY's frame. planets.rel_of() is the render-space
-	# vector ship->body, so the ship's offset from that body's centre is its
-	# negation. Using the sphere-relative altitude here instead would be wrong by
-	# the full height of the terrain - 8.9 km over Everest.
-	var from_centre: Vector3 = planets.surface_basis(planets.nearest_name).inverse() * -planets.rel_of(planets.nearest_name)
-	if from_centre.length() < 0.001:
-		return
-	var contact: float = Ephemeris.surface_kill_km(planets.nearest_name)
-	# SWEEP the segment this frame covered, not just where it ended. Both ends of
-	# one frame's travel can be clear air with a ridge standing between them, and
-	# a frame-rate dip is exactly when that happens - see
-	# tools/test_earth_terrain.gd, which asserts a point test WOULD have missed it.
-	# _prev_body guards against sweeping across interplanetary space when the
-	# nearest body changes.
-	var prev: Vector3 = _prev_from_centre if _prev_body == planets.nearest_name \
-		else from_centre
-	_prev_from_centre = from_centre
-	_prev_body = planets.nearest_name
-	if sampler.swept_contact(prev, from_centre, planets.nearest_radius, contact):
-		_skin_begin(planets.nearest_name)
+	var body_basis: Basis = planets.surface_basis(body)
+	var position: Vector3 = body_basis.inverse() * -planets.rel_of(body)
+	var previous: Vector3 = _prev_from_centre if _prev_body == body else position
+	var contact := sampler.resolve_motion(previous, position,
+		body_basis.inverse() * ship.velocity, planets.nearest_radius, ship.surface_clearance_km())
+	var corrected: Vector3 = contact.position
+	ship.anchor_off += body_basis * (corrected - position)
+	ship.velocity = body_basis * (contact.velocity as Vector3)
+	ship.surface_impact = bool(contact.hit)
+	_prev_from_centre = corrected
+	_prev_body = body
+	if corrected.distance_squared_to(position) > 0.0000001:
+		# Update floating-origin visuals immediately, so the corrected ship cannot
+		# appear embedded for one frame. delta=0 avoids advancing orbital time twice.
+		planets.refresh(ship.anchor_off, 0.0, ship.anchor_name, ship.velocity)
 
 
 func _skin_begin(body: String) -> void:

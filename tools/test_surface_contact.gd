@@ -7,6 +7,10 @@ class FlatWorld extends TerrainSampler:
 	func max_height_km() -> float:
 		return 500.0
 
+class SlopedWorld extends FlatWorld:
+	func normal_at(position: Vector3, _radius: float) -> Vector3:
+		return (position.normalized() + Vector3.UP).normalized()
+
 func _initialize() -> void:
 	var earth := G.terrain_sampler(G.recipe_for({"name": "Earth"}))
 	if not earth.has_method("resolve_motion"):
@@ -40,6 +44,14 @@ func _initialize() -> void:
 		var finish := start.rotated(Vector3.UP, 0.2)
 		var limited: Dictionary = flat.resolve_motion(start, finish, Vector3.FORWARD * 10000.0, 6371.0, 0.04)
 		check("extreme travel stops at last verified point", limited.budget_limited and limited.position.distance_to(start) <= 103.0 and limited.velocity == Vector3.ZERO)
+		var slope := SlopedWorld.new({})
+		slope.surface = {"solid": true}
+		var impact: Dictionary = slope.resolve_motion(Vector3.RIGHT * 6371.2,
+			Vector3.RIGHT * 6370.9, Vector3.LEFT * 10.0, 6371.0, 0.04)
+		check("slope impact cannot launch ship away at kilometres per second", impact.velocity.length() < 0.03)
+		var post_velocity: Vector3 = impact.velocity
+		post_velocity += Vector3.LEFT * 0.02943 * 2.0
+		check("groundward thrust reverses rebound without S", post_velocity.x < 0.0)
 		var gas := G.terrain_sampler(G.recipe_for({"name": "Jupiter"}))
 		var cloud_pass: Dictionary = gas.resolve_motion(Vector3.RIGHT * 72000.0, Vector3.RIGHT * 71000.0, Vector3.LEFT, 71492.0, 0.04)
 		check("gas giant has no solid floor", not cloud_pass.hit and cloud_pass.position == Vector3.RIGHT * 71000.0)

@@ -115,6 +115,9 @@ static func display_name(id: String) -> String:
 # Reverse of display_name: a destination id for a star's display name (for fly-to-arrive from the
 # hub, where the sky markers are name-keyed). "" if the name isn't a travel destination.
 static func id_for_name(nm: String) -> String:
+	# The destination is named after its planet; the stellar body/sky marker is not.
+	if nm == "Proxima Centauri":
+		return PROXIMA
 	for id in _rows():
 		if str(_rows()[id].get("name", "")) == nm:
 			return id
@@ -127,7 +130,7 @@ static func spectral(id: String) -> String:
 	return str(_row(id).get("spectral", ""))
 
 static func star_color(id: String) -> Color:
-	return _row(id).get("color", Color(1, 1, 1))
+	return StarRecipe.resolve(_row(id)).color_a
 
 # Hostile systems spawn the always-on alien swarm + Vortex boss. (Per-star GUARDIANS that
 # gate discovery are separate — see main._is_guarded.)

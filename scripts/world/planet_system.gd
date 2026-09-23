@@ -76,6 +76,7 @@ var nearest_radius := 1.0         # visual radius of the nearest body (capture r
 var speed_limit := INF
 var gravity := Vector3.ZERO
 var star_dist := INF              # distance to this system's primary star (gates FTL / warp)
+var stellar_hazard := {}          # non-lethal proximity telemetry, reset on system changes
 var speed_zones := false          # Sol 1:1 slice: speed pass comes later
 var cook_n := 0                   # physical worlds this frame
 var cook_mesh_n := 0              # cook balls in range
@@ -107,7 +108,7 @@ void fragment() {
 	}
 	float core = smoothstep(0.16, 0.0, d);
 	float halo = exp(-d * 5.5) * (1.0 - smoothstep(0.45, 0.92, d));
-	ALBEDO = vec3(1.0, 0.92, 0.55) * core * 3.2 + vec3(1.0, 0.55, 0.12) * halo * 0.65;
+	ALBEDO = vec3(1.0, 0.95, 0.86) * (core * 3.2 + halo * 0.65);
 }
 """
 var _surface: Node3D           # skin-band bird-view ground (rings / water / kit)
@@ -161,12 +162,22 @@ func target_candidates() -> Array:
 			"kind": kind, "radius": float(b.radius) })
 	for st in _stars:
 		out.append({ "name": st.name, "rel": _rel.get(st.name, Vector3.ZERO),
-			"kind": "star", "radius": STAR_RADIUS })
+			"kind": "star", "radius": st.radius })
 	return out
 
 
 # Kind of a body by name: "star" | "planet" | "moon" | "craft" | "" (unknown). Used to label
 # an undiscovered Tab target ("Unknown Star" / "Unknown Planet" …) without leaking its name.
+func stellar_recipe_for(name: String) -> Dictionary:
+	for body in _bodies:
+		if body.name == name and body.recipe.has("stellar"):
+			return body.recipe
+	for star in _stars:
+		if star.name == name:
+			return star.recipe
+	return {}
+
+
 func is_physical(name: String) -> bool:
 	for b in _bodies:
 		if b.name == name:
@@ -217,6 +228,7 @@ func load_system(specs: Array) -> void:
 		if b.get("sky") != null:
 			b.sky.queue_free()
 	_bodies.clear()
+	stellar_hazard.clear()
 	# Samplers are keyed by BODY NAME, so a new system containing a same-named
 	# body would otherwise be handed the previous world's terrain.
 	_samplers.clear()
@@ -241,6 +253,12 @@ func load_system(specs: Array) -> void:
 
 func _build_planet(p: Dictionary) -> void:
 	var is_star: bool = p.get("star", false)
+	if is_star:
+		p = p.duplicate(true)
+		var stellar_recipe := StarRecipe.resolve(p)
+		p.color = stellar_recipe.color_a
+		if not p.get("physical", false):
+			p.radius = StarRecipe.scene_radius(stellar_recipe)
 
 	var dot := Sprite3D.new()
 	dot.texture = _dot_tex
@@ -256,9 +274,7 @@ func _build_planet(p: Dictionary) -> void:
 	var sphere: MeshInstance3D = null
 	var mat: Material = null
 	var recipe: Dictionary = PlanetGenerator.recipe_for(p)
-	var use_model: bool = p.has("model") and (
-		p.get("craft", false) or (is_star and not PlanetGenerator.has_map(recipe))
-	)
+	var use_model: bool = p.has("model") and p.get("craft", false)
 	if use_model:
 		model = _make_glb_body(p)
 	if model == null:
@@ -460,34 +476,25 @@ func _build_sun_sky() -> void:
 # into an emissive sphere. Positions/labels update every frame in refresh().
 func _build_star_shell() -> void:
 	for s in Ephemeris.STARS:
+		var id := SystemDB.id_for_name(s.name)
+		var spec := {"name":s.name,"star":true,"spectral":SystemDB.spectral(id)}
+		var recipe := StarRecipe.resolve(spec)
+		var radius := STAR_RADIUS*StarRecipe.scene_radius(recipe)/5.0
 		var dot := Sprite3D.new()
 		dot.texture = _dot_tex
-		dot.modulate = s.color
+		dot.modulate = recipe.color_a
 		dot.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		dot.shaded = false
 		dot.pixel_size = 5.0
 		add_child(dot)
 
-		var sphere := MeshInstance3D.new()
-		var mesh := SphereMesh.new()
-		mesh.radius = STAR_RADIUS
-		mesh.height = STAR_RADIUS * 2.0
-		mesh.radial_segments = 16
-		mesh.rings = 8
-		sphere.mesh = mesh
-		var mat := StandardMaterial3D.new()
-		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		mat.albedo_color = s.color
-		mat.emission_enabled = true
-		mat.emission = s.color
-		mat.emission_energy_multiplier = 2.2
-		sphere.material_override = mat
+		var sphere: MeshInstance3D = PlanetGenerator.paint(spec, radius).sphere
 		sphere.visible = false
 		add_child(sphere)
 
 		var label := Label3D.new()
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
-		label.modulate = Color(s.color, 0.9)
+		label.modulate = Color(recipe.color_a, 0.9)
 		label.outline_modulate = Color(0, 0, 0, 0.8)
 		label.outline_size = 12
 		label.font_size = 46
@@ -495,7 +502,7 @@ func _build_star_shell() -> void:
 		add_child(label)
 
 		_stars.append({
-			"name": s.name, "id": SystemDB.id_for_name(s.name),
+			"name": s.name, "id": id, "recipe": recipe, "radius": radius,
 			"true_pos": eph.star_true_pos(s), "ly": s.ly,
 			"mass": float(s.get("mass", 333000.0)),
 			"dot": dot, "sphere": sphere, "label": label,
@@ -508,6 +515,7 @@ func _build_star_shell() -> void:
 # (navigator, minimap, HUD, surface band) has to know an anchor exists.
 func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = Vector3.ZERO) -> void:
 	_cloud_time_s += delta
+	stellar_hazard = {}
 	nearest_dist = INF
 	nearest_name = ""
 	speed_limit = INF
@@ -566,6 +574,10 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		# where every coordinate is small enough for it to be exact.
 		var rel: Vector3 = _rel_to_ship(b, anchored, anchor, ship_off, bpos, ship_pos)
 		var dist := rel.length()
+		if b.star and b.recipe.has("stellar"):
+			var exposure := StarRecipe.exposure(b.recipe, dist, vrad)
+			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
+				stellar_hazard = exposure
 
 		var mu: float = float(b.get("mu", 0.0))
 		if mu > 0.0 and dist > 0.001:
@@ -699,7 +711,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		if sdist < nearest_dist:
 			nearest_dist = sdist
 			nearest_name = st.name
-			nearest_radius = STAR_RADIUS
+			nearest_radius = st.radius
 		# Nearest star you could fly-arrive into (must be a real travel destination).
 		if st.get("id", "") != "" and sdist < hub_star_dist:
 			hub_star_dist = sdist
@@ -707,16 +719,19 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			hub_star_rel = srel
 		# Force-slow safe-zone around the star (no pull) — this is what eases you out
 		# of warp as you arrive, scaled by the star's mass.
-		var szone := STAR_RADIUS * STAR_ZONE_MULT
+		var szone: float = st.radius * STAR_ZONE_MULT
 		if sdist < szone:
 			# Higher floor (STAR_ZONE_FLOOR) than planets so you fly THROUGH the star, not crawl.
 			speed_limit = minf(speed_limit, lerpf(STAR_ZONE_FLOOR, STAR_EDGE_SPEED, sdist / szone))
 		var sdir: Vector3 = srel.normalized()
 		if sdist < STAR_NEAR:
+			var exposure := StarRecipe.exposure(st.recipe,sdist,st.radius)
+			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
+				stellar_hazard = exposure
 			st.sphere.visible = true
 			st.sphere.position = srel
 			st.dot.visible = false
-			st.label.position = srel + Vector3(0.0, STAR_RADIUS * 1.6 + 2.0, 0.0)
+			st.label.position = srel + Vector3(0.0, st.radius * 1.6 + 2.0, 0.0)
 		else:
 			st.sphere.visible = false
 			st.dot.visible = true

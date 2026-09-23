@@ -123,6 +123,7 @@ func go(site: Dictionary) -> void:
 	var body: String = site.body
 	main._anchor_ship(body)
 	var mode := str(site.get("mode", "surface"))
+	var body_basis: Basis = main.planets.surface_basis(body) if main.planets != null else Basis.IDENTITY
 	match mode:
 		"geo":
 			ship.anchor_off = Ephemeris.geo_start_pos()
@@ -134,7 +135,7 @@ func go(site: Dictionary) -> void:
 			var sampler: TerrainSampler = main.planets.terrain_sampler_for(body) \
 				if main.planets != null else null
 			var ground_r := sampler.ground_radius_km(dir, radius) if sampler != null else radius
-			ship.anchor_off = DS.surface_anchor_off(dir, ground_r, float(site.alt_km))
+			ship.anchor_off = body_basis * DS.surface_anchor_off(dir, ground_r, float(site.alt_km))
 	ship.surface_position_revision += 1
 	ship.velocity = Vector3.ZERO
 	ship.reset_mesh_pose()
@@ -143,8 +144,30 @@ func go(site: Dictionary) -> void:
 	else:
 		var dir2 := DS.dir_for(float(site.lat_deg), float(site.lon_deg))
 		var fwd := DS.heading_forward(dir2, float(site.get("heading_deg", 0.0)))
-		ship.face_toward(fwd * 1000.0)
+		ship.transform.basis = Basis.looking_at(body_basis * fwd, body_basis * dir2)
+		ship._cam_basis = ship.transform.basis
 	ship.time_rate = 1.0
+	ship._time_idx = 0
+	ship._shell_edge_known = false
+	ship.autopilot = false
+	ship.auto_cruise = false
+	ship._kill_turn_rates()
+	ship._strafe = 0.0
+	ship._lift = 0.0
+	# Publish the destination before the next physics step. Old Earth terrain,
+	# distances or exclusion geometry must never be applied to a Sun arrival.
+	if main.planets != null:
+		var planets: PlanetSystem = main.planets
+		planets.refresh(ship.anchor_off, 0.0, ship.anchor_name, ship.velocity)
+		ship.nearest_name = planets.nearest_name
+		ship.nearest_dist = planets.nearest_dist
+		ship.nearest_radius = planets.nearest_radius
+		ship.nearest_dir = planets.nearest_dir
+		ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
+		ship.terrain_basis = planets.surface_basis(planets.nearest_name)
+		ship.speed_limit = planets.speed_limit
+		ship.gravity = planets.gravity
+		ship.last_newton_g = ship._newton_g()
 
 
 # ---------------------------------------------------------------------------

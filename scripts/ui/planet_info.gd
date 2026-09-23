@@ -58,6 +58,19 @@ func open_for(name: String) -> void:
 				facts["type"] = "Star" if name == SystemDB.display_name(sys) else "Body"
 		var blurb := MissionDB.story_for(name)
 		facts["blurb"] = blurb if blurb != "" else "Deep-space object — no survey data on file yet."
+	if planets != null:
+		var recipe := planets.stellar_recipe_for(name)
+		if not recipe.is_empty():
+			facts = facts.duplicate(true)
+			var s: Dictionary = recipe.stellar
+			facts["type"] = str(s.type).replace("_", " ").capitalize()
+			facts["spectral"] = s.spectral
+			facts["radius_km"] = s.radius_km
+			facts["mass"] = "%.3f solar masses" % float(s.mass_solar)
+			facts["temp"] = "%.0f K  (photosphere)" % float(s.temperature_k)
+			facts["luminosity"] = "%.5f × Sun" % float(s.luminosity_solar)
+			facts["stellar_basis"] = "Spectral estimate / authored model" if s.estimated else "Solar reference"
+			facts["blurb"] = "No solid landing surface. Heat and radiation rise on approach. Composition: %s." % ", ".join(s.composition)
 	_populate(name, facts)
 	_open = true
 	_root.visible = true
@@ -101,6 +114,8 @@ func _populate(name: String, f: Dictionary) -> void:
 	_row_if(f, "day", "Day length")
 	_row_if(f, "year", "Year length")
 	_row_if(f, "temp", "Temperature")
+	_row_if(f, "luminosity", "Luminosity")
+	_row_if(f, "stellar_basis", "Stellar data")
 	_row_if(f, "moons", "Moons")
 	_row_if(f, "atmosphere", "Atmosphere")
 

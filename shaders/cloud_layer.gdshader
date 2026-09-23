@@ -275,19 +275,23 @@ void fragment() {
 		float detail = detail_field_uv(uv_base, circumference_km, seed, footprint_uv_km);
 		coverage = erode_with_detail(coverage, detail);
 
-		// Fold the detail field's own gradient into the fake-thickness normal
-		// so a puff gets its own lit/shaded side, not just the macro texel's —
-		// step sized to resolve the finest (0.8 km) octave without aliasing.
-		// A faded-out octave has already collapsed to its constant mean above,
-		// so its finite difference here is naturally ~0 — no separate fade
-		// needed for the normal contribution.
+		// Recover the UV gradient from the screen-space derivatives of the
+		// already sampled detail. Four extra three-octave finite-difference
+		// probes previously dominated the close cloud pass on integrated GPUs.
+		vec2 uv_dx = dFdx(uv_base);
+		vec2 uv_dy = dFdy(uv_base);
+		float d_dx = dFdx(detail);
+		float d_dy = dFdy(detail);
+		float det = uv_dx.x * uv_dy.y - uv_dx.y * uv_dy.x;
 		float dg_eps = 0.15 * DETAIL_WAVELEN_KM_2 / circumference_km;
-		float dgx = detail_field_uv(uv_base + vec2(dg_eps, 0.0), circumference_km, seed, footprint_uv_km)
-			- detail_field_uv(uv_base - vec2(dg_eps, 0.0), circumference_km, seed, footprint_uv_km);
-		float dgy = detail_field_uv(uv_base + vec2(0.0, dg_eps), circumference_km, seed, footprint_uv_km)
-			- detail_field_uv(uv_base - vec2(0.0, dg_eps), circumference_km, seed, footprint_uv_km);
-		gx += dgx * DETAIL_NORMAL_WEIGHT;
-		gy += dgy * DETAIL_NORMAL_WEIGHT;
+		vec2 grad = vec2(0.0);
+		if (abs(det) > 1e-16) {
+			grad = vec2(d_dx * uv_dy.y - d_dy * uv_dx.y,
+				d_dy * uv_dx.x - d_dx * uv_dy.x) / det;
+		}
+		vec2 detail_normal = clamp(grad * (2.0 * dg_eps), vec2(-0.5), vec2(0.5));
+		gx += detail_normal.x * DETAIL_NORMAL_WEIGHT;
+		gy += detail_normal.y * DETAIL_NORMAL_WEIGHT;
 	} else {
 		// Mirrors planet_cook.gdshader's fbm fallback (same fbm, same seed) so a
 		// procedural world's deck matches the coverage its globe would have shown.

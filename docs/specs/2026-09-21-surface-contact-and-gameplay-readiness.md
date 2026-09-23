@@ -43,8 +43,8 @@ Earth remains recognizable; ruins and scrap dressing come later.
 5. Add component stats driven by grade and material mass. Density and stat mappings
    are not implemented in the starter catalog.
 
-These are sufficient to begin the gameplay roadmap now; more Earth cosmetic polish
-is not a prerequisite for inventory/fabrication work.
+Priority updated by the user: recipe-driven world building comes before this
+gameplay slice. See 2026-09-22-recipe-world-building.md.
 
 ## Following slices
 

@@ -53,8 +53,19 @@ uniform float liquid_amount = 0.0;
 uniform float lava_amount = 0.0;
 uniform float ice_surface = 0.0;
 uniform float snow_line_km = 0.0;
+uniform float snow_polar_drop_km = 0.0;
+uniform float sea_ice_latitude = 1.0;
+uniform float tree_line_km = 3.5;
+uniform float vegetation_density = 0.0;
+uniform bool vegetation_from_albedo = false;
+uniform float wave_strength = 0.09;
 uniform float wave_scale = 1.0;
 uniform float surface_seed = 0.0;
+// Nearest authored district; zero radius on uninhabited recipes.
+uniform vec3 district_center = vec3(0.0);
+uniform vec3 district_east = vec3(1.0, 0.0, 0.0);
+uniform vec3 district_north = vec3(0.0, 0.0, 1.0);
+uniform float district_radius = 0.0;
 // Per-ring fade for streamed commits. Default 1 so a cold bind matches the
 // pre-stream look; only a freshly swapped ring ever writes a value below 1.
 instance uniform float stream_fade : hint_range(0.0, 1.0) = 1.0;
@@ -162,7 +173,8 @@ void fragment() {
 		wet = mask01 * (1.0 - smoothstep(0.04, 0.32, v_height));
 		if (has_albedo > 0.5 && mask_raw > 0.5) {
 			float lum = dot(texture(albedo_tex, UV).rgb, vec3(0.299, 0.587, 0.114));
-			ice_mask = smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.06, lum);
+			ice_mask = smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.06, lum)
+				* smoothstep(sea_ice_latitude, sea_ice_latitude + 0.12, abs(normalize(v_surface).y));
 			wet *= (1.0 - ice_mask);
 		}
 	}
@@ -225,18 +237,25 @@ void fragment() {
 	alb = mix(alb, vec3(0.80, 0.86, 0.92), ice_mask * 0.85);
 	// Alpine snow cover from height. Slope fade waits until `slope` exists below.
 	float snow = 0.0;
-	if (snow_line_km > 0.001) {
+	if (snow_line_km > 0.001 && wet < 0.999) {
 		// Broad accumulation follows terrain rather than a ruler-straight height
 		// contour. Smaller wind drifts soften its edge without a cracked-ice net.
 		float drift = grain(v_surface * 0.65) - 0.5;
-		float local_line = snow_line_km + drift * 0.7;
+		float latitude = abs(normalize(v_surface).y);
+		float local_line = max(0.0, snow_line_km - snow_polar_drop_km * latitude * latitude) + drift * 0.7;
 		snow = smoothstep(local_line - 0.15, local_line + 0.85, v_height);
 		snow *= (1.0 - clamp(wet, 0.0, 1.0)) * (1.0 - ice_mask);
 	}
 	// Fade the fine octave when pixels become larger than it, avoiding distant
 	// shimmer.
-	float coarse = grain(v_surface * 0.8) - 0.5;
-	float fine = (grain(v_surface * 8.0) - 0.5) * (1.0 - smoothstep(0.03, 0.2, footprint));
+	float coarse = 0.0;
+	float fine = 0.0;
+	if (wet < 0.999) {
+		coarse = grain(v_surface * 0.8) - 0.5;
+		if (footprint < 0.2) {
+			fine = (grain(v_surface * 8.0) - 0.5) * (1.0 - smoothstep(0.03, 0.2, footprint));
+		}
+	}
 	alb *= 1.0 + (coarse * 0.22 + fine * 0.12) * (1.0 - wet * 0.7);
 	vec3 n = normalize(v_world_n);
 	vec3 l = normalize(sun_dir);
@@ -248,11 +267,52 @@ void fragment() {
 	vec3 snow_albedo = mix(vec3(0.68, 0.77, 0.86), vec3(0.91, 0.94, 0.97),
 		0.65 + coarse * 0.35 + fine * 0.12);
 	alb = mix(alb, snow_albedo, snow);
+	// Distant forest becomes filtered canopy colour rather than thousands of
+	// subpixel triangles. Explicit biosphere control; liquid alone isn't life.
+	if (vegetation_density > 0.001 && wet < 0.999) {
+		float green = vegetation_from_albedo ? smoothstep(0.0, 0.045,
+			map_alb.g - max(map_alb.r, map_alb.b) * 1.05) : 1.0;
+		float latitude = abs(normalize(v_surface).y);
+		float snow_limit = snow_line_km > 0.001
+			? max(0.0, snow_line_km - snow_polar_drop_km * latitude * latitude) - 0.5 : tree_line_km;
+		float treeline = min(tree_line_km, snow_limit);
+		float forest = vegetation_density * green * (1.0 - wet) * (1.0 - snow)
+			* (1.0 - ice_mask) * (1.0 - smoothstep(0.85, 0.96, latitude))
+			* (1.0 - smoothstep(max(0.0, treeline - 0.5), max(0.001, treeline), v_height))
+			* (1.0 - smoothstep(0.12, 0.22, slope));
+		float crowns = mix(0.5, grain(v_surface * 45.0),
+			1.0 - smoothstep(0.01, 0.06, footprint));
+		vec3 canopy = mix(vec3(0.045, 0.085, 0.026), vec3(0.11, 0.20, 0.055), crowns);
+		alb = mix(alb, canopy, forest * 0.8);
+	}
+	// Weathered streets share the building plot grid, conform to the actual
+	// ground mesh and remain visible beyond the individual-building budget.
+	if (district_radius > 0.0 && wet < 0.999) {
+		vec3 offset = v_surface - district_center;
+		vec2 city = vec2(dot(offset, district_east), dot(offset, district_north));
+		float district = (1.0 - smoothstep(district_radius - 0.15, district_radius, length(city)))
+			* (1.0 - wet) * (1.0 - snow) * (1.0 - smoothstep(0.08, 0.2, slope));
+		vec2 plot = abs(fract(city / 0.12) - 0.5) * 0.12;
+		float street_distance = 0.06 - max(plot.x, plot.y);
+		float aa = max(footprint * 0.7, 0.0004);
+		float street = 1.0 - smoothstep(0.008 - aa, 0.008 + aa, street_distance);
+		float slab = 1.0 - smoothstep(0.045 - aa, 0.048 + aa, max(plot.x, plot.y));
+		float wear = grain(vec3(city.x * 130.0, 0.0, city.y * 130.0));
+		alb = mix(alb, vec3(0.14, 0.13, 0.10), district * 0.45);
+		vec3 worn = mix(vec3(0.095, 0.09, 0.072), vec3(0.18, 0.16, 0.13), wear);
+		alb = mix(alb, worn, district * slab * 0.7);
+		alb = mix(alb, vec3(0.043, 0.045, 0.042) * (0.8 + wear * 0.4), district * street * (0.45 + wear * 0.42));
+	}
 	vec3 p = v_surface + vec3(surface_seed);
-	float rock_fine = mix(0.5, grain(p * 32.0), 1.0 - smoothstep(0.008, 0.04, footprint));
-	float strata = sin(v_height * 110.0 + grain(p * 0.3) * 12.0);
 	float exposed = rock_amount * (1.0 - wet) * (1.0 - ice_surface) * (1.0 - ice_mask) * (1.0 - snow);
-	alb *= 1.0 + exposed * (0.13 * strata * smoothstep(0.005, 0.12, slope) + (rock_fine - 0.5) * 0.20);
+	if (exposed > 0.001) {
+		float rock_fine = 0.5;
+		if (footprint < 0.04) {
+			rock_fine = mix(0.5, grain(p * 32.0), 1.0 - smoothstep(0.008, 0.04, footprint));
+		}
+		float strata = sin(v_height * 110.0 + grain(p * 0.3) * 12.0);
+		alb *= 1.0 + exposed * (0.13 * strata * smoothstep(0.005, 0.12, slope) + (rock_fine - 0.5) * 0.20);
+	}
 	// Fractures across frozen ground: no liquid mask or water glint on Europa.
 	if (ice_surface > 0.001) {
 		float crack_noise = grain(p * 0.6) + 0.16 * grain(p * 3.0);
@@ -269,14 +329,20 @@ void fragment() {
 	// as aliasing noise, not water, so it fades out instead of aliasing.
 	float ripple_fade = (1.0 - smoothstep(0.0, RIPPLE_FADE_KM, dist_km))
 		* (1.0 - smoothstep(0.02, 0.10, footprint));
-	vec2 qa = p.xz;
-	vec2 qb = vec2(qa.x * 0.809 - qa.y * 0.588, qa.x * 0.588 + qa.y * 0.809) * 2.63;
-	vec3 ripple = vec3(
-		sin(qa.y * 21.0 * wave_scale + TIME * 1.15) + 0.5 * sin(qb.y * 21.0 * wave_scale - TIME * 0.85),
-		cos(qa.x * 17.0 * wave_scale - TIME * 0.95) + 0.5 * cos(qb.x * 17.0 * wave_scale + TIME * 1.05),
-		sin((qa.x + qa.y) * 13.0 * wave_scale + TIME * 0.7) + 0.5 * cos((qb.x - qb.y) * 13.0 * wave_scale - TIME * 0.6));
-	ripple = (MODEL_MATRIX * vec4(ripple, 0.0)).xyz;
-	n = normalize(n + (ripple - radial * dot(ripple, radial)) * wet * 0.09 * ripple_fade);
+	// Three nonparallel wave directions projected onto the local tangent plane.
+	// Derivative of wave height supplies normals; no full-screen refraction pass.
+	if (wet > 0.001 && ripple_fade > 0.001) {
+		vec3 local_up = normalize(v_surface);
+		vec3 wa = normalize(vec3(0.81, 0.23, 0.54));
+		vec3 wb = normalize(vec3(-0.37, 0.86, 0.35));
+		vec3 wc = normalize(vec3(0.21, -0.47, 0.86));
+		vec3 ripple = wa * cos(dot(p, wa) * 34.0 * wave_scale - TIME * 1.9)
+			+ wb * cos(dot(p, wb) * 73.0 * wave_scale - TIME * 2.7) * 0.48
+			+ wc * cos(dot(p, wc) * 139.0 * wave_scale - TIME * 3.6) * 0.22;
+		ripple -= local_up * dot(ripple, local_up);
+		ripple = (MODEL_MATRIX * vec4(ripple, 0.0)).xyz;
+		n = normalize(n + ripple * wet * wave_strength * ripple_fade);
+	}
 	float day = smoothstep(term_lo, term_hi, dot(normalize(v_radial), l));
 	// UV2.y carries SurfacePatch._horizon_shadow()'s per-vertex cast-shadow
 	// factor (rings 0-2 only; ring 3 defaults to 1.0 - see
@@ -295,7 +361,10 @@ void fragment() {
 	// Snow is a rough diffuse surface, with a subdued broad highlight.
 	float snow_glint = pow(max(dot(reflect(-l, n), -view_w), 0.0), 12.0);
 	col += snow * day * sun_shadow * vec3(0.92, 0.96, 1.0) * snow_glint * 0.08;
-	col += foam_t * lit * vec3(0.85, 0.9, 0.92) * 0.6 * liquid_amount;
+	float shore_surge = 0.65 + 0.35 * sin(TIME * 0.9 - shore_km * 140.0 + coarse * 4.0);
+	col += foam_t * lit * vec3(0.85, 0.9, 0.92) * shore_surge * 0.6 * liquid_amount * (1.0 - ice_mask);
+	// Broad reflected sky makes liquid read as a surface even away from the sun.
+	col += wet * day * air_amount * fresnel * color_air * 0.22;
 	// UV2 carries the SAME volcanic regions that generated the caldera geometry.
 	// Uniform branch: Earth pays no per-pixel volcanic noise cost.
 	if (lava_amount > 0.001) {

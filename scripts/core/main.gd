@@ -13,6 +13,9 @@ extends Node3D
 # Update order matters and is driven explicitly here: the ship integrates its
 # motion first, then the planet system reads the fresh anchor + offset, then the HUD.
 
+## 1x = 1.2 km/s. Editable on Main in the Inspector, including Remote while running.
+@export_range(0.5, 32.0, 0.5, "or_greater") var plasma_speed_multiplier := 8.0
+
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way backdrop; loomed toward the core on the voyage
 var planets: PlanetSystem
@@ -417,6 +420,7 @@ func _perf_mark(key: String, t0: int) -> void:
 
 
 func _process(delta: float) -> void:
+	combat.plasma.speed_multiplier = plasma_speed_multiplier
 	_update_holds(delta)
 	var _pt := _perf_t0()
 	ship.fly(delta)
@@ -498,7 +502,7 @@ func _process(delta: float) -> void:
 		ship.combat_lock = false
 	# Holding fire force-slows you to regular combat speed (you can't shoot at warp/boost) —
 	# set even while still fast so the slowdown engages; combat only spawns bolts once slow.
-	ship.firing = (want_fire and ship.can_fire) or (want_laser and ship.has_laser)
+	ship.firing = ship.weapons_ready() and ((want_fire and ship.can_fire) or (want_laser and ship.has_laser))
 	if ship.firing:
 		_ob_note("fire")
 	hud.firing = want_fire                       # blooms the dynamic crosshair
@@ -1598,8 +1602,8 @@ func _update_skin_kill(_delta: float) -> void:
 	var body_basis: Basis = planets.surface_basis(body)
 	var position: Vector3 = body_basis.inverse() * -planets.rel_of(body)
 	var previous: Vector3 = _prev_from_centre if _prev_body == body else position
-	var contact := sampler.resolve_motion(previous, position,
-		body_basis.inverse() * ship.velocity, planets.nearest_radius, ship.surface_clearance_km())
+	var contact := ship.resolve_surface_motion(sampler, previous, position,
+		body_basis.inverse() * ship.velocity, planets.nearest_radius, body_basis)
 	var corrected: Vector3 = contact.position
 	ship.anchor_off += body_basis * (corrected - position)
 	ship.velocity = body_basis * (contact.velocity as Vector3)
@@ -1753,9 +1757,19 @@ func _input(event: InputEvent) -> void:
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key: int = event.keycode
-	if key == KEY_P and event.ctrl_pressed:
+	if key == KEY_F1:
+		hud.toggle_systems()
+		get_viewport().set_input_as_handled()
+	elif key == KEY_ESCAPE and hud.is_systems_open():
+		hud._set_systems_open(false)
+		get_viewport().set_input_as_handled()
+	elif key == KEY_P and event.ctrl_pressed:
 		dev_sites.toggle()
 		get_viewport().set_input_as_handled()
+	elif key == KEY_B and not get_tree().paused:
+		ship.toggle_gear()
+	elif key == KEY_R and not get_tree().paused:
+		ship.toggle_hardpoints()
 	elif key == KEY_F:
 		# One interact key: undock if docked, else open the wormhole if near it,
 		# else dock if near the station.
@@ -1800,7 +1814,7 @@ func _input(event: InputEvent) -> void:
 		ship.auto_cruise = false
 		hud.toast = "AUTO-CRUISE  OFF"
 		hud.toast_t = 2.0
-	elif docked and key >= KEY_1 and key <= KEY_4:
+	elif docked and key >= KEY_1 and key < KEY_1 + ship.ship_count():
 		ship.swap_ship(key - KEY_1)
 		combat.player_hp = ship.max_hp   # new hull -> its full defence
 
@@ -1861,7 +1875,9 @@ func _update_dock_ui() -> void:
 			dock_name = st.name
 			dock_range = st.range
 	var dock_dist := ship.rel_to(dock_pos).length() if has_dock else INF
-	_dock_in_range = dock_dist < dock_range
+	if has_dock and dock_name.strip_edges().is_empty():
+		dock_name = "Orbital hangar"
+	_dock_in_range = has_dock and dock_dist < dock_range
 	# Force-slow the ship as it enters the landing zone (smooth, proximity-based):
 	# 0 at the outer edge (dock_range + DOCK_SLOW_MARGIN), 1 once inside the pad.
 	ship.dock_approach = clampf(1.0 - (dock_dist - dock_range) / DOCK_SLOW_MARGIN, 0.0, 1.0) \
@@ -1872,7 +1888,7 @@ func _update_dock_ui() -> void:
 	else:
 		hud.set_hangar(false, PackedStringArray(), 0, "")
 		if _dock_in_range:
-			hud.set_prompt("» Press F to dock at %s «" % dock_name)
+			hud.set_prompt("[F] Dock · %s" % dock_name)
 		elif props.probe_in_range:
 			hud.set_prompt(_probe_readout())   # drift up to a probe -> monster data
 		elif wormhole.in_range(ship):

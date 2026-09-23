@@ -11,6 +11,11 @@ uniform vec3 color_land : source_color = vec3(0.28, 0.38, 0.16);
 uniform vec3 color_ocean : source_color = vec3(0.03, 0.09, 0.22);
 uniform vec3 color_ice : source_color = vec3(0.86, 0.89, 0.93);
 uniform int kind = 0;
+uniform int stellar_mode = 0;
+uniform float stellar_cells = 36.0;
+uniform float stellar_spots = 0.15;
+uniform float stellar_activity = 0.3;
+uniform float stellar_brightness = 1.0;
 uniform float seed = 0.0;
 uniform float ice_amount = 0.12;
 uniform float land_amount = 0.32;
@@ -140,6 +145,19 @@ float fbm(vec3 p) {
 	return s;
 }
 
+// Screen-filtered stellar detail: unresolved cells average out instead of sparkling.
+float stellar_noise(vec3 p) {
+	float result = 0.0;
+	float amplitude = .57;
+	for (int i = 0; i < 3; i++) {
+		float resolved = 1.0-smoothstep(.35,1.0,length(fwidth(p)));
+		result += amplitude * mix(.5,noise(p),resolved);
+		p *= 2.03;
+		amplitude *= .5;
+	}
+	return result;
+}
+
 // Mirrors TerrainSampler._texel() - value = (R*256+G)/65535 for the RG16
 // byte-pack, plain .r for Earth's R8 map.
 float decode_height(vec2 uv) {
@@ -191,7 +209,7 @@ void vertex() {
 	// 0.08 is the old unsigned-map floor (kept verbatim on any r8/mapless
 	// body); a signed DEM's real sea level is height_datum, not 0.08.
 	float sea_v = height_signed > 0.5 ? height_datum : 0.08;
-	float disp = max(h - sea_v, 0.0) * land_v * detail * 2.6;
+	float disp = kind == 3 ? 0.0 : max(h - sea_v, 0.0) * land_v * detail * 2.6;
 	VERTEX += NORMAL * disp;
 	v_world = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;
 }
@@ -214,32 +232,29 @@ void fragment() {
 	}
 	vec3 view_w0 = normalize(-v_world);
 	if (kind == 3) {
-		float mu = max(dot(n_world, view_w0), 0.0);
-		float limb = 0.18 + 0.82 * pow(mu, 0.55);
-		vec3 gp = n * 16.0 + vec3(TIME * 0.045, TIME * -0.032, TIME * 0.021);
-		float g1 = fbm(gp);
-		float g2 = fbm(gp * 3.2 + vec3(TIME * 0.08, seed, 0.0));
+		float mu = max(dot(n_world, normalize(INV_VIEW_MATRIX[3].xyz-v_world)), 0.0);
+		float limb = 0.35 + 0.65 * pow(mu, 0.55);
+		vec3 gp = n * stellar_cells + vec3(TIME * 0.045, TIME * -0.032, TIME * 0.021) + seed;
+		float g1 = stellar_noise(gp);
+		float g2 = stellar_noise(gp * 3.2 + vec3(TIME * 0.08, seed, 0.0));
 		float cells = clamp(g1 * 0.62 + g2 * 0.38, 0.0, 1.0);
-		float fine_cells = noise(n * 160.0 + vec3(TIME * 0.1, seed, -TIME * 0.06));
-		cells = mix(0.5, clamp(cells + (fine_cells - 0.5) * 0.40, 0.0, 1.0), granulation);
-		vec3 hot = color_a * vec3(1.20, 1.08, 0.72);
-		vec3 cool = color_b * vec3(0.78, 0.38, 0.10);
-		if (has_albedo > 0.5) {
-			hot = mix(alb * vec3(1.25, 1.10, 0.70), hot, 0.22);
-			cool = mix(alb * vec3(0.72, 0.36, 0.12), cool, 0.30);
+		float fine_cells = stellar_noise(n * 160.0 + vec3(TIME * 0.1, seed, -TIME * 0.06));
+		cells = mix(0.5, clamp(cells + (fine_cells - 0.5) * 0.12, 0.0, 1.0), granulation);
+		float spot = smoothstep(0.80, 0.94, noise(n * 9.0 + seed)) * stellar_spots;
+		vec3 phot = color_a * (0.55 + smoothstep(.2,.8,cells)) * (1.0 - spot * 2.0);
+		if (stellar_mode == 1) {
+			// Cool dwarfs have bands/clouds, not a miniature solar photosphere.
+			float bands = sin(n.y * 42.0 + fbm(n * 5.0 + seed) * 7.0 + TIME * .015);
+			phot = mix(color_b, color_a, .5 + .35 * bands);
+		} else if (stellar_mode == 2) {
+			phot = color_a * (1.1 + cells * .08); // smooth compact white dwarf
+		} else if (stellar_mode == 3) {
+			float polar = pow(abs(n.y), 28.0);
+			phot = color_a * (1.0 + polar * 2.0); // hot magnetic poles
 		}
-		vec3 phot = mix(cool, hot, cells);
-		phot *= 0.62 + 0.70 * cells;
-		float flare = smoothstep(0.80, 0.96, fbm(n * 11.0 + vec3(TIME * 0.18, seed * 2.0, 0.0)));
-		phot += vec3(1.15, 0.72, 0.22) * flare * 0.55;
-		phot *= limb;
-		float rim = pow(1.0 - mu, 2.8);
-		phot += vec3(1.05, 0.22, 0.04) * rim * 1.65;
-		if (sky_glow > 0.01) {
-			phot *= 1.0 + 1.15 * sky_glow;
-			phot += vec3(1.0, 0.55, 0.12) * rim * sky_glow * 2.4;
-		}
-		ALBEDO = clamp(phot * 1.85, vec3(0.0), vec3(8.0));
+		float flare = smoothstep(.72, .9, noise(n * 13.0 + vec3(TIME * .06, seed, 0.0)));
+		phot += color_a * flare * stellar_activity;
+		ALBEDO = phot * limb * stellar_brightness * (1.1 + sky_glow * .5);
 	} else {
 	float water = sample_water(v_map_uv, n, alb);
 	float land = 1.0 - water;

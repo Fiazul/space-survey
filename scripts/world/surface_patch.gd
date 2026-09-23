@@ -81,6 +81,15 @@ const PREBUILD_CEILINGS := 2.5
 # so vertex_error_km() is untouched.
 const WATER_LIFT_KM := 0.001
 const PROP_MAX := 400
+const FOREST_MAX := 8192
+var _forest_budget := 0
+var _forest_cache := {}
+var _props_task := -1
+var _props_pending := false
+var _props_result := {}
+var perf_commit_us := 0
+var perf_props_us := 0
+var _profile := OS.get_environment("PERF_PROFILE") == "1"
 const PROP_SLOTS := 3
 # Unscaled kit meshes are real size (1 scene unit = 1 km). Instance scale is
 # then 0.7–1.3 from the seat hash, so a 30 m tree stays in the 20–40 m band.
@@ -133,6 +142,8 @@ var _props: MultiMeshInstance3D
 var _prop_nodes: Array[MultiMeshInstance3D] = []
 # The SHARED height function. main's contact kill holds this same instance, which
 # is the only reason mesh and lethality cannot drift apart.
+var _district_index := -2
+var _structures: SurfaceStructures
 var _sampler: TerrainSampler
 var _tris := 0
 # ONE material per surface kind, built on bind and reused by every ring. The old
@@ -298,6 +309,8 @@ func bind_body(recipe: Dictionary, sampler: TerrainSampler) -> void:
 
 # Point the tile at a world. Called on arrival at a new body, not per frame.
 func bind_recipe(recipe: Dictionary) -> void:
+	_district_index = -2
+	_forest_cache.clear()
 	_himg = _img_of(str(recipe.get("height", "")))
 	_simg = _img_of(str(recipe.get("specular", "")))
 	_aimg = _img_of(str(recipe.get("albedo", "")))
@@ -465,6 +478,8 @@ func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
 func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		alt: float, kill: float, ceiling: float, recipe: Dictionary,
 		sampler: TerrainSampler, ship_vel: Vector3 = Vector3.ZERO) -> void:
+	perf_commit_us = 0
+	perf_props_us = 0
 	_last_ship_pos = ship_pos
 	_last_ship_vel = ship_vel
 	if sampler == null:
@@ -481,22 +496,28 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		visible = false
 		# Leaving the atmosphere is still a live flight frame. Keep the worker's
 		# sampler alive and collect only once finished; never join a running task.
-		if not _thread_pending or WorkerThreadPool.is_group_task_completed(_thread_group_id):
+		if not _workers_running():
 			_abandon_rebuild()
 		return
 	if _body != body or _sampler != sampler:
 		# Workers still read the old sampler. Defer rebinding until they finish;
 		# the destination globe supplies coverage during this short transition.
-		if _thread_pending and not WorkerThreadPool.is_group_task_completed(_thread_group_id):
+		if _workers_running():
 			visible = false
 			return
 		_abandon_rebuild()
 		bind_body(recipe, sampler)
 		_body = body
 	_radius = radius
+	_forest_budget = preload("res://scripts/world/surface_biome.gd").forest_budget(alt) if _kit == "tree" else 0
 	_land_mat.set_shader_parameter("body_radius_km", radius)
 	_water_mat.set_shader_parameter("body_radius_km", radius)
 	var hit: Vector3 = ship_pos.normalized() * radius
+	if _structures == null:
+		_structures = SurfaceStructures.new()
+		add_child(_structures)
+	_structures.update_for(sampler, hit, radius, alt)
+	_bind_district(hit, radius)
 	# Pick up a finished batch (if any) before deciding whether a new one is
 	# needed, so a rebuild that completed between frames is never held an
 	# extra frame past when it could have shown.
@@ -520,6 +541,29 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# planet_system.gd) instead of blinking the whole tile off.
 	visible = in_band and has_ground()
 	_recount_tris()
+
+
+func _bind_district(hit: Vector3, radius: float) -> void:
+	var closest := -1
+	var distance := INF
+	for i in _sampler.settlements.size():
+		var region: Dictionary = _sampler.settlements[i]
+		var gap := hit.distance_to(region.dir * radius)
+		if gap < distance:
+			distance = gap
+			closest = i
+	if distance > 100.0:
+		closest = -1
+	if closest == _district_index:
+		return
+	_district_index = closest
+	for mat in [_land_mat, _water_mat]:
+		mat.set_shader_parameter("district_radius", 0.0 if closest < 0 else _sampler.settlements[closest].radius)
+		if closest >= 0:
+			var region: Dictionary = _sampler.settlements[closest]
+			mat.set_shader_parameter("district_center", region.dir * radius)
+			mat.set_shader_parameter("district_east", (region.basis as Basis).x)
+			mat.set_shader_parameter("district_north", (region.basis as Basis).z)
 
 
 func _recount_tris() -> void:
@@ -557,13 +601,16 @@ func _start_rebuild(hit: Vector3, radius: float, base: float, ship_vel: Vector3)
 	var results := _thread_results
 	var sun_dir := _sun_dir
 	var kit := _kit
+	if _forest_cache.size() > 24576:
+		_forest_cache.clear()
+	var forest_budget := _forest_budget
 	_thread_group_id = WorkerThreadPool.add_group_task(
-		func(ring: int) -> void: results[ring] = _compute_ring(ring, pred, radius, base, sun_dir, kit),
+		func(ring: int) -> void: results[ring] = _compute_ring(ring, pred, radius, base, sun_dir, kit, forest_budget),
 		RING_COUNT, -1, false, "surface_patch_ring_rebuild")
 
 
 func _rebuild_busy() -> bool:
-	return _thread_pending or _commit_next < RING_COUNT
+	return _thread_pending or _commit_next < RING_COUNT or _props_pending
 
 
 func rings_committed_this_update() -> int:
@@ -610,6 +657,8 @@ func _predicted_hit(hit: Vector3, radius: float, vel: Vector3, base: float) -> V
 # one pop.
 func _poll_rebuild() -> void:
 	_rings_committed_this_update = 0
+	perf_commit_us = 0
+	perf_props_us = 0
 	if _thread_pending and WorkerThreadPool.is_group_task_completed(_thread_group_id):
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
@@ -619,6 +668,7 @@ func _poll_rebuild() -> void:
 		print("[stream] batch %d ms lead %.1f km" % [msec, _thread_lead])
 		_queue_batch_commits()
 	_commit_one_ring(false)
+	_poll_props()
 
 
 func _queue_batch_commits() -> void:
@@ -632,6 +682,8 @@ func _queue_batch_commits() -> void:
 # frames a real background job needs. Production code never calls this -
 # `update_for` only polls, so a live frame never waits on the compute.
 func force_ready() -> void:
+	if _structures != null:
+		_structures.force_ready()
 	if _thread_pending:
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
@@ -642,6 +694,9 @@ func force_ready() -> void:
 		_queue_batch_commits()
 	while _commit_next < RING_COUNT:
 		_commit_one_ring(true)
+	if _props_pending:
+		WorkerThreadPool.wait_for_task_completion(_props_task)
+		_publish_props()
 	_snap_fades()
 	visible = _last_in_band and has_ground()
 	_recount_tris()
@@ -656,7 +711,10 @@ func _commit_one_ring(snap_fade: bool) -> void:
 	# Cold first appearance may fade in; replacing live ground at stream_fade=0
 	# blacks the albedo for STREAM_FADE_S (the close-range flicker).
 	var fade := 1.0 if snap_fade or replacing else 0.0
+	var started := Time.get_ticks_usec() if _profile else 0
 	_commit_ring(i, _thread_results[i], _thread_hit, fade)
+	if _profile:
+		perf_commit_us = Time.get_ticks_usec() - started
 	_ring_anchor[i] = _thread_hit
 	_rings_committed_this_update += 1
 	if _commit_next >= RING_COUNT:
@@ -668,7 +726,16 @@ func _commit_one_ring(snap_fade: bool) -> void:
 # whatever batch is in flight (bounded by one ring-compute duration - this
 # is not the per-frame hot path) and drop it without committing, since it
 # was computed against a sampler/recipe we are about to stop using.
+func _workers_running() -> bool:
+	return (_thread_pending and not WorkerThreadPool.is_group_task_completed(_thread_group_id)) \
+		or (_props_pending and not WorkerThreadPool.is_task_completed(_props_task))
+
+
 func _abandon_rebuild() -> void:
+	if _props_pending:
+		WorkerThreadPool.wait_for_task_completion(_props_task)
+		_props_pending = false
+		_props_result = {}
 	if _thread_pending:
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		_thread_pending = false
@@ -715,8 +782,11 @@ func _commit_ring(ring: int, r: Dictionary, hit: Vector3, fade: float = 1.0) -> 
 		else:
 			_pending_prop_xforms.append_array(xf)
 			_pending_prop_vars.append_array(pv)
+			var started := Time.get_ticks_usec() if _profile else 0
 			_place_props(_pending_prop_xforms, _pending_prop_vars, hit,
 				_pending_prop_east, _pending_prop_north)
+			if _profile:
+				perf_props_us = Time.get_ticks_usec() - started
 			_prop_fade = fade
 			_apply_prop_fade()
 
@@ -786,7 +856,7 @@ func _tri_buffer() -> Dictionary:
 # that `update_for` guarantees are frozen for the whole time a batch is in
 # flight (see `_abandon_rebuild`).
 func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
-		sun_dir: Vector3, kit: String = "") -> Dictionary:
+		sun_dir: Vector3, kit: String = "", forest_budget: int = 0) -> Dictionary:
 	var up := hit.normalized()
 	var east := up.cross(Vector3.UP)
 	if east.length_squared() < 0.0001:
@@ -937,6 +1007,8 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 			if ring <= 1:
 				var seedn := _seat_hash(p00.p, 1.7)
 				if _prop_here(wet, float(p00.h), seedn, kit):
+					if SurfaceSettlement.occupied(_sampler.settlements, (p00.p as Vector3).normalized(), radius):
+						continue
 					if kit == "tree" and _sampler.ice01((p00.p as Vector3).normalized()) > 0.5:
 						continue  # permanent ice is not a forest or boulder field
 					var h_var := _seat_hash(p00.p, 8.3)
@@ -958,6 +1030,13 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 					t.origin = p00.p - stand * 0.00015
 					prop_xforms.append(t)
 					prop_vars.append(variant)
+	if ring == 0 and kit == "tree" and forest_budget > 0:
+		var forest := preload("res://scripts/world/surface_forest.gd").scatter(_sampler, hit, radius, forest_budget, false, _forest_cache)
+		prop_xforms.append_array(forest.xforms)
+		prop_vars.append_array(forest.variants)
+		var canopy := preload("res://scripts/world/surface_forest.gd").scatter(_sampler, hit, radius, forest_budget, true, _forest_cache)
+		prop_xforms.append_array(canopy.xforms)
+		prop_vars.append_array(canopy.variants)
 	return {
 		"land_buf": land_buf,
 		"skirt_buf": skirt_buf if skirted else null,
@@ -1225,6 +1304,8 @@ func _color_at(dir: Vector3, uv: Vector2, h: float) -> Color:
 		# Palette only, DRY. The shader blends the ocean per fragment from the mask,
 		# so baking it in here would quantise the shoreline to the vertex spacing -
 		# 10.24 km on ring 3 at 13 km altitude.
+		if _sampler.has_albedo():
+			return _sampler.albedo_color(dir)
 		return _sampler.land_color(dir, _radius)
 	var mixf: float = PlanetGenerator.fbm3(dir * 5.0 + Vector3(_seed, _seed, _seed))
 	return _crust_a.lerp(_crust_b, clampf(mixf, 0.0, 1.0)).lightened(clampf(h - 0.5, 0.0, 0.3))
@@ -1358,7 +1439,9 @@ func _build_tree(st: SurfaceTool, variant: int, part: float) -> void:
 	match variant:
 		1:
 			_cylinder(st, 0.0, 0.012, 0.0011, bark, 6, part)
-			_icosphere(st, Vector3(0.0, 0.021, 0.0), 0.011, 1, Color(0.14, 0.34, 0.12), 3.0, part, 0.08)
+			_icosphere(st, Vector3(0.0, 0.024, 0.0), 0.009, 1, Color(0.14, 0.34, 0.12), 3.0, part, 0.12)
+			_icosphere(st, Vector3(-0.006, 0.019, 0.003), 0.008, 0, Color(0.11, 0.29, 0.10), 7.0, part, 0.1)
+			_icosphere(st, Vector3(0.006, 0.020, -0.003), 0.008, 0, Color(0.18, 0.36, 0.13), 11.0, part, 0.1)
 		2:
 			_cylinder(st, 0.0, 0.016, 0.0009, bark, 6, part)
 			_cone(st, Vector3(0.0, 0.022, 0.0), 0.013, 0.008, Color(0.18, 0.32, 0.08), 7, part)
@@ -1534,57 +1617,66 @@ func _icosphere(st: SurfaceTool, origin: Vector3, radius: float, subdiv: int, co
 # candidates arrive in row-major order, so a plain cut would dress the first few
 # rows and leave the rest of the ground empty.
 func _place_props(xforms: Array, variants: PackedByteArray, hit: Vector3, east: Vector3, north: Vector3) -> void:
-	if _prop_nodes.size() != PROP_SLOTS:
-		_rebuild_prop_nodes(_kit)
-	if _prop_nodes.size() != PROP_SLOTS:
-		return
-	var total := xforms.size()
-	var n := mini(total, PROP_MAX)
-	var buckets: Array = []
-	var customs: Array = []
-	for _s in PROP_SLOTS:
-		var xf_slot: Array[Transform3D] = []
-		buckets.append(xf_slot)
-		customs.append([])
-	if n > 0:
-		var step := float(total) / float(n)
-		var e_lo := INF
-		var e_hi := -INF
-		var n_lo := INF
-		var n_hi := -INF
-		for i in n:
-			var pick := mini(int(float(i) * step), total - 1)
-			var xf: Transform3D = xforms[pick]
-			var variant := 0
-			if pick < variants.size():
-				variant = int(variants[pick])
-			var slot := mini(variant, PROP_SLOTS - 1)
-			var custom := 1.0 if variant >= 3 else 0.0
-			buckets[slot].append(xf)
-			customs[slot].append(custom)
-			var off: Vector3 = xf.origin - hit
-			var de: float = off.dot(east)
-			var dn: float = off.dot(north)
-			e_lo = minf(e_lo, de)
-			e_hi = maxf(e_hi, de)
-			n_lo = minf(n_lo, dn)
-			n_hi = maxf(n_hi, dn)
-		_prop_cover = Vector2(e_hi - e_lo, n_hi - n_lo)
-	else:
-		_prop_cover = Vector2.ZERO
-	_prop_pool = total
+	var capacity := PROP_MAX + mini(FOREST_MAX, _forest_budget * 2)
+	var kit := _kit
+	var result := {}
+	_props_result = result
+	_props_pending = true
+	_props_task = WorkerThreadPool.add_task(func():
+		result["data"] = pack_prop_buffers(xforms, variants, hit, east, north, capacity, kit),
+		false, "surface_prop_buffers")
+
+
+static func pack_prop_buffers(xforms: Array, variants: PackedByteArray, hit: Vector3,
+		east: Vector3, north: Vector3, capacity: int, kit: String) -> Dictionary:
+	var buffers: Array = [[], [], []]
+	var count := mini(xforms.size(), capacity)
+	var lo := Vector2(INF, INF)
+	var hi := Vector2(-INF, -INF)
+	for i in count:
+		var pick := mini(int(float(i) * float(xforms.size()) / float(count)), xforms.size() - 1)
+		var xf: Transform3D = xforms[pick]
+		var variant := int(variants[pick]) if pick < variants.size() else 0
+		var slot := mini(variant, PROP_SLOTS - 1)
+		var b := xf.basis
+		# MultiMesh GPU format is three row-major vec4s, followed by optional RGBA.
+		buffers[slot].append_array([b.x.x, b.y.x, b.z.x, xf.origin.x,
+			b.x.y, b.y.y, b.z.y, xf.origin.y, b.x.z, b.y.z, b.z.z, xf.origin.z])
+		if kit == "tree" and slot == 2:
+			buffers[slot].append_array([1.0 if variant >= 3 else 0.0, 0.0, 0.0, 1.0])
+		var off := xf.origin - hit
+		var point := Vector2(off.dot(east), off.dot(north))
+		lo = lo.min(point)
+		hi = hi.max(point)
+	return {"buffers": [PackedFloat32Array(buffers[0]), PackedFloat32Array(buffers[1]), PackedFloat32Array(buffers[2])],
+		"cover": hi - lo if count else Vector2.ZERO, "pool": xforms.size()}
+
+
+func _poll_props() -> void:
+	if _props_pending and WorkerThreadPool.is_task_completed(_props_task):
+		WorkerThreadPool.wait_for_task_completion(_props_task)
+		_publish_props()
+
+
+func _publish_props() -> void:
+	var start := Time.get_ticks_usec() if _profile else 0
+	var data: Dictionary = _props_result.data
+	_props_pending = false
+	_props_result = {}
+	_prop_pool = data.pool
+	_prop_cover = data.cover
 	for slot in PROP_SLOTS:
-		var mm: MultiMesh = _prop_nodes[slot].multimesh
-		if mm == null:
-			continue
-		var packed: Array = buckets[slot]
-		if mm.instance_count != PROP_MAX:
-			mm.instance_count = PROP_MAX
-		mm.visible_instance_count = packed.size()
-		for i in packed.size():
-			mm.set_instance_transform(i, packed[i])
-			if mm.use_custom_data:
-				mm.set_instance_custom_data(i, Color(float(customs[slot][i]), 0.0, 0.0, 1.0))
+		var mm := _prop_nodes[slot].multimesh
+		var buffer: PackedFloat32Array = data.buffers[slot]
+		var stride := 16 if mm.use_custom_data else 12
+		var count := buffer.size() / stride
+		if mm.instance_count != count:
+			mm.instance_count = count
+		if count > 0:
+			mm.buffer = buffer
+		mm.visible_instance_count = count
+	if _profile:
+		perf_props_us = Time.get_ticks_usec() - start
 
 
 # What the tile is actually made of right now — read by tools/test_surface_band.gd
@@ -1605,6 +1697,11 @@ func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 		# How much the albedo map still knows at this ring size.
 		m.set_shader_parameter("map_weight",
 			_sampler.map_weight(ring_reach_km(0, _base_quad), _radius))
+	if _structures != null and _structures.material != null:
+		_structures.material.set_shader_parameter("sun_dir", d)
+		_structures.material.set_shader_parameter("haze_density", density)
+		_structures.material.set_shader_parameter("air_amount", _prop_mat.get_shader_parameter("air_amount"))
+		_structures.material.set_shader_parameter("color_air", _prop_mat.get_shader_parameter("color_air"))
 	if _prop_mat != null:
 		_prop_mat.set_shader_parameter("sun_dir", d)
 		_prop_mat.set_shader_parameter("haze_density", density)

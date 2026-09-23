@@ -23,6 +23,10 @@ func _initialize() -> void:
 		for recipe in recipes.values():
 			check("recipe has output and slots", not recipe.output.is_empty() and recipe.inputs.size() > 0)
 			for input in recipe.inputs:
+				var fillable := false
+				for element in elements.values():
+					fillable = fillable or input.accepts(element, 1.0)
+				check("recipe slot can be supplied: " + str(recipe.id), fillable)
 				check("slot has positive amount and valid grade", input.amount > 0 and input.min_grade >= 0.0 and input.min_grade <= 1.0)
 	print("crafting_catalog: ", "OK" if failures == 0 else "FAIL %d" % failures)
 	quit(0 if failures == 0 else 1)

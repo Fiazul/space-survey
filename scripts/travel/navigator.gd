@@ -34,7 +34,7 @@ func set_markers(cam: Camera3D, markers: Array) -> void:
 func _draw() -> void:
 	if _cam == null:
 		return
-	_draw_gizmo()
+	# World-axis developer gizmo retired; HUD shows projected nose and motion.
 	for m in _markers:
 		_draw_marker(m.rel, String(m.name), String(m.dist), m.color, bool(m.get("drop", false)))
 

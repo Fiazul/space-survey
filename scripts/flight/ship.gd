@@ -215,6 +215,10 @@ var velocity := Vector3.ZERO
 var anchor_name := "Earth"     # body the physical state is measured from
 var surface_position_revision := 0 # explicit relocations invalidate contact sweeps
 var anchor_off := Vector3.ZERO # km from that body's centre — the real position
+var _motion_remainder := Vector3.ZERO # preserve sub-ULP travel at giant/star radii
+var _motion_position := Vector3.INF
+var _motion_anchor := ""
+var _motion_revision := -1
 # Exclusion-shell edge state (docs/adr/0002 finding 2): the entry handshake
 # fires on an exact outside->inside transition, tracked here, never on
 # break_at_exclusion's own (tolerance-swallowed) `dropped` flag.
@@ -556,7 +560,7 @@ func _clamp_time_warp(thrusting: bool, is_braking: bool) -> void:
 	var was_cruise := time_rate > 1.001
 	# DEV speed is for closing 42,000 km. Honest warp still dies on burn; this does not.
 	# EZ: cruise never punches a world (Earth air, moon bubble, 1.2 R star).
-	if (thrusting and not dev_speed) or is_braking or not cruise_ok:
+	if (thrusting and not dev_speed) or is_braking or not cruise_ok or (systems != null and (systems.gear_target or systems.gear_fraction > .01)):
 		if was_cruise and not cruise_ok:
 			drop_flash = DROP_FLASH_SECS
 		_time_idx = 0
@@ -636,6 +640,33 @@ func _newton_g() -> Vector3:
 # coarser at that one frame, but bounded cost instead of a linear blow-up.
 const MAX_SUBSTEPS := 64
 
+func _motion_is_continuous() -> bool:
+	return anchor_off == _motion_position and anchor_name == _motion_anchor and surface_position_revision == _motion_revision
+
+
+func _advance_anchor(displacement: Vector3) -> void:
+	# Vector3 is float32: at the Sun, adding metres per frame to millions of
+	# kilometres rounds to zero. Carry that rounding loss into the next step.
+	if not _motion_is_continuous():
+		_motion_remainder = Vector3.ZERO
+	var requested := displacement + _motion_remainder
+	var before := anchor_off
+	anchor_off += requested
+	_motion_remainder = requested - (anchor_off-before)
+	_motion_position = anchor_off
+	_motion_anchor = anchor_name
+	_motion_revision = surface_position_revision
+
+
+func anchor_distance_km() -> float:
+	var remainder := _motion_remainder if _motion_is_continuous() else Vector3.ZERO
+	# Scalar arithmetic stays double precision, including the final length.
+	var x: float = float(anchor_off.x) + float(remainder.x)
+	var y: float = float(anchor_off.y) + float(remainder.y)
+	var z: float = float(anchor_off.z) + float(remainder.z)
+	return sqrt(x*x+y*y+z*z)
+
+
 func _newton_advance(sim: float) -> void:
 	var arad := anchor_radius_km()
 	var aair := Ephemeris.atmo_top_km(anchor_name)
@@ -666,7 +697,7 @@ func _newton_advance(sim: float) -> void:
 			step_dt = dt - float(hit.t)   # already advanced to the crossing; don't double-count it
 		velocity += _newton_g() * step_dt
 		_newton_atmo_drag(step_dt)
-		anchor_off += velocity * step_dt
+		_advance_anchor(velocity * step_dt)
 		_newton_ground(ground_from)
 		_newton_corotate(step_dt)
 		# Entry handshake fires on the exact outside->inside EDGE, tracked here —
@@ -735,8 +766,82 @@ func _newton_corotate(dt: float) -> void:
 
 
 func surface_clearance_km() -> float:
-	# Conservative bounding sphere until landing-gear contact points are authored.
-	return maxf(_surface_hull_radius_km, 0.02)
+	var up := anchor_off.normalized()
+	var basis := transform.basis * _mesh_root.basis if _mesh_root != null else transform.basis
+	var lowest := 0.0
+	for point in _hull_probes:
+		lowest = maxf(lowest, -(basis * point).dot(up))
+	if systems != null:
+		for point in systems.foot_points():
+			lowest = maxf(lowest, -(basis * point).dot(up))
+	return lowest + ShipSurfaceContact.SKIN
+
+
+func resolve_surface_motion(sampler: TerrainSampler, from: Vector3, to: Vector3,
+		motion: Vector3, radius: float, body_basis: Basis) -> Dictionary:
+	var pose := body_basis.inverse() * transform.basis
+	if _mesh_root != null:
+		pose *= _mesh_root.basis.orthonormalized()
+	var feet := systems.foot_points() if systems != null else PackedVector3Array()
+	var hit := ShipSurfaceContact.resolve(sampler, from, to, motion, radius, pose, _hull_box, _hull_probes, feet)
+	landed = systems != null and systems.gear_fraction >= .999 and hit.gear_hit \
+		and hit.velocity.length() < .003 and pose.y.dot(to.normalized()) > .85 \
+		and hit.normal.dot(to.normalized()) > .85 and not sampler.is_water(to.normalized())
+	return hit
+
+
+func toggle_gear() -> void:
+	if systems == null or frozen or transiting:
+		return
+	if systems.gear_target and landed:
+		debug_toast = "LIFT OFF BEFORE RETRACTING GEAR"
+		return
+	systems.gear_target = not systems.gear_target
+	if systems.gear_target:
+		systems.weapons_target = false
+		auto_cruise = false
+		autopilot = false
+	debug_toast = "GEAR LOWERING  ·  Space lift / Ctrl descend" if systems.gear_target else "GEAR RETRACTING"
+
+
+func toggle_hardpoints() -> void:
+	if systems == null or frozen or transiting:
+		return
+	if not systems.weapons_target and not weapons_in_atmosphere():
+		debug_toast = "HARDPOINTS LOCKED  ·  ENTER ATMOSPHERE"
+		return
+	if systems.gear_target or systems.gear_fraction > .01:
+		debug_toast = "RETRACT GEAR BEFORE DEPLOYING WEAPONS"
+		return
+	systems.weapons_target = not systems.weapons_target
+	debug_toast = "HARDPOINTS DEPLOYING" if systems.weapons_target else "HARDPOINTS STOWING"
+
+
+func weapons_ready() -> bool:
+	return can_fire and not frozen and not transiting and weapons_in_atmosphere() \
+		and systems != null and systems.weapons_ready()
+
+
+func weapons_in_atmosphere() -> bool:
+	if not newton:
+		return false
+	var body := nearest_name if not nearest_name.is_empty() else anchor_name
+	var air := Ephemeris.atmo_top_km(body)
+	var radius := Ephemeris.body_radius_km(body)
+	var distance := anchor_off.length() if body == anchor_name else nearest_dist
+	return air > 0.0 and distance >= radius and distance < radius + air
+
+
+func update_weapon_environment() -> void:
+	if systems != null and systems.weapons_target and not weapons_in_atmosphere():
+		systems.weapons_target = false
+		debug_toast = "ATMOSPHERE EXIT  ·  HARDPOINTS STOWING"
+
+
+func prepare_weapons() -> void:
+	if systems != null and weapons_in_atmosphere() and not systems.gear_target \
+		and systems.gear_fraction < .01 and not frozen and not transiting:
+		systems.weapons_target = true
 
 
 func _newton_ground(previous: Vector3 = Vector3.INF) -> void:
@@ -746,8 +851,8 @@ func _newton_ground(previous: Vector3 = Vector3.INF) -> void:
 		return  # first-frame fallback is resolved by main after binding the body
 	var start := anchor_off if previous == Vector3.INF else previous
 	var inverse := terrain_basis.inverse()
-	var contact := terrain.resolve_motion(inverse * start, inverse * anchor_off,
-		inverse * velocity, anchor_radius_km(), surface_clearance_km())
+	var contact := resolve_surface_motion(terrain, inverse * start, inverse * anchor_off,
+		inverse * velocity, anchor_radius_km(), terrain_basis)
 	anchor_off = terrain_basis * (contact.position as Vector3)
 	velocity = terrain_basis * (contact.velocity as Vector3)
 	surface_impact = surface_impact or bool(contact.hit)
@@ -796,7 +901,10 @@ var _streak_mat: StandardMaterial3D
 var _cam_zoom := 1.0          # target zoom (mouse wheel / pinch)
 var _cam_zoom_smooth := 1.0   # eased toward _cam_zoom
 var touch_active := false     # set true by main.gd when the touch overlay is built
-var _surface_hull_radius_km := HULL_KM * 0.87
+var systems: ShipSystems
+var landed := false
+var _hull_box := AABB(Vector3(-.02, -.01, -.04), Vector3(.04, .02, .08))
+var _hull_probes := PackedVector3Array()
 var _hull_km := HULL_KM       # live fitted hull length (km); camera sits in hull-lengths
 var _cam_basis := Basis()
 var _bank := 0.0
@@ -833,6 +941,13 @@ func default_zoom() -> float:
 	return TOUCH_DEFAULT_ZOOM if touch_active else 1.0
 
 
+# GUI buttons get first refusal before a click returns control to flight.
+func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		if not _mouse_captured and not frozen:
+			_set_capture(true)
+
+
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and _mouse_captured:
 		_mouse_delta += event.relative
@@ -841,8 +956,6 @@ func _input(event: InputEvent) -> void:
 			_cam_zoom = clampf(_cam_zoom - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_cam_zoom = clampf(_cam_zoom + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
-		elif not _mouse_captured and not frozen:
-			_set_capture(true)
 	elif event is InputEventKey and event.pressed and not event.echo and newton:
 		if event.keycode == KEY_PERIOD or event.keycode == KEY_BRACKETRIGHT:
 			_time_idx = mini(_time_idx + 1, TIME_RATES.size() - 1)
@@ -905,6 +1018,9 @@ func _clear_air_fx() -> void:
 
 
 func fly(delta: float) -> void:
+	update_weapon_environment()
+	if systems != null:
+		systems.step(delta)
 	# Wormhole transit: motion held, view locked forward, streaks at full tilt.
 	if transiting:
 		velocity = Vector3.ZERO
@@ -1020,7 +1136,7 @@ func fly(delta: float) -> void:
 		if kyaw != 0.0:
 			var kax := YAW_KEY_RATE * (REVERSE_BOOST if _yaw_rate * kyaw < 0.0 else 1.0)
 			_yaw_rate = clampf(_yaw_rate + kyaw * kax * delta, -MAX_YAW_RATE, MAX_YAW_RATE)
-		if touch_pitch != 0.0:
+		if touch_pitch != 0.0 and not (systems != null and systems.gear_target):
 			md.y += touch_pitch * TOUCH_PITCH_MD
 		if absf(md.y) > MOUSE_DEADZONE:
 			_pitch_rate = clampf(_pitch_rate + md.y * mouse_sens * RATE_ACCEL, -MAX_PITCH_RATE, MAX_PITCH_RATE)
@@ -1039,7 +1155,7 @@ func fly(delta: float) -> void:
 		orthonormalize()  # scrub float drift out of the basis over time
 		_look_yaw = 0.0
 		_look_pitch = 0.0
-		# Sol: a turn is a turn. Carry speed with the hull so the nose and the path match.
+		# Carry normal forward flight; a gravity-driven backwards fall keeps its direction.
 		if newton:
 			velocity = TurnCarry.apply(velocity, attitude_before, transform.basis)
 
@@ -1082,6 +1198,8 @@ func fly(delta: float) -> void:
 		lift += 1.0
 	if Input.is_physical_key_pressed(KEY_CTRL):
 		lift -= 1.0
+	if systems != null and systems.gear_target:
+		lift -= touch_pitch # mobile UP/DOWN translates vertically during landing
 
 	# FTL: every hull can spool warp by holding W. There's no gate — instead the
 	# force-slow safe-zones around stars/planets cap your speed when you're near them,
@@ -1101,14 +1219,14 @@ func fly(delta: float) -> void:
 		# Honest Sol: engines only. Warp is not a local speed tier.
 		_warp_charge = 0.0
 		eff_warp = 1.0
-	elif warp > 1.0 and not combat_lock:
+	elif warp > 1.0 and not combat_lock and not (systems != null and (systems.gear_target or systems.gear_fraction > .01)):
 		if _in_fwd() > 0.0 or autopilot:   # auto-cruise/autopilot/touch-thrust spool warp too
 			_warp_charge = minf(_warp_charge + delta / WARP_CHARGE_TIME, 1.0)
 		else:
 			_warp_charge = maxf(_warp_charge - delta / WARP_DECAY_TIME, 0.0)
 		var c := _warp_charge * _warp_charge * (3.0 - 2.0 * _warp_charge)   # smoothstep
 		eff_warp = lerpf(WARP_FLOOR, warp, c)
-	elif combat_lock:
+	elif combat_lock or (systems != null and systems.gear_fraction > .01):
 		# No interstellar speed during combat — bleed any spool back to sublight.
 		_warp_charge = maxf(_warp_charge - delta / WARP_DECAY_TIME, 0.0)
 
@@ -1250,6 +1368,9 @@ func fly(delta: float) -> void:
 	# nose with weight instead of snapping. +lean (mouse down → nose-down dive) reads natural.
 	var target_lean := clampf(lean * LEAN_PITCH_GAIN, -LEAN_PITCH, LEAN_PITCH)
 	_lean = lerpf(_lean, target_lean, clampf(LEAN_SMOOTH * delta, 0.0, 1.0))
+	if systems != null and systems.gear_fraction > 0.0:
+		_bank *= 1.0 - systems.gear_fraction
+		_lean *= 1.0 - systems.gear_fraction
 	_mesh_root.rotation = Vector3(_lean, 0.0, _bank)   # clear any transit flip/wobble
 	# Cinematic drift-flip: a full 360° barrel roll layered on the bank (cosmetic — heading
 	# is untouched). The sideways drift kick was added to velocity in do_flip().
@@ -1482,9 +1603,22 @@ func _set_capture(c: bool) -> void:
 # leave the visible nose (slightly below centre) instead of drifting sideways when you
 # bank into a turn or strafe with A/D. The forward offset sits on the roll axis (so it's
 # unaffected); the small downward drop is rolled with the hull to stay glued to the gun.
-func muzzle_off() -> Vector3:
-	var local_off := Basis.from_euler(Vector3(0.0, 0.0, _bank * MUZZLE_BANK_FOLLOW)) * Vector3(0.0, -muzzle_drop, -muzzle)
-	return anchor_off + transform.basis * local_off
+func muzzle_local(slot: int = 0) -> Vector3:
+	return _mesh_root.transform * systems.muzzle_local(slot) if systems != null else Vector3(0, -muzzle_drop, -muzzle)
+
+func muzzle_off(slot: int = 0) -> Vector3:
+	return anchor_off + transform.basis * muzzle_local(slot)
+
+func weapon_direction() -> Vector3:
+	return (transform.basis * _mesh_root.basis * Vector3.FORWARD).normalized()
+
+func barrel_direction(slot: int = 0) -> Vector3:
+	var node := systems.muzzle_node(slot) if systems != null else null
+	return -node.global_basis.z.normalized() if node != null else weapon_direction()
+
+func aim_mount(slot: int, direction: Vector3) -> void:
+	var local_direction := (transform.basis * _mesh_root.basis).inverse() * direction
+	systems.aim_mount(slot, local_direction)
 
 
 # ----------------------------------------------------------------------------
@@ -1588,6 +1722,8 @@ func _build_ship_model(idx: int) -> void:
 		_mesh_root.remove_child(c)
 		c.queue_free()
 	_authored_propulsion.clear()
+	systems = null
+	_mesh_root.scale = Vector3.ONE
 	_torch_materials.clear()
 	_nozzle_lights.clear()
 	_propulsion_surge = 0.0
@@ -1658,7 +1794,12 @@ func _build_ship_model(idx: int) -> void:
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
 	_fit_streaks()   # the debris field is measured in hull lengths; this hull just changed
 	var box := ShipMesh.fit_model(_mesh_root, model, _hull_km)
-	_surface_hull_radius_km = box.size.length() * 0.5
+	_hull_box = box
+	_hull_probes = ShipSurfaceContact.hull_points(box)
+	systems = ShipSystems.new()
+	_mesh_root.add_child(systems)
+	systems.configure(box, idx, hull_tint, _mesh_root)
+	landed = false
 	# The Class II source only supplies six flat propulsion patches. Fit the hull
 	# first, then extend those exact sockets into visible two-layer torch plumes so
 	# exhaust volume cannot alter the intended ship scale.
@@ -1874,7 +2015,7 @@ func _kill_turn_rates() -> void:
 # cosmetic (mesh only, so heading/aim are unaffected); the drift is a one-off velocity kick
 # that decays through the normal damping. dir < 0 = left, ≥ 0 = right. Works in free-look too.
 func do_flip(dir := 1.0) -> void:
-	if _flip_t > 0.0 or frozen or transiting:
+	if _flip_t > 0.0 or frozen or transiting or (systems != null and systems.gear_fraction > .01):
 		return
 	_flip_dir = -1.0 if dir < 0.0 else 1.0
 	_flip_t = FLIP_TIME
@@ -1979,4 +2120,11 @@ func _build_primitive_ship() -> void:
 	_mesh_root.add_child(engine)
 	_hull_km = HULL_KM
 	_fit_streaks()
-	_mesh_root.scale = Vector3.ONE * (HULL_KM / 3.4)
+	for part in _mesh_root.get_children():
+		if part is Node3D:
+			part.transform = Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (HULL_KM / 3.4))) * part.transform
+	_hull_box = ShipMesh.combined_aabb(_mesh_root)
+	_hull_probes = ShipSurfaceContact.hull_points(_hull_box)
+	systems = ShipSystems.new()
+	_mesh_root.add_child(systems)
+	systems.configure(_hull_box, 4, Color(.5, .6, .7))

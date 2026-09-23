@@ -2,6 +2,8 @@ class_name TerrainSampler
 extends RefCounted
 const SurfaceRecipe := preload("res://scripts/world/surface_recipe.gd")
 var surface: Dictionary
+var settlements: Array = []
+var _structure_contact_cache := {}
 # THE height function. One instance per body, and every consumer holds the same
 # instance: the ring mesh builder displaces vertices with it, and main's contact
 # kill measures altitude with it. If those two ever computed height differently
@@ -176,6 +178,7 @@ var _peak_dot := PackedFloat32Array()
 
 func _init(recipe: Dictionary) -> void:
 	surface = SurfaceRecipe.resolve(recipe)
+	settlements = SurfaceSettlement.resolve(recipe)
 	_h_stride = 2 if str(recipe.get("height_encoding", "r8")) == "rg16" else 1
 	var hm := _load_gray(str(recipe.get("height", "")), _h_stride)
 	_h_bytes = hm.bytes
@@ -427,7 +430,8 @@ func ice01(dir: Vector3) -> float:
 		return 0.0
 	var c := albedo_color(dir)
 	var lum := c.r * 0.299 + c.g * 0.587 + c.b * 0.114
-	return smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.15, lum)
+	return smoothstep(ICE_ALBEDO_LUM_MIN, ICE_ALBEDO_LUM_MIN + 0.15, lum) * smoothstep(
+		float(surface.sea_ice_latitude), float(surface.sea_ice_latitude) + 0.12, absf(dir.y))
 
 
 # Alpine snow from the recipe snow line, not the sea-ice mask. ice01 stays the
@@ -437,8 +441,8 @@ const SNOW_FADE_M := 1500.0
 
 
 func snow01(dir: Vector3) -> float:
-	var line_m := float(surface.get("snow_line_m", 0.0))
-	if line_m <= 0.0:
+	var line_m := preload("res://scripts/world/surface_biome.gd").snow_line_m(surface, dir)
+	if line_m == INF:
 		return 0.0
 	var h := height_m(dir)
 	if h < line_m:
@@ -549,6 +553,22 @@ func normal_at(position: Vector3, radius: float) -> Vector3:
 
 func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		radius: float, clearance: float) -> Dictionary:
+	var terrain_result := _resolve_terrain_motion(from, to, velocity, radius, clearance)
+	if settlements.is_empty() or not bool(surface.get("solid", false)):
+		return terrain_result
+	var structure_result := SurfaceSettlement.collide(self, from, terrain_result.position,
+		velocity, radius, clearance, _structure_contact_cache)
+	return structure_result if structure_result.hit or structure_result.budget_limited else terrain_result
+
+
+func resolve_structure_hull(from: Vector3, to: Vector3, velocity: Vector3,
+		radius: float, skin: float, basis: Basis, half: Vector3) -> Dictionary:
+	return SurfaceSettlement.collide(self, from, to, velocity, radius, skin,
+		_structure_contact_cache, basis, half)
+
+
+func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
+		radius: float, clearance: float, slop: float = CONTACT_SLOP_KM) -> Dictionary:
 	var result := {"hit": false, "position": to, "velocity": velocity,
 		"normal": Vector3.ZERO, "budget_limited": false}
 	if not bool(surface.get("solid", false)) or radius <= 0.0:
@@ -557,14 +577,14 @@ func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 	# accumulates enough speed to fall through it and produce a repeated bounce.
 	var contact_distance := clearance
 	if velocity.length() < CONTACT_SETTLE_KMS and velocity.dot(from.normalized()) < 0.0:
-		contact_distance += CONTACT_SLOP_KM + 0.0005
+		contact_distance += slop + 0.0005
 	var delta := to - from
 	var travel := delta.length()
 	var begin := 0.0
 	var end := 1.0
 	# Clip the sweep to the outer terrain envelope. Interplanetary clear space
 	# must not consume terrain samples, even during accelerated time.
-	var envelope := radius + max_height_km() + clearance + CONTACT_SLOP_KM
+	var envelope := radius + max_height_km() + clearance + slop
 	if travel > 0.000001:
 		var ray := delta / travel
 		var b := from.dot(ray)
@@ -608,13 +628,22 @@ func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		up = Vector3.UP
 	var normal := normal_at(up * ground_radius_km(up, radius), radius)
 	# Radial clearance must grow on slopes to accommodate the hull's sphere.
-	var separation := (clearance + CONTACT_SLOP_KM) / maxf(normal.dot(up), 0.15)
+	var separation := (clearance + slop) / maxf(normal.dot(up), 0.15)
 	result.position = up * (ground_radius_km(up, radius) + separation)
 	result.normal = normal
 	var inward := velocity.dot(normal)
 	if inward < 0.0:
 		var bounce := minf(-inward * CONTACT_RESTITUTION, CONTACT_BOUNCE_MAX_KMS) if -inward > CONTACT_SETTLE_KMS else 0.0
-		result.velocity = velocity - normal * inward + normal * bounce
+		# A grazing hypersonic impact used to retain kilometres/second along
+		# the slope. That tangent can point UP from the planet, overwhelming
+		# groundward thrust for minutes despite the capped normal bounce.
+		# Dissipate contact motion; preserve a small slide, not a terrain launch.
+		var tangent := velocity - normal * inward
+		var retained := maxf(tangent.length() - (-inward) * 0.85, 0.0)
+		if -inward > CONTACT_SETTLE_KMS:
+			retained = minf(retained, 0.02)
+		tangent = tangent.normalized() * retained
+		result.velocity = tangent + normal * bounce
 	return result
 
 
@@ -795,3 +824,7 @@ func _texel(bytes: PackedByteArray, i: int, stride: int) -> float:
 	if stride == 2:
 		return float(int(bytes[i]) * 256 + int(bytes[i + 1])) / 65535.0
 	return float(bytes[i]) / 255.0
+
+
+func has_albedo() -> bool:
+	return _a_w > 0

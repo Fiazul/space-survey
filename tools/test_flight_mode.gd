@@ -185,9 +185,7 @@ func _initialize() -> void:
 	failed += _check("drag_clamp_result_is_the_25pct_cap",
 		is_equal_approx(dv_synthetic, DRAG_MAX_DV_FRAC * spd_synthetic))
 
-	var hud_src := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
-	failed += _check("hud_mode_line", hud_src.find("Mode    ") >= 0)
-	failed += _check("hud_drop_tag", hud_src.find("DROP") >= 0)
+	# HUD interaction is exercised by test_flight_hud.tscn.
 
 	# DEV FASTAIR tour aid: no cap left to multiply, only weaker drag
 	# (DEV_AIR_DRAG_MULT). The switch itself is a static shared with the real

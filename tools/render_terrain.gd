@@ -42,6 +42,8 @@ func _ready() -> void:
 	# lat, lon, altitude km, pitch down degrees, label
 	# lat, lon, altitude km, LOOK-AHEAD km, label
 	_shots = [
+		[51.51, -0.12, 0.4, 1.4, "london_ruins", "Earth"],
+		[23.81, 90.41, 0.4, 1.4, "dhaka_ruins", "Earth"],
 		[10.0, 20.0, 0.08, 0.25, "moon_rocks", "Moon"],
 		[10.0, 20.0, 10.0, 0.0, "moon_crater", "Moon", "crater"],
 		[10.0, 20.0, 6.0, 0.0, "io_volcano", "Io", "volcano"],

@@ -30,7 +30,7 @@ func _initialize() -> void:
 	failed += _check("moon_map", G.has_map(G.recipe_for({ "name": "Moon" })))
 	failed += _check("io_map", G.has_map(G.recipe_for({ "name": "Io" })))
 	failed += _check("earth_map", G.has_map(G.recipe_for({ "name": "Earth" })))
-	failed += _check("sun_map", G.has_map(G.recipe_for({ "name": "Sun" })))
+	failed += _check("sun_stellar_recipe", G.recipe_for({ "name": "Sun" }).has("stellar"))
 
 	var moon_eq := Vector3.ZERO
 	var sun_eq := Vector3.ZERO
@@ -67,12 +67,12 @@ func _initialize() -> void:
 		if rec.source == "invented":
 			print("sol_cook: invented %s" % nm)
 			failed += 1
-		if nm != "Deimos" and not G.has_map(rec):
+		if nm != "Deimos" and rec.kind != "star" and not G.has_map(rec):
 			missing_maps.append(nm)
 	failed += _check("deimos_named", G.recipe_for({ "name": "Deimos" }).name == "Deimos")
 	if not missing_maps.is_empty():
 		print("sol_cook: missing maps %s" % ", ".join(missing_maps))
-	failed += _check("sol_maps_except_deimos", missing_maps.is_empty())
+	failed += _check("sol_planet_maps_except_deimos", missing_maps.is_empty())
 
 	if failed == 0:
 		print("sol_cook: OK")

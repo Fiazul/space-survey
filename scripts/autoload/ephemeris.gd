@@ -434,6 +434,10 @@ func sweet_spot_off(body_name: String) -> Vector3:
 	if rad <= 0.0:
 		return Vector3.ZERO
 	var park := rad + maxf(atmo_top_km(body_name) * 1.5, 120.0)
+	# The generic +120 km park is a 28 g trap at the Sun: even boosted
+	# 3 g engines cannot climb out. At 4 solar radii ordinary thrust can leave.
+	if body_name == "Sun":
+		park = rad * 4.0
 	var out: Vector3 = -rel_km("Sun", body_name)
 	if out.length_squared() < 0.0001:
 		out = Vector3(1.0, 0.0, 0.0)

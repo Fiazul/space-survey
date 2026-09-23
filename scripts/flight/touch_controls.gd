@@ -103,8 +103,8 @@ var _pinch_active := false
 var _pinch_start_zoom := 1.0
 var _pinch_start_dist := 0.0
 
-# Assumption (orchestrator brief): UP/DOWN drive nose PITCH, not a Space/Ctrl lift
-# strafe. Flip to false + swap the two touch_pitch signs below to switch to lift.
+# UP/DOWN pitches during normal flight; Ship routes the same signed command to
+# vertical thrust with landing gear down. Drag-look still controls attitude.
 const UPDOWN_IS_PITCH := true
 
 
@@ -132,6 +132,8 @@ func _build() -> void:
 	_add("HOME",     340.0, 110, 64, Color(1.0, 0.7, 0.5), K_TAP_KEY, "R", 380.0, KEY_H)
 	_add("ZOOM+", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 10.0, -1)
 	_add("ZOOM−", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 84.0, 1)
+	_add("GEAR", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_TAP_KEY, "R", 158.0, KEY_B)
+	_add("ARMS", 460.0, 110, 64, Color(1.0, 0.65, 0.35), K_TAP_KEY, "R", 232.0, KEY_R)
 
 	_dev_btn = _add("DEV", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEV, "TR", 0.0)
 	_nodeath_btn = _add("NODEATH", 114.0, 100, 40, Color(1.0, 0.4, 0.4), K_TAP_DEBUG_SUB, "TR", 0.0, 0)
@@ -202,6 +204,12 @@ func _reset_all_input() -> void:
 func _process(delta: float) -> void:
 	if ship == null:
 		return
+	var menu_open: bool = main != null and main.hud != null and main.hud.is_systems_open()
+	for button in _buttons:
+		button.node.visible = not menu_open
+	if menu_open:
+		_reset_all_input()
+		return
 	# Log-space so a held button covers the whole range in ~1.5 s at a uniform perceived rate.
 	var zoom_amount: float = log(ship.ZOOM_MAX / ship.ZOOM_MIN) / 1.5 * delta
 	for dir in _zoom_held:
@@ -235,6 +243,9 @@ func _input(event: InputEvent) -> void:
 # A finger went down / up at pos.
 func _touch_at(index: int, pos: Vector2, pressed: bool) -> void:
 	if pressed:
+		if main != null and main.hud != null and main.hud.blocks_flight_touch(pos):
+			_finger[index] = "dead"
+			return
 		var hit: Variant = _button_at(pos)
 		if hit != null:
 			_finger[index] = hit

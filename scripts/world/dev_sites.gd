@@ -7,15 +7,9 @@ extends RefCounted
 #
 # Three site MODEs:
 #   "surface" — lat_deg/lon_deg/alt_km on the body's own terrain. dir_for()
-#               uses the SAME lat/lon convention as TerrainSampler._dir_uv /
-#               surface_patch._dir_uv / render_terrain.gd's own `dir`: lon =
-#               atan2(dir.z, dir.x), lat = asin(dir.y). That frame does NOT
-#               rotate with the body's spin (planet_system.gd only rotates the
-#               far VISUAL mesh/model — see b.sphere.rotate_y/b.model.rotate_y
-#               — the ring/TerrainSampler direction render_terrain.gd itself
-#               samples is always this fixed, un-spun frame), so a fixed
-#               lat/lon always lands on the same real feature (Everest stays
-#               Everest) with no spin correction needed.
+#               uses the terrain's body-local lat/lon convention. The site panel
+#               transforms this position and heading by PlanetSystem.surface_basis
+#               before assigning the ship's inertial anchor offset.
 #   "park"    — Ephemeris.sweet_spot_off(body): the same safe sunward park
 #               _skin_finish()/F7 already use for a respawn.
 #   "geo"     — Ephemeris.geo_start_pos(): the sunlit Earth GEO F7 parks at.
@@ -36,6 +30,12 @@ const PARK_BODIES := [
 # Titan/Saturn parking altitudes) are new, taken from this brief.
 const LANDMARKS := [
 	# --- Earth ---
+	{"name": "London ruins 400 m", "body": "Earth", "mode": "surface",
+		"lat_deg": 51.51, "lon_deg": -0.12, "alt_km": 0.4, "heading_deg": 0.0,
+		"note": "abandoned districts — solid walls and broken roofs"},
+	{"name": "Dhaka ruins 400 m", "body": "Earth", "mode": "surface",
+		"lat_deg": 23.81, "lon_deg": 90.41, "alt_km": 0.4, "heading_deg": 0.0,
+		"note": "abandoned river plain — coastal plots are excluded"},
 	{"name": "Himalaya 9 km", "body": "Earth", "mode": "surface",
 		"lat_deg": 27.95, "lon_deg": 86.80, "alt_km": 9.0, "heading_deg": 0.0,
 		"note": "broad relief above the range"},
@@ -137,7 +137,7 @@ static func sites() -> Array:
 	for body in PARK_BODIES:
 		out.append({"name": "%s — park" % body, "body": body, "mode": "park",
 			"lat_deg": 0.0, "lon_deg": 0.0, "alt_km": 0.0, "heading_deg": 0.0,
-			"note": "safe sunward park"})
+			"note": "4 solar radii — ordinary engines can depart" if body == "Sun" else "safe sunward park"})
 	out.append_array(LANDMARKS)
 	return out
 

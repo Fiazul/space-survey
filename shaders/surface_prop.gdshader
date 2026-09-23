@@ -39,7 +39,7 @@ void fragment() {
 	vec3 l = normalize(sun_dir);
 	float ndl = max(dot(n, l), 0.0);
 	float sun_term = 0.92 * ndl;
-	float sky = air_amount * (0.10 + 0.22 * max(dot(n, up), 0.0));
+	float sky = air_amount * (0.22 + 0.28 * max(dot(n, up), 0.0));
 	float fill = 0.03;
 	float lit = (fill + sun_term + sky) * exposure;
 	float haze = clamp((1.0 - exp(-length(VERTEX) / haze_km)) * air_amount * haze_density, 0.0, 1.0);

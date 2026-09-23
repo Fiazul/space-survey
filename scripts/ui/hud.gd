@@ -1,8 +1,6 @@
 class_name HUD
 extends Node3D
-# Heads-up display: code-spawned controls on a CanvasLayer, styled for a clean
-# "space game" look — small text, soft drop-shadows, and frosted-glass panels
-# (linear-gradient backdrops + glowing edge borders) instead of bare labels.
+# Flight instruments stay compact and frameless; secondary actions live in Systems.
 #
 # Layout is authored against the 1280x720 reference (project stretch = canvas_items),
 # so it scales to fullscreen. refresh() is called by main.gd each frame.
@@ -12,11 +10,11 @@ const AU_PER_UNIT := 1.0 / 149597870.7
 const LY_PER_AU := 1.0 / 63241.077
 
 # --- palette -----------------------------------------------------------------
-const C_ACCENT := Color(0.45, 0.85, 1.0)     # cyan UI accent / edges
-const C_TEXT := Color(0.84, 0.92, 1.0)       # primary readout text
-const C_DIM := Color(0.55, 0.70, 0.88)       # secondary / labels
-const C_GREEN := Color(0.55, 1.0, 0.80)      # discovery / scan
-const C_WARN := Color(1.0, 0.45, 0.45)       # boss / danger
+const C_ACCENT := Color(0.56, 0.86, 0.76)     # cyan UI accent / edges
+const C_TEXT := Color(0.91, 0.95, 0.93)       # primary readout text
+const C_DIM := Color(0.67, 0.74, 0.72)       # secondary / labels
+const C_GREEN := Color(0.56, 0.86, 0.76)      # discovery / scan
+const C_WARN := Color(0.95, 0.49, 0.45)       # boss / danger
 
 # Shared right margin (1280 reference width − 16px). The combat readout and the
 # MAP/CODEX/?/⚙ bar below it both align their right edge here.
@@ -84,13 +82,12 @@ var _boss_bar: Control       # red boss HP bar (top-center, shown only while a b
 var _boss_fill: ColorRect
 var _boss_bar_w := 0.0
 var _reticle: Control   # dynamic crosshair (crosshair.gd)
-const RETICLE_AIM_DIST := 800.0   # how far down the nose the crosshair marks the shot line
 var _lock_ring: Control # radial progress arc drawn around the crosshair while holding X
 var _lock_frac := 0.0   # 0..1 hold progress (set by main from the X-hold timer)
 var _capture_ring: Control  # big centred radial that fills while capturing a body
 var _capture_label: Label   # "◎ CAPTURING …" centred under the ring
 var _guardian_label: Label  # guardian-fight banner: "WAVE 2/3 · capture locked/ready"
-var firing := false     # set by main each frame — blooms the crosshair while held
+var firing := false     # set by main each frame — fire-control activity tick
 var _hitmarker: Label   # flashes on the crosshair when a shot lands
 var _codex_label: Label # "Discovered N/M"
 var _objective_label: Label # "→ <star> <dist>" — the Survey guide line
@@ -114,20 +111,24 @@ var _detail_range := 600.0    # show the Details button within this of a body (�
 # --- HUD layout editor -------------------------------------------------------
 # Each movable widget is tracked by a stable id; positions are saved to disk and
 # re-applied on launch. Edit mode (opened from Settings) lets you drag them.
-const LAYOUT_PATH := "user://hud_layout.cfg"
+# Versioned layout: preserve the old file, never reinterpret its overlapping positions.
+const LAYOUT_PATH := "user://hud_layout_v3.cfg"
 # The shipped DEFAULT layout (the hand-tuned "best" arrangement). Used as each
 # widget's built-in position/scale, so fresh installs and Reset land here. A saved
 # user layout still overrides it.
 const DEFAULT_LAYOUT := {
-	"nav": Vector2(16, 14), "combat": Vector2(10.66, 628.67), "hull": Vector2(15.33, 98.67),
-	"teleport": Vector2(1088, 674), "buttons": Vector2(8.67, 680.0),
-	"details": Vector2(1088, 636), "radar": Vector2(1129.33, 11.33),
-	"cancel_nav": Vector2(12, 602),
+ "nav": Vector2(28, 582), "combat": Vector2(28, 108), "hull": Vector2(1080, 655),
+ "teleport": Vector2(0, 252), "buttons": Vector2(1024, 62),
+ "details": Vector2(1068, 612), "radar": Vector2(1150, 75),
+ "cancel_nav": Vector2(1068, 516), "destination": Vector2(1068, 555),
 }
 const DEFAULT_SCALE := {
-	"nav": 0.76, "combat": 0.7, "hull": 0.94, "teleport": 1.0,
-	"buttons": 0.76, "details": 1.0, "radar": 0.76, "cancel_nav": 0.7,
+	"nav": 1.0, "combat": 1.0, "hull": 1.0, "teleport": 1.0,
+	"buttons": 1.0, "details": 1.0, "radar": 0.5, "cancel_nav": 1.0,
 }
+var _flight_vector: Control
+var _mode_label: Label
+var _combat_panel: Control
 var ship_ref: Ship                 # set by main, used to free/recapture the cursor in edit mode
 var _movable: Array = []           # [{ id, node, def }]
 var _saved := {}                   # id -> Vector2 position loaded from disk
@@ -135,6 +136,9 @@ var _saved_scale := {}             # id -> float scale loaded from disk
 var _edit := false
 var _drag: Control = null          # widget currently being dragged
 var _drag_grab := Vector2.ZERO     # mouse offset within the dragged widget
+var _systems_scrim: Control
+var _systems_button: Button
+var _systems_recapture := false
 var _btn_bar: Control              # container wrapping the MAP/CODEX/?/⚙ buttons
 var _edit_ui: Control              # dim scrim + banner + Save/Reset/Done toolbar
 var _edit_toolbar: Control         # the toolbar rect (clicks here aren't drags)
@@ -147,32 +151,48 @@ func _ready() -> void:
 	add_child(_canvas)
 	_load_layout()
 
-	# Top-left flight readout, grouped in one frosted-glass panel.
-	var nav := _glass_panel(Vector2(16, 14), 198.0, C_ACCENT)
+	_dist_label = _make_label(Vector2(28, 24), 14, C_TEXT)
+	_dist_label.size = Vector2(540, 28)
+
+	var nav := _flight_instrument(236.0)
 	_canvas.add_child(nav.panel)
 	_track("nav", nav.panel)
-	_dist_label = _add_line(nav.body, 14, C_TEXT)
-	_speed_label = _add_line(nav.body, 10, C_DIM)
-	_tape_label = _add_line(nav.body, 10, C_DIM)
-	_near_label = _add_line(nav.body, 11, C_TEXT)
-	_codex_label = _add_line(nav.body, 10, C_GREEN)
-	_objective_label = _add_line(nav.body, 11, C_ACCENT)   # Survey guide: next unclaimed star
+	_mode_label = _add_line(nav.body, 11, C_ACCENT)
+	_speed_label = _add_line(nav.body, 24, C_TEXT)
+	_tape_label = _add_line(nav.body, 12, C_TEXT)
+	var destination := _flight_instrument(180.0)
+	_canvas.add_child(destination.panel)
+	_track("destination", destination.panel)
+	var target_title := _add_line(destination.body, 12, C_DIM)
+	target_title.text = "REFERENCE"
+	target_title.visible = false
+	_near_label = _add_line(destination.body, 13, C_TEXT)
+	_near_label.custom_minimum_size.x = 180
+	_near_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_codex_label = _add_line(destination.body, 11, C_DIM)
+	_codex_label.visible = false
+	_objective_label = _add_line(destination.body, 11, C_ACCENT)
+	_objective_label.custom_minimum_size.x = 180
+	_objective_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_flight_vector = preload("res://scripts/ui/flight_vector.gd").new()
+	_canvas.add_child(_flight_vector)
 
 	# Scan prompt/progress (center, below the crosshair) + discovery toast (center).
 	# Declutter: feedback moves OFF the centre to the free right side (x ≈ 980), left-aligned,
 	# so the play area around the crosshair stays clean. (A proper right-side rail/box is next.)
-	var rx := SCREEN.x - 300.0
-	_scan_label = _make_label(Vector2(rx, 214), 12, C_GREEN)
+	var touch_layout := OS.has_feature("mobile") or "--touch" in OS.get_cmdline_user_args()
+	var rx := 28.0 if touch_layout else 1000.0
+	_scan_label = _make_label(Vector2(rx, 510), 14, C_GREEN)
 	_scan_label.size = Vector2(288, 22)
 	_scan_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_toast_label = _make_label(Vector2(rx, 150), 14, C_GREEN)
+	_toast_label = _make_label(Vector2(rx, 450), 14, C_GREEN)
 	_toast_label.size = Vector2(288, 60)
 	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_toast_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_toast_label.modulate.a = 0.0
 
 	# Contextual prompt ("Press F to …") — right side, under the toast, left-aligned.
-	_prompt = _make_label(Vector2(rx, 244), 13, C_TEXT)
+	_prompt = _make_label(Vector2(rx, 535), 14, C_TEXT)
 	_prompt.size = Vector2(288, 44)
 	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -226,7 +246,7 @@ func _ready() -> void:
 	# First-run onboarding tip — small, crisp warm-white, centered near the top (clear of
 	# the crosshair cluster at y≈416 and the bottom _prompt). Kept deliberately compact:
 	# small text reads fine on a PC monitor and doesn't bloat the view.
-	_tip = _make_label(Vector2(0, 110), 11, Color(1.0, 0.97, 0.9))
+	_tip = _make_label(Vector2(0, 88), 14, Color(1.0, 0.97, 0.9))
 	_tip.size = Vector2(1280, 20)
 	_tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_tip.visible = false
@@ -258,7 +278,8 @@ func _ready() -> void:
 	cstat.panel.position.x = RIGHT_EDGE - cw
 	_canvas.add_child(cstat.panel)
 	_track("combat", cstat.panel)
-	_combat_label = _add_line(cstat.body, 12, C_TEXT)
+	_combat_panel = cstat.panel
+	_combat_label = _add_line(cstat.body, 14, C_TEXT)
 	_combat_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_combat_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
@@ -279,7 +300,7 @@ func _ready() -> void:
 	_guardian_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_guardian_label.visible = false
 
-	# Dynamic aiming reticle (custom-drawn): blooms while firing, kicks on a hit.
+	# Fire-control pipper: actual shot path, target lead and confirmed hits.
 	_reticle = load("res://scripts/ui/crosshair.gd").new()
 	_reticle.size = Vector2(80, 80)
 	_reticle.position = Vector2(640.0 - 40.0, 360.0 - 40.0)
@@ -320,11 +341,12 @@ func _ready() -> void:
 	# so it never blocks the centre of the view.
 	details_button = Button.new()
 	details_button.position = Vector2(1088, 636)
-	details_button.size = Vector2(176, 32)
+	details_button.size = Vector2(180, 26)
 	details_button.focus_mode = Control.FOCUS_NONE
-	details_button.add_theme_font_size_override("font_size", 12)
+	details_button.add_theme_font_size_override("font_size", 11)
+	details_button.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	details_button.add_theme_color_override("font_color", C_TEXT)
-	details_button.add_theme_stylebox_override("normal", _metal_box(Color(0.55, 0.85, 1.0), 0.5))
+
 	details_button.add_theme_stylebox_override("hover", _metal_box(Color(0.7, 0.95, 1.0), 0.9))
 	details_button.add_theme_stylebox_override("pressed", _metal_box(Color(0.8, 1.0, 1.0), 1.0))
 	details_button.visible = false
@@ -337,7 +359,7 @@ func _ready() -> void:
 # Squared, brushed-metal, cyan-glow sci-fi button: "⌖ TELEPORT EARTH".
 func _build_teleport_button(canvas: CanvasLayer) -> void:
 	teleport_button = Button.new()
-	teleport_button.text = "⌖  TELEPORT EARTH"
+	teleport_button.text = "RETURN TO EARTH"
 	teleport_button.size = Vector2(176, 32)
 	teleport_button.position = Vector2(RIGHT_EDGE - 176.0, 674)
 	teleport_button.focus_mode = Control.FOCUS_NONE
@@ -348,7 +370,6 @@ func _build_teleport_button(canvas: CanvasLayer) -> void:
 	teleport_button.add_theme_stylebox_override("hover", _metal_box(Color(0.55, 0.95, 1.0), 0.85))
 	teleport_button.add_theme_stylebox_override("pressed", _metal_box(Color(0.7, 1.0, 1.0), 1.0))
 	canvas.add_child(teleport_button)
-	_track("teleport", teleport_button)
 
 
 # Bottom-centre "TELEPORT NETWORK" button — appears while docked at a platform (set_hangar
@@ -385,7 +406,7 @@ func _build_bar(width: float, height: float, fill: Color) -> Dictionary:
 	sb.bg_color = Color(0.04, 0.06, 0.10, 0.72)
 	sb.set_border_width_all(1)
 	sb.border_color = Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.7)
-	sb.set_corner_radius_all(3)
+	sb.set_corner_radius_all(0)
 	frame.add_theme_stylebox_override("panel", sb)
 	root.add_child(frame)
 	var bar := ColorRect.new()
@@ -403,27 +424,27 @@ func _build_hull_bar(canvas: CanvasLayer) -> void:
 	holder.position = Vector2(16, 96)
 	holder.size = Vector2(184, 26)
 	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_hull_label = _new_label(10, C_DIM)
+	_hull_label = _new_label(10, C_TEXT)
 	_hull_label.position = Vector2(1, 0)
 	holder.add_child(_hull_label)
-	var bar := _build_bar(184, 12, C_GREEN)
-	bar.root.position = Vector2(0, 14)
+	var bar := _build_bar(156, 7, C_GREEN)
+	bar.root.position = Vector2(0, 16)
 	holder.add_child(bar.root)
 	_hull_fill = bar.fill
 	_hull_bar_w = bar.inner_w
 	# Weapon-energy bar (thin, cyan) — drained by shooting.
-	var ebar := _build_bar(184, 6, Color(0.4, 0.85, 1.0))
-	ebar.root.position = Vector2(0, 27)
+	var ebar := _build_bar(156, 5, Color(0.4, 0.85, 1.0))
+	ebar.root.position = Vector2(0, 26)
 	holder.add_child(ebar.root)
 	_energy_fill = ebar.fill
 	_energy_bar_w = ebar.inner_w
 	# Boost-energy bar (thin, orange) — drained by Shift boost.
-	var bbar := _build_bar(184, 6, Color(1.0, 0.65, 0.25))
-	bbar.root.position = Vector2(0, 35)
+	var bbar := _build_bar(156, 5, Color(1.0, 0.65, 0.25))
+	bbar.root.position = Vector2(0, 34)
 	holder.add_child(bbar.root)
 	_boost_fill = bbar.fill
 	_boost_bar_w = bbar.inner_w
-	holder.size = Vector2(184, 42)
+	holder.size = Vector2(184, 52)
 	canvas.add_child(holder)
 	_track("hull", holder)
 
@@ -459,36 +480,42 @@ func _build_guide(canvas: CanvasLayer) -> void:
 
 
 func _build_button_bar(canvas: CanvasLayer) -> void:
-	# The four buttons live inside one Control container laid out left-to-right, so
-	# the whole bar drags as a single unit. The container's right edge sits at
-	# RIGHT_EDGE so it lines up with the combat readout above it.
-	var gap := 6.0
-	var w_nav := 64.0
-	var w_map := 66.0
-	var w_log := 28.0          # quest log: a small ✦ icon button (tooltip explains it)
-	var w_codex := 74.0
-	var w_icon := 28.0
-	var bar_w := w_nav + gap + w_map + gap + w_log + gap + w_codex + gap + w_icon + gap + w_icon
-	_btn_bar = Control.new()
-	_btn_bar.position = Vector2(RIGHT_EDGE - bar_w, 80.0)
-	_btn_bar.size = Vector2(bar_w, 26)
-	canvas.add_child(_btn_bar)
-
-	var x_nav := 0.0
-	var x_map := x_nav + w_nav + gap
-	var x_log := x_map + w_map + gap
-	var x_codex := x_log + w_log + gap
-	var x_controls := x_codex + w_codex + gap
-	var x_settings := x_controls + w_icon + gap
-	nav_button = _icon_button(_btn_bar, "⊘ NAV", Vector2(x_nav, 0), w_nav, C_WARN)
-	map_button = _icon_button(_btn_bar, "◎ MAP", Vector2(x_map, 0), w_map, C_ACCENT)
-	log_button = _icon_button(_btn_bar, "✦", Vector2(x_log, 0), w_log, Color(1.0, 0.78, 0.35))
-	log_button.tooltip_text = "Mission Log (J)"
-	codex_button = _icon_button(_btn_bar, "▤ CODEX", Vector2(x_codex, 0), w_codex, C_GREEN)
-	controls_button = _icon_button(_btn_bar, "?", Vector2(x_controls, 0), w_icon, Color(0.8, 0.85, 1.0))
-	settings_button = _icon_button(_btn_bar, "⚙", Vector2(x_settings, 0), w_icon, Color(0.8, 0.85, 1.0))
-	controls_button.pressed.connect(toggle_controls)
+	var systems_layer := CanvasLayer.new()
+	systems_layer.layer = 100
+	add_child(systems_layer)
+	_systems_scrim = Control.new()
+	_systems_scrim.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	systems_layer.add_child(_systems_scrim)
+	_systems_scrim.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.pressed:
+			_systems_scrim.accept_event()
+			_set_systems_open(false))
+	_systems_button = _icon_button(systems_layer, "SYSTEMS  [F1]", Vector2(1136, 22), 112, C_ACCENT)
+	_systems_button.size.y = 32
+	_systems_button.position.x = get_viewport().get_visible_rect().size.x - 144.0
+	_btn_bar = Panel.new()
+	_btn_bar.size = Vector2(224, 300)
+	var background := _metal_box(C_ACCENT, 0.35)
+	background.bg_color = Color(0.025, 0.035, 0.045, 0.98)
+	_btn_bar.add_theme_stylebox_override("panel", background)
+	systems_layer.add_child(_btn_bar)
 	_track("buttons", _btn_bar)
+	_btn_bar.position.x += get_viewport().get_visible_rect().size.x - 1280.0
+	nav_button = _icon_button(_btn_bar, "NAVIGATION MARKERS", Vector2(12, 12), 200, C_ACCENT)
+	map_button = _icon_button(_btn_bar, "Navigation chart     [M]", Vector2(12, 48), 200, C_ACCENT)
+	log_button = _icon_button(_btn_bar, "Mission log                 [J]", Vector2(12, 84), 200, C_ACCENT)
+	codex_button = _icon_button(_btn_bar, "Survey archive           [L]", Vector2(12, 120), 200, C_ACCENT)
+	controls_button = _icon_button(_btn_bar, "Flight controls", Vector2(12, 156), 200, C_ACCENT)
+	settings_button = _icon_button(_btn_bar, "Settings", Vector2(12, 192), 200, C_ACCENT)
+	teleport_button.reparent(_btn_bar)
+	teleport_button.position = Vector2(12, 252)
+	teleport_button.size = Vector2(200, 32)
+	for button in [nav_button, map_button, log_button, codex_button, controls_button, settings_button, teleport_button]:
+		button.size.y = 32
+		button.pressed.connect(func(): _set_systems_open(false))
+	controls_button.pressed.connect(toggle_controls)
+	_systems_button.pressed.connect(func(): _set_systems_open(not _btn_bar.visible))
+	_set_systems_open(false)
 
 	# Cancel-Nav button: only shown while a LOCKED (paid) map waypoint is active.
 	cancel_nav_button = Button.new()
@@ -511,12 +538,34 @@ func _build_button_bar(canvas: CanvasLayer) -> void:
 # Reflect nav on/off in the button label so it's clear what tapping it does.
 func set_nav_stopped(stopped: bool) -> void:
 	if nav_button != null:
-		nav_button.text = "▶ NAV" if stopped else "⊘ NAV"
+		nav_button.text = "Navigation markers: OFF" if stopped else "Navigation markers: ON"
 
 # Show/hide the Cancel-Nav button (main calls this while a locked waypoint is active).
 func set_cancel_nav_visible(v: bool) -> void:
 	if cancel_nav_button != null:
 		cancel_nav_button.visible = v
+
+func is_systems_open() -> bool:
+	return _btn_bar != null and _btn_bar.visible
+
+func toggle_systems() -> void:
+	_set_systems_open(not is_systems_open())
+
+func blocks_flight_touch(pos: Vector2) -> bool:
+	return is_systems_open() or _systems_button.get_global_rect().has_point(pos)
+
+func _set_systems_open(open: bool) -> void:
+	if open and not is_systems_open():
+		_systems_recapture = Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED
+		if ship_ref != null:
+			ship_ref._set_capture(false)
+	elif not open and is_systems_open() and _systems_recapture:
+		if ship_ref != null and not ship_ref.frozen and not ship_ref.transiting:
+			ship_ref._set_capture(true)
+		_systems_recapture = false
+	_btn_bar.visible = open
+	_systems_scrim.visible = open
+	_systems_button.text = "CLOSE  [F1]" if open else "SYSTEMS  [F1]"
 
 func _icon_button(parent: Node, text: String, pos: Vector2, w: float, edge: Color) -> Button:
 	var b := Button.new()
@@ -542,10 +591,16 @@ func _track(id: String, node: Control) -> void:
 	# Built-in default = the shipped tuned layout (falls back to the node's own
 	# code position/scale if this id isn't in the default tables).
 	var def_pos: Vector2 = DEFAULT_LAYOUT.get(id, node.position)
+	var touch := OS.has_feature("mobile") or "--touch" in OS.get_cmdline_user_args()
+	if touch:
+		def_pos = {"destination": Vector2(28, 55), "details": Vector2(28, 85),
+			"hull": Vector2(28, 535), "cancel_nav": Vector2(28, 120), "radar": Vector2(1170, 76)}.get(id, def_pos)
 	var def_scl := node.scale
 	if DEFAULT_SCALE.has(id):
 		var ds: float = DEFAULT_SCALE[id]
 		def_scl = Vector2(ds, ds)
+	if touch and id == "radar":
+		def_scl = Vector2(0.45, 0.45)
 	node.position = def_pos
 	node.scale = def_scl
 	_movable.append({ "id": id, "node": node, "def": def_pos, "defs": def_scl })
@@ -717,11 +772,11 @@ func _metal_box(edge: Color, glow: float) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(0.08, 0.11, 0.16, 0.92)   # dark brushed steel
 	sb.set_border_width_all(1)
-	sb.border_color = edge                         # cyan edge line (the "glow" rim)
+	sb.border_color = Color(C_ACCENT.r, C_ACCENT.g, C_ACCENT.b, 0.2 + 0.4 * glow)
 	sb.set_corner_radius_all(4)                    # softly rounded
 	sb.set_content_margin_all(7)
 	sb.shadow_color = Color(edge.r, edge.g, edge.b, 0.45 * glow)
-	sb.shadow_size = int(9 * glow)                 # cyan halo glow around the box
+	sb.shadow_size = 0
 	return sb
 
 
@@ -819,6 +874,8 @@ const CONTROLS := [
 	["W hold", "Spool warp (open space)"],
 	["Num Lk", "Auto-cruise toggle"],
 	["L-Click", "Fire weapons"],
+	["B", "Landing gear"],
+	["R", "Deploy / stow hardpoints"],
 	["T / RMB", "Free-look (hold)"],
 	["Tab", "Cycle target"],
 	["X hold", "Lock nav target"],
@@ -830,7 +887,7 @@ const CONTROLS := [
 	["J", "Mission log"],
 	["M", "Star map"],
 	["F", "Dock / wormhole"],
-	["1–4", "Swap ship (docked)"],
+	["1–5", "Swap ship (docked)"],
 	["H", "Teleport home"],
 	["F11", "Fullscreen"],
 	["Esc", "Release cursor / back"],
@@ -846,11 +903,13 @@ const GUIDE := [
 	["TELEPORT  (H)",
 	 "Press H anywhere for an emergency jump straight home to Earth: a light-ball wraps the ship, shrinks to a bead, and you arrive. It is the rare, theatrical exception — ordinary travel between stars is always flown through wormholes."],
 	["PLATFORMS & STATIONS",
-	 "Every charted system has a dockable platform; Earth has the home station. Press F nearby to dock, then swap among the four authored ships (1–4) and open the TELEPORT NETWORK. From the network you can jump to any platform you have already reached and arrive right beside it. All platforms share the same ship roster and the same network."],
+	 "Every charted system has a dockable platform; Earth has the home station. Press F nearby to dock, then swap among the five ships (1–5) and open the TELEPORT NETWORK. From the network you can jump to any platform you have already reached and arrive right beside it. All platforms share the same ship roster and the same network."],
+	["LANDING & HARDPOINTS",
+	 "Press B to lower the landing gear. Approach level and slowly; Ctrl descends and Space lifts. The HUD confirms LANDED when the feet support the ship. Lift off before retracting the gear. Inside atmosphere, R deploys or stows the weapon mounts; holding fire also deploys them. Firing waits for full deployment. Gear down or leaving atmosphere locks weapons; atmosphere exit automatically stows them. On touch screens use GEAR and ARMS; UP/DOWN provides vertical thrust with gear down."],
 	["WARP & FLIGHT",
 	 "WASD thrusts, Shift boosts (drains the boost bar), Q/E roll, Space/Ctrl climb and dive. Hold W in open space to spool the warp drive and cross light-years; near stars and planets you are held to sublight. Num Lock toggles hands-free auto-cruise. Hold W and tap C for a drift-flip LEAP — a quick boost with a slow, wide cinematic barrel roll (A/D picks the side). The leap punches through a star/planet slow-zone, so it's how you break free when gravity is holding you in."],
 	["COMBAT & DISCOVERY",
-	 "Left-click fires instant ray-bullets down the crosshair (opening fire eases you to combat speed). Press V near a body to scan/capture it — that fills the Codex (L), the details panel (G), and completes its survey mission. A guarded body's boss is SHIELDED until you clear its summoned swarm — kill the minions first, then burn the boss down to capture the body."],
+	 "Hold left-click inside atmosphere to fire short plasma pulses from deployed weapons. Shots take time to travel and stop on terrain and buildings. Press V near a body to scan/capture it — that fills the Codex (L), the details panel (G), and completes its survey mission. A guarded body's boss is SHIELDED until you clear its summoned swarm — kill the minions first, then burn the boss down to capture the body."],
 ]
 
 func _build_controls_menu(canvas: CanvasLayer) -> void:
@@ -1026,16 +1085,27 @@ func _build_hangar(canvas: CanvasLayer) -> void:
 func _frame_box(edge: Color) -> StyleBoxFlat:
 	var frame := StyleBoxFlat.new()
 	frame.bg_color = Color(0, 0, 0, 0)
-	frame.set_border_width_all(2)
-	frame.border_color = Color(edge.r, edge.g, edge.b, 0.9)
-	frame.set_corner_radius_all(6)
+	frame.set_border_width_all(1)
+	frame.border_color = Color(edge.r, edge.g, edge.b, 0.20)
+	frame.set_corner_radius_all(2)
 	frame.shadow_color = Color(edge.r, edge.g, edge.b, 0.35)
-	frame.shadow_size = 10
+	frame.shadow_size = 0
 	return frame
 
 
 # A frosted-glass info panel: gradient backdrop + glowing edge + a VBox body you
 # pour styled lines into. Returns { panel, body }.
+func _flight_instrument(width: float) -> Dictionary:
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size.x = width
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 3)
+	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(body)
+	return {"panel": panel, "body": body}
+
 func _glass_panel(pos: Vector2, min_w: float, edge: Color) -> Dictionary:
 	var panel := PanelContainer.new()
 	panel.position = pos
@@ -1045,7 +1115,7 @@ func _glass_panel(pos: Vector2, min_w: float, edge: Color) -> Dictionary:
 
 	var bg := TextureRect.new()
 	bg.texture = _linear_gradient(
-		Color(0.06, 0.11, 0.18, 0.82), Color(0.01, 0.02, 0.05, 0.82))
+		Color(0.035, 0.055, 0.065, 0.88), Color(0.035, 0.055, 0.065, 0.88))
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	bg.stretch_mode = TextureRect.STRETCH_SCALE
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1059,7 +1129,7 @@ func _glass_panel(pos: Vector2, min_w: float, edge: Color) -> Dictionary:
 	panel.add_child(margin)
 
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 2)
+	col.add_theme_constant_override("separation", 6)
 	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.add_child(col)
 	return { "panel": panel, "body": col }
@@ -1369,145 +1439,78 @@ func refresh() -> void:
 	_flash.color.a = _flash_a * 0.55
 	# Hide the crosshair when Vela is hypersonic — combat is disabled then.
 	var hyper := ship.is_hypersonic()
-	var armed := ship.can_fire and not hyper   # utility hulls show no crosshair
-	_reticle.visible = armed
-	_hitmarker.visible = armed
-	# Pin the crosshair to where the NOSE points (bullets fly along the ship's forward).
-	# The chase camera lags + sways, so a fixed-centre reticle drifts off the true shot
-	# line — projecting the nose ray each frame keeps the crosshair exactly on aim.
-	if armed and ship.camera != null:
-		var cam: Camera3D = ship.camera
-		var aim: Vector3 = (-ship.transform.basis.z) * RETICLE_AIM_DIST   # ship is at render origin
-		if (cam.global_transform.affine_inverse() * aim).z < 0.0:         # aim is in front of cam
-			var sp: Vector2 = cam.unproject_position(aim)
-			_reticle.position = sp - _reticle.size * 0.5
-			_hitmarker.position = Vector2(sp.x - 640.0, sp.y - 18.0)      # 1280-wide centred label
-	# Feed the dynamic crosshair: bloom while firing, kick on a fresh hit.
+	var weapons_visible := not hyper and not ship.frozen and not ship.transiting and ship.systems != null \
+		and (ship.systems.weapons_target or ship.systems.weapons_fraction > .01)
+	_reticle.visible = weapons_visible
+	_hitmarker.visible = false # hit confirmation is drawn by fire control itself
+	if weapons_visible and combat != null:
+		_reticle.set_solution(combat.aim_solution, ship.camera)
 	var kick := clampf(combat.hitmarker / 0.18, 0.0, 1.0) if combat != null else 0.0
 	_reticle.set_target(1.0 if firing else 0.0, kick)
 	# Distance from Earth (the scene origin). Astronomical distances span a huge
 	# range, so show AU in-system and switch to ly once it's large.
-	var dist_au := float(ship.to_body("Earth").length()) * AU_PER_UNIT
-	# On the galactic voyage the authoritative distance is the core scanner, not the flown
-	# distance (which
-	# only creeps at her ordinary warp while the galaxy looms the real 26,000 ly). Once she's made
-	# any progress toward the core, show travelled = total − remaining; flying back out winds it to
-	# ~0, and a fresh system arrival resets remaining to total, handing the readout back to it.
-	if ship.has_galactic_drive and (ship.core_total_ly - ship.core_dist_ly) > 0.5:
-		dist_au = (ship.core_total_ly - ship.core_dist_ly) / LY_PER_AU
-	_dist_label.text = "From %s   %s" % [origin_name, _fmt_dist(dist_au)]
+	_flight_vector.ship = ship
+	_flight_vector.show_nose = not _reticle.visible
+	_flight_vector.queue_redraw()
+	_dist_label.text = "%s  /  %s" % ["SOL" if ship.newton else origin_name.to_upper(), ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
 	var spd := ship.velocity.length()
-	var spd_ly := spd * AU_PER_UNIT * LY_PER_AU
-	if _tape_label != null:
-		_tape_label.visible = ship.newton
+	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED" if ship.newton else "LOCAL FLIGHT"
+	_speed_label.text = _fmt_speed(spd)
+	_tape_label.visible = true
 	if ship.newton:
-		# No nearby body: fall back to Earth, which is what the origin always meant.
-		var to_earth: Vector3 = ship.to_body("Earth")
-		var inward := to_earth.normalized() if to_earth.length_squared() > 0.001 else Vector3.FORWARD
-		var dist := to_earth.length()
-		var rad := Ephemeris.EARTH_RADIUS_KM
-		var mu := Ephemeris.GM_EARTH
-		var who := "Earth"
-		if planets != null and ship.nearest_name != "" and ship.nearest_dir.length_squared() > 0.0001 \
-				and ship.nearest_dist > 0.001:
-			inward = ship.nearest_dir.normalized()
-			dist = ship.nearest_dist
-			who = ship.nearest_name
-			rad = planets.nearest_radius
-			mu = Ephemeris.gm(who)
-			if mu <= 0.0:
-				mu = Ephemeris.GM_EARTH
-		var alt := dist - rad
-		var zone := Ephemeris.flight_zone(who, dist)
-		var mode := str(ship.flight_mode)
-		var tag := "  · %s" % zone
-		if ship.drop_flash > 0.0:
-			tag += "  · DROP"
-			mode = "DROP"
+		var agl: float = planets.ground_altitude_km(ship.nearest_name) if planets != null else INF
+		var stellar := planets != null and planets.kind_of(ship.nearest_name) == "star"
+		if stellar:
+			var radius_distance := ship.anchor_distance_km() if ship.nearest_name == ship.anchor_name else ship.nearest_dist
+			agl = radius_distance-ship.nearest_radius
+		var outward := -ship.nearest_dir.normalized()
+		var vertical := ship.velocity.dot(outward)
+		var g := ship.last_newton_g.length() / 0.00980665
+		var altitude := "—" if agl == INF else ("%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl)
+		if stellar:
+			_tape_label.text = "PHOTO ALT  %s\nRADIAL  %s %s   /   %.2f g" % [altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
+			if vertical < 0 and ship.last_thrust_accel.dot(outward) > 0 \
+					and (ship.last_thrust_accel+ship.last_newton_g).dot(outward) < 0:
+				_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
+		elif agl < 100.0:
+			_tape_label.text = "AGL  %s   /   V/S  %s%s\nGRAVITY  %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
 		else:
-			tag += "  · %s" % mode
-		if dist > 0.001 and spd > 0.001:
-			var radial := -ship.velocity.dot(inward)   # + = away from that body
-			var nose := -ship.transform.basis.z
-			var vdir := ship.velocity / spd
-			if radial > 0.001:
-				tag += "  · out %s %s" % [_fmt_speed(radial), who]
-			elif radial < -0.001:
-				tag += "  · in %s %s" % [_fmt_speed(-radial), who]
-			if nose.dot(vdir) < 0.45:
-				tag += " leftover"
-		if ship.dev_speed:
-			tag += "  DEV"
-			if FlightMode.dev_fast_air:
-				tag += "·FASTAIR"
-			if FlightMode.dev_no_death:
-				tag += "·NODEATH"
+			_tape_label.text = "ALT  %s\nRADIAL  %s%s   /   %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
+		if ship.drop_flash > 0.0:
+			_mode_label.text = "CRUISE EXIT"
 		if ship.time_rate > 1.0:
-			tag += "  ×%.0f" % ship.time_rate
-		if ship.drop_flash > 0.0:
-			_speed_label.modulate = Color(1.35, 1.35, 1.25)
-		else:
-			_speed_label.modulate = Color.WHITE
-		_speed_label.text = "Speed   %s%s" % [_fmt_speed(spd), tag]
-		var v_c := sqrt(mu / dist) if dist > 0.001 else 0.0
-		var v_e := sqrt(2.0 * mu / dist) if dist > 0.001 else 0.0
-		_tape_label.visible = true
-		var extra := "\nZone    %s" % zone
-		extra += "\nMode    %s" % mode
-		if alt >= 0.0:
-			extra += "  ·  skin %+.0f km" % alt
-		else:
-			extra += "  ·  inside %.0f km" % (-alt)
-		var air_top := Ephemeris.atmo_top_km(who)
-		if air_top > 0.0:
-			extra += "\nAir     %.0f km top" % air_top
-		var g_mag := ship.last_newton_g.length() / 9.80665e-3
-		var vspeed := -ship.velocity.dot(inward) if dist > 0.001 else 0.0
-		extra += "\nG       %.2f g  ·  Vspd %s%s" % [
-			g_mag, "+" if vspeed >= 0.0 else "-", _fmt_speed(absf(vspeed))]
-		if zone == FlightMode.AIR:
-			extra += "\nMach    %.2f  ·  Load %.0f%%" % [
-				ship.mach_number, ship.air_load * 100.0]
-		if planets != null:
-			if ship.newton and planets.cook_n > 0:
-				extra += "\nCook    %d  · mesh %d  · sky %d" % [
-					planets.cook_n, planets.cook_mesh_n, planets.cook_sky_n]
-				if planets.cook_look != "":
-					extra += "\nLook    %s" % planets.cook_look
-			if who == "Earth":
-				var mrel: Vector3 = planets.rel_of("Moon")
-				if mrel.length() > 1.0:
-					extra += "\nMoon    %.0f km" % mrel.length()
-			var srel: Vector3 = planets.rel_of("Sun")
-			if srel.length() > 1.0:
-				extra += "\nSun     %.3f AU" % (srel.length() / Ephemeris.AU_TO_UNITS)
-		var agl: float = planets.ground_altitude_km(who) if planets != null else alt
-		var altitude_text := "%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl
-		_tape_label.text = "AGL     %s  %s\nNeed    %s circle  ·  %s esc%s" % [
-			altitude_text, who, _fmt_speed(v_c), _fmt_speed(v_e), extra]
+			_mode_label.text += "   ×%.0f" % ship.time_rate
 		if ship.debug_toast != "":
 			toast = ship.debug_toast
 			toast_t = 2.2
 			ship.debug_toast = ""
-	elif ship.galactic_cruising():
-		# On the galactic drive the REAL speed is the looming pace (ly/s the core distance is
-		# burning down), not her tiny translation velocity — that's why the readout looked like a
-		# lie. Show the actual rate so it matches the distance flying past each second.
-		_speed_label.text = "Speed   %.1f ly/s  ⚡GALACTIC" % absf(ship.galactic_loom_rate())
-	elif spd_ly >= 0.001:
-		_speed_label.text = "Speed   %.3f ly/s  ⚡FTL" % spd_ly
-	elif ship.warp > 1.0:
-		# Sublight cruise: tell the pilot whether FTL is available yet.
-		var tag := "  ▲ FTL READY" if ship.warp_ready() else "  · sublight (clear the star)"
-		_speed_label.text = "Speed   %.0f u/s%s" % [spd, tag]
 	else:
-		_speed_label.text = "Speed   %.0f u/s" % spd
+		_tape_label.text = "THRUST / COAST\n[M] Navigation chart"
+		if ship.galactic_cruising():
+			_mode_label.text = "GALACTIC TRANSIT / TRAVEL RATE"
+			_speed_label.text = "%.1f ly/s" % absf(ship.galactic_loom_rate())
+		elif ship.warp_ready():
+			_mode_label.text = "SUPERCRUISE READY"
+	if ship.systems != null:
+		if ship.landed:
+			_mode_label.text = "LANDED   ·   SPACE TO LIFT"
+		elif ship.systems.gear_fraction > .01 or ship.systems.gear_target:
+			_mode_label.text = "GEAR DOWN" if ship.systems.gear_fraction >= .999 else ("GEAR LOWERING" if ship.systems.gear_target else "GEAR RETRACTING")
+		elif ship.systems.weapons_target:
+			_mode_label.text = "HARDPOINTS READY" if ship.weapons_ready() else "HARDPOINTS DEPLOYING"
+		elif ship.systems.weapons_fraction > .01:
+			_mode_label.text = "HARDPOINTS STOWING"
+	if planets != null and not ship.transiting and not ship.frozen and not planets.stellar_hazard.is_empty():
+		var stellar: Dictionary = planets.stellar_hazard
+		if int(stellar.level) > 0:
+			_tape_label.text += "\n%s  /  %.0f kW/m²" % [stellar.state, float(stellar.flux_w_m2)/1000.0]
+	_combat_panel.visible = _edit or ship.combat_lock or firing
 
 	if combat != null:
 		# Top-right box keeps just the kill count; the hull bar (top-left) is the HP gauge.
 		_combat_label.text = "KILLS  %d      ◈ %d" % [combat.kills, coins]
 		var hp_ratio: float = clampf(float(combat.player_hp) / maxf(float(combat.player_max), 1.0), 0.0, 1.0)
-		_hull_label.text = "HULL   %d / %d" % [combat.player_hp, combat.player_max]
+		_hull_label.text = "HULL  %d%%    /    PWR · BOOST" % int(100.0 * hp_ratio)
 		_hull_fill.size.x = _hull_bar_w * hp_ratio
 		# Green when healthy, amber at half, red when critical.
 		_hull_fill.color = Color(0.4, 1.0, 0.55).lerp(Color(1.0, 0.35, 0.3), 1.0 - hp_ratio)
@@ -1537,7 +1540,7 @@ func refresh() -> void:
 
 	# Discovery progress + scan prompt / progress + toast.
 	if codex != null:
-		_codex_label.text = "Discovered  %d / %d" % [codex.count(), codex.total()]
+		_codex_label.text = "SURVEY   %d / %d" % [codex.count(), codex.total()]
 	if scan_progress > 0.0 and scan_name != "":
 		_scan_label.text = "Capturing  %s …  %d%%" % [scan_name, int(scan_progress * 100.0)]
 		_capture_label.text = "◎  CAPTURING  %s   %d%%" % [scan_name, int(scan_progress * 100.0)]
@@ -1564,12 +1567,12 @@ func refresh() -> void:
 
 	if planets != null and planets.nearest_name != "":
 		var near_au := planets.nearest_dist * AU_PER_UNIT
-		_near_label.text = "Nearest  %s  (%s)" % [planets.nearest_name, _fmt_dist(near_au)]
+		_near_label.text = "%s   ·   %s" % [planets.nearest_name, _fmt_dist(near_au)]
 		# Offer the Details button when you're close to that body.
 		var close := planets.nearest_dist < _detail_range
 		details_button.visible = close
 		if close:
-			details_button.text = "ⓘ  %s  DETAILS  (G)" % planets.nearest_name
+			details_button.text = "[G]  Inspect body"
 	elif details_button != null:
 		details_button.visible = false
 
@@ -1599,13 +1602,13 @@ func _new_label(font_size: int, color: Color) -> Label:
 	# White fill so the shader's luminance test treats glyphs as "fill" (the hue
 	# comes from the gradient material). Thin dark outline + soft shadow keep it
 	# readable over the starfield; the shader leaves those dark passes alone.
-	label.add_theme_color_override("font_color", Color.WHITE)
+	label.add_theme_color_override("font_color", color)
 	label.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.55))
 	label.add_theme_constant_override("shadow_offset_x", 1)
 	label.add_theme_constant_override("shadow_offset_y", 1)
 	label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.45))
 	label.add_theme_constant_override("outline_size", 2)
-	label.material = _grad_material(color, font_size)
+	label.material = null
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	return label
 

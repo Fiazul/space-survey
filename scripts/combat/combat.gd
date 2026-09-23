@@ -18,14 +18,6 @@ const LASER_LEN := 4000.0
 const LASER_RADIUS := 12.0        # hit radius around the beam line
 const LASER_TICK := 0.08          # seconds between damage ticks
 const LASER_TICK_DMG := 2         # HP per tick (~25 dps)
-# "Ray bullets": each player shot is an instant HITSCAN ray (like the laser, but one
-# discrete pulse per trigger) shown as a brief bright tracer beam. No travelling
-# projectile -> no float-precision blob, no drift, no fat bloom-bar.
-const SHOT_RANGE := 4000.0        # how far each ray reaches
-const SHOT_HIT_RADIUS := 3.0      # aim forgiveness around the ray line for a hit
-const SHOT_FLASH_TIME := 0.06     # how long each ray pulse stays visible
-const SHOT_BEAM_RADIUS := 0.06    # tracer beam thickness
-const SHOT_TRACER_MISS_LEN := 800.0   # visible tracer length on a miss (gameplay reach stays SHOT_RANGE)
 const COMBAT_HOLD := 10.0          # stay "in combat" this long after the last attack (either way)
 # Energy: two auto-regen bars (weapon + boost). Caps + consume rate are PER-SHIP
 # (ship.energy_max / ship.energy_use): Raptor = big tank, low burn; Stella = small
@@ -116,12 +108,15 @@ var _aliens := []                 # { pos, vel, hp, node, fire_cd, alive, respaw
 var _bolts := []                  # player bolts: { pos, vel, life, node }
 var _abolts := []                 # alien bolts:  { pos, vel, life, node }
 var _cool := 0.0
+var plasma: PlasmaProjectiles
+var _next_mount := 0
+var aim_solution := {}
+var _aim_target: Variant = null
+var _aim_trace := {}
+var _aim_trace_elapsed := INF
 var _laser: MeshInstance3D        # the beam mesh (child of the ship, points out the nose)
 var _laser_ring: MeshInstance3D   # glowing emitter "belt" the beam fires through
 var _laser_tick := 0.0
-var _shot_beam: MeshInstance3D    # brief tracer beam for each hitscan "ray bullet"
-var _shot_beam_mat: StandardMaterial3D
-var _shot_beam_t := 0.0           # >0 while the current ray pulse is fading out
 var _combat_t := 0.0              # >0 while in combat (counts down from COMBAT_HOLD)
 var _smg_mesh: Mesh = null            # real bullet GLB mesh (player standard shots only)
 var _smg_scale := 1.0                 # auto-computed in _ready so the bullet is SMG_BULLET_LEN long
@@ -144,6 +139,8 @@ var _laser_bolt_mat: StandardMaterial3D   # Lyra's red laser bolts
 
 
 func _ready() -> void:
+	plasma = PlasmaProjectiles.new()
+	add_child(plasma)
 	fx = CombatFX.new()   # owns the baked glow/splatter/plume textures + builds them in its _ready
 	add_child(fx)
 	_factory = EnemyFactory.new()   # at the origin → models it loads share our floating-origin frame
@@ -217,6 +214,12 @@ func _ready() -> void:
 #   count     : swarm size (defaults to the big SWARM_COUNT)
 # Sol stays peaceful (active = false) — a safe home harbor.
 func reset(active := false, with_boss := false, count := SWARM_COUNT) -> void:
+	plasma.clear()
+	_next_mount = 0
+	aim_solution.clear()
+	_aim_target = null
+	_aim_trace.clear()
+	_aim_trace_elapsed = INF
 	for a in _aliens:
 		if a.node != null:
 			a.node.queue_free()
@@ -274,32 +277,36 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	var muzzle_now: Vector3 = ship.muzzle_off() if ship.has_method("muzzle_off") else sp + fwd * ship.muzzle - ship.transform.basis.y * ship.muzzle_drop
 	# You can only fire at regular (sublight) combat speed. main force-slows the ship to it
 	# while you hold fire, so this just blocks the brief moment before the slowdown lands.
+	ship.update_weapon_environment()
+	if pressed or laser:
+		ship.prepare_weapons()
+	var mounts_ready: bool = ship.weapons_ready()
+	update_aim(ship, delta)
 	var slow_enough: bool = ship.velocity.length() <= Ship.WEAPON_FIRE_SPEED * 1.05
-	var laser_on: bool = laser and ship.can_fire and energy > 0.0 and slow_enough
-	if laser_on:
-		energy = maxf(energy - LASER_ENERGY * ship.energy_use * delta, 0.0)
-	_update_laser(ship, laser_on, sp, fwd, delta)
+	# All current player weapons use compact plasma pulses, including touch fire.
+	if _laser != null:
+		_laser.visible = false
+		_laser_ring.visible = false
 
 	# Per-hull combat identity: defence (max HP), bullet speed and bullet size all come
 	# from the active ship (see SHIP_MODELS). player_max drives the HUD's hull bar.
 	player_max = ship.max_hp if ship.has_method("is_hypersonic") else PLAYER_MAX_HP
 	player_hp = mini(player_hp, player_max)
 
-	# --- player firing: instant HITSCAN "ray bullets", one bright pulse per trigger ---
+	# Advance existing shots before spawning: a new pulse is drawn at the muzzle
+	# for its first frame rather than jumping 20 m ahead before it can be seen.
+	_step_plasma(ship, delta)
 	_cool = maxf(_cool - delta, 0.0)
 	var bolt_cost: float = BOLT_ENERGY * ship.energy_use
-	if pressed and slow_enough and _cool <= 0.0 and ship.can_fire and energy >= bolt_cost:
+	if (pressed or laser) and mounts_ready and slow_enough and _cool <= 0.0 and ship.can_fire and energy >= bolt_cost:
 		_cool = ship.fire_cooldown if ship.has_method("is_hypersonic") else BOLT_COOLDOWN
 		energy -= bolt_cost
-		# Tracer colour follows the hull's bolt identity (Lyra red / HaniStar pink / cyan).
-		var col: Color = Color(1.0, 0.18, 0.10) if ship.bolt_laser else \
-			(HANI_PINK if ship.bolt_strong else Color(0.7, 0.95, 1.0))
-		_fire_ray(ship, muzzle_now, fwd, col, int(ship.bolt_damage))
+		plasma.emit(ship.muzzle_off(_next_mount), ship.velocity, ship.barrel_direction(_next_mount), int(ship.bolt_damage), sp, ship.systems.muzzle_node(_next_mount))
+		_next_mount = (_next_mount + 1) % ship.systems.mounts.size()
 		if _any_alien_alive():
 			_combat_t = COMBAT_HOLD            # attacking while enemies are present = in combat
 		if audio != null:
 			audio.play_fire()
-	_step_shot_beam(delta)
 
 	_step_bolts(_bolts, sp, delta, true, muzzle_now)
 	_step_bolts(_abolts, sp, delta, false)
@@ -327,7 +334,7 @@ func _any_alien_alive() -> bool:
 func _update_laser(ship: Node3D, on: bool, sp: Vector3, fwd: Vector3, delta: float) -> void:
 	if _laser == null:
 		_build_laser(ship)
-	var off: Vector3 = ship.laser_offset
+	var off: Vector3 = ship.muzzle_local()
 	if _laser.get_parent() != ship:
 		if _laser.get_parent() != null:
 			_laser.get_parent().remove_child(_laser)
@@ -336,10 +343,9 @@ func _update_laser(ship: Node3D, on: bool, sp: Vector3, fwd: Vector3, delta: flo
 		if _laser_ring.get_parent() != null:
 			_laser_ring.get_parent().remove_child(_laser_ring)
 		ship.add_child(_laser_ring)
-	# Start the beam exactly at the offset point (the under-hull pod), not the muzzle,
-	# so it connects to the hull. Near end at local z = off.z, extends forward.
+	# The beam starts at the deployed mount's muzzle and follows ship forward.
 	_laser.position = Vector3(off.x, off.y, off.z - LASER_LEN * 0.5)
-	_laser_ring.position = off + Vector3(0.0, 0.015, 0.0)   # ring sits a touch above the beam
+	_laser_ring.position = off
 	_laser.visible = on
 	_laser_ring.visible = on
 	if audio != null:
@@ -406,75 +412,86 @@ func _build_laser(ship: Node3D) -> void:
 	_laser_ring.visible = false
 
 
-# Fire one instant "ray bullet": a hitscan ray from the muzzle down `fwd`. Damages the
-# NEAREST alien the ray line crosses (within SHOT_HIT_RADIUS), then shows a bright tracer
-# beam from the muzzle to the impact (or full range on a miss).
-func _fire_ray(ship: Node3D, origin: Vector3, fwd: Vector3, col: Color, dmg: int) -> void:
-	var best_t := SHOT_RANGE
-	var best_alien = null
-	for a in _aliens:
-		if not a.alive:
-			continue
-		var to: Vector3 = a.pos - origin
-		var t := to.dot(fwd)
-		if t < 0.0 or t > SHOT_RANGE:
-			continue
-		if (to - fwd * t).length() < a.size * 0.5 + SHOT_HIT_RADIUS and t < best_t:
-			best_t = t
-			best_alien = a
-	var beam_len := best_t            # on a hit, the tracer connects exactly to the target
-	if best_alien != null:
-		_damage_alien(best_alien, ship.anchor_off, dmg)
-		fx.hit_flash(best_alien.pos - ship.anchor_off)
-		fx.enemy_flash(best_alien.pos - ship.anchor_off, best_alien.size)
-		hitmarker = 0.18
-	else:
-		beam_len = SHOT_TRACER_MISS_LEN   # a miss streaks a bullet-length tracer, not a full beam
-	_show_shot_beam(ship, col, beam_len)
-
-
-# Show (and re-arm the fade of) the tracer beam for one ray pulse, length = `dist`.
-func _show_shot_beam(ship: Node3D, col: Color, dist: float) -> void:
-	if _shot_beam == null:
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = SHOT_BEAM_RADIUS
-		cyl.bottom_radius = SHOT_BEAM_RADIUS
-		cyl.height = 1.0                       # scaled to `dist` per shot
-		cyl.radial_segments = 10
-		cyl.rings = 0
-		_shot_beam = MeshInstance3D.new()
-		_shot_beam.mesh = cyl
-		_shot_beam_mat = StandardMaterial3D.new()
-		_shot_beam_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-		_shot_beam_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		_shot_beam_mat.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
-		_shot_beam.material_override = _shot_beam_mat
-		_shot_beam.rotation = Vector3(deg_to_rad(-90.0), 0.0, 0.0)   # cylinder +Y -> -Z (forward)
-	# Parent to the ship so it stays glued to the nose and never drifts into far coords.
-	if _shot_beam.get_parent() != ship:
-		if _shot_beam.get_parent() != null:
-			_shot_beam.get_parent().remove_child(_shot_beam)
-		ship.add_child(_shot_beam)
-	var muz: float = ship.muzzle
-	var drop: float = ship.muzzle_drop
-	_shot_beam.scale = Vector3(1.0, dist, 1.0)
-	_shot_beam.position = Vector3(0.0, -drop, -muz - dist * 0.5)   # span muzzle -> muzzle-dist (forward)
-	_shot_beam_mat.albedo_color = Color(col.r, col.g, col.b, 1.0)
-	_shot_beam.visible = true
-	_shot_beam_t = SHOT_FLASH_TIME
-
-
-# Fade the current ray pulse out over SHOT_FLASH_TIME, then hide it.
-func _step_shot_beam(delta: float) -> void:
-	if _shot_beam == null or not _shot_beam.visible:
+func update_aim(ship: Ship, delta := 0.0) -> void:
+	_aim_trace_elapsed += delta
+	if ship.systems == null:
+		aim_solution.clear()
 		return
-	_shot_beam_t -= delta
-	if _shot_beam_t <= 0.0:
-		_shot_beam.visible = false
-		return
-	var a := _shot_beam_t / SHOT_FLASH_TIME
-	var c := _shot_beam_mat.albedo_color
-	_shot_beam_mat.albedo_color = Color(c.r, c.g, c.b, a)   # additive -> brightness fades with alpha
+	var forward := ship.weapon_direction()
+	for slot in ship.systems.mounts.size():
+		ship.aim_mount(slot, forward)
+	var origin := ship.muzzle_off(_next_mount)
+	var acquired := WeaponAim.acquire(origin, ship.velocity, forward, _aliens, plasma.muzzle_speed(), _aim_target)
+	_aim_target = acquired.get("target")
+	var assisted := not acquired.is_empty() and bool(acquired.assist) and ship.weapons_ready()
+	if assisted:
+		for slot in ship.systems.mounts.size():
+			var lead := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, _aim_target.pos,
+				_aim_target.get("vel", Vector3.ZERO), plasma.muzzle_speed())
+			if not lead.is_empty() and forward.angle_to(lead.direction) <= deg_to_rad(WeaponAim.ASSIST_DEG):
+				ship.aim_mount(slot, lead.direction)
+		origin = ship.muzzle_off(_next_mount)
+	var direction := ship.barrel_direction(_next_mount)
+	var time := PlasmaProjectiles.RANGE/plasma.muzzle_speed()
+	if not acquired.is_empty() and acquired.in_range:
+		time = acquired.intercept.time
+	var motion := ship.velocity + direction*plasma.muzzle_speed()
+	var point := origin + motion*time
+	var blocked := false
+	var surface := false
+	if ship.weapons_in_atmosphere() and (ship.systems.weapons_target or ship.systems.weapons_fraction > .01) and ship.terrain != null:
+		var body := ship.nearest_name if not ship.nearest_name.is_empty() else ship.anchor_name
+		var center := Vector3.ZERO if body == ship.anchor_name else ship.anchor_off + ship.nearest_dir*ship.nearest_dist
+		var inv := ship.terrain_basis.inverse()
+		var from := inv*(origin-center)
+		var to := inv*(point-center)
+		# Only the visual obstruction preview is throttled. Intercepts, barrel pose
+		# and swept projectile collisions stay live. Moving/turning invalidates it.
+		var reuse: bool = delta > 0 and _aim_trace_elapsed < .05 and not _aim_trace.is_empty() \
+			and _aim_trace.terrain == ship.terrain and _aim_trace.body == body \
+			and _aim_trace.from.distance_to(from) < .01 and _aim_trace.to.distance_to(to) < .01
+		if not reuse:
+			var hit := ship.terrain.resolve_motion(from, to, inv*motion,
+				Ephemeris.body_radius_km(body), PlasmaProjectiles.RADIUS)
+			_aim_trace = {"terrain":ship.terrain,"body":body,"from":from,"to":to,
+				"hit":hit.hit or hit.budget_limited,"position":hit.position}
+			_aim_trace_elapsed = 0.0
+		if _aim_trace.hit:
+			point = center + ship.terrain_basis*_aim_trace.position
+			surface = true
+			blocked = not acquired.is_empty()
+	var state := "PLASMA"
+	if not ship.weapons_in_atmosphere():
+		state = "ATMOSPHERE REQUIRED"
+	elif ship.systems.gear_target or ship.systems.gear_fraction > .01:
+		state = "GEAR LOCK"
+	elif not ship.weapons_ready():
+		state = "DEPLOYING" if ship.systems.weapons_target else "STOWING"
+	elif blocked:
+		state = "OBSTRUCTED"
+	elif not acquired.is_empty():
+		state = "OUT OF RANGE" if not acquired.in_range else ("FIRING SOLUTION" if assisted else "ALIGN TO LEAD")
+	elif surface:
+		state = "SURFACE"
+	aim_solution = {"point": point-ship.anchor_off, "state": state,
+		"distance": origin.distance_to(point), "ready": ship.weapons_ready(),
+		"assisted": assisted and not blocked, "blocked": blocked,
+		"target": {}, "speed_multiplier": plasma.speed_multiplier}
+	if not acquired.is_empty():
+		aim_solution.target = {"position": _aim_target.pos-ship.anchor_off,
+			"lead": acquired.intercept.point-ship.anchor_off if not acquired.intercept.is_empty() else _aim_target.pos-ship.anchor_off,
+			"distance": acquired.distance, "in_range": acquired.in_range,
+			"name": _aim_target.get("name", "HOSTILE")}
+
+
+func _step_plasma(ship: Ship, delta: float) -> void:
+	var body := ship.nearest_name if not ship.nearest_name.is_empty() else ship.anchor_name
+	var center: Vector3 = Vector3.ZERO if body == ship.anchor_name else ship.anchor_off + ship.nearest_dir * ship.nearest_dist
+	var impacts := plasma.advance(delta, ship.anchor_off, _aliens, ship.terrain,
+		center, ship.terrain_basis, Ephemeris.body_radius_km(body))
+	for impact in impacts:
+		_damage_alien(impact.target, ship.anchor_off, impact.damage)
+		hitmarker = .18
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +713,7 @@ var _pickup_cd := PICKUP_EVERY
 func shift_frame(shift: Vector3) -> void:
 	if shift == Vector3.ZERO:
 		return
+	plasma.shift_frame(shift)
 	for list in [_aliens, _bolts, _abolts, _pickups]:
 		for e in list:
 			e.pos -= shift

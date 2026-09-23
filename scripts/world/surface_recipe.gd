@@ -2,8 +2,23 @@ extends RefCounted
 ## Geological profiles are shared by geometry, collision and material binding.
 ## Landmarks below are seeded scenery, not claims about surveyed feature locations.
 
+# Reusable authored starting points; callers override individual values in surface.
+# Presets describe appearance, not a claim that an observed exoplanet has life.
+const PRESETS := {
+	"temperate_forest": {"vegetation_density": 0.88, "vegetation_from_albedo": false,
+		"tree_spacing_m": 22.0, "tree_height_m": 30.0, "tree_line_m": 3500.0,
+		"snow_line_m": 5000.0, "snow_polar_drop_m": 5200.0, "liquid_amount": 1.0,
+		"crater_count": 0, "crater_density": 0.0, "mountain_m": 1400.0},
+	"arid_mountains": {"vegetation_density": 0.0, "liquid_amount": 0.0,
+		"mountain_m": 1800.0, "hills_m": 120.0, "crater_density": 0.02},
+	"frozen_crust": {"vegetation_density": 0.0, "ice_surface": 1.0,
+		"liquid_amount": 0.0, "mountain_m": 250.0, "crater_density": 0.03},
+	"volcanic": {"vegetation_density": 0.0, "lava_amount": 1.0,
+		"liquid_amount": 0.0, "volcano_count": 18, "volcano_m": 1800.0, "crater_count": 0},
+}
+
 const WORLD_DEFAULTS := {
-	"Earth": {"liquid_amount": 1.0, "crater_count": 0, "mountain_m": 0.0, "volcano_count": 3, "volcano_m": 240.0, "crater_density": 0.0, "hills_m": 0.0, "snow_line_m": 5200.0},
+	"Earth": {"liquid_amount": 1.0, "crater_count": 0, "mountain_m": 0.0, "volcano_count": 3, "volcano_m": 240.0, "crater_density": 0.0, "hills_m": 0.0, "snow_line_m": 5200.0, "snow_polar_drop_m": 5500.0, "sea_ice_latitude": 0.65, "vegetation_density": 0.92, "vegetation_from_albedo": true},
 	"Moon": {"crater_count": 28, "crater_m": 700.0, "mountain_m": 0.0, "crater_density": 0.12, "crater_scale_km": 30.0, "hills_m": 100.0},
 	"Mercury": {"crater_count": 32, "crater_m": 450.0, "crater_density": 0.15, "crater_scale_km": 30.0, "hills_m": 90.0},
 	"Callisto": {"crater_count": 30, "crater_m": 500.0, "mountain_m": 0.0, "crater_density": 0.15, "crater_scale_km": 30.0, "hills_m": 90.0},
@@ -159,6 +174,10 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		"height_texel_km": 0.0,
 		"peaks": [],
 		"snow_line_m": 0.0,
+		"snow_polar_drop_m": 0.0, "sea_ice_latitude": 1.0, "vegetation_density": 0.0,
+		"vegetation_from_albedo": false, "tree_line_m": 3500.0,
+		"tree_spacing_m": 22.0, "tree_height_m": 30.0,
+		"wave_strength": 0.09,
 	}
 	if solid and kind != "ice" and float(recipe.get("water_shine", 0.0)) > 0.3:
 		p.liquid_amount = 1.0
@@ -166,6 +185,8 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		p[key] = WORLD_DEFAULTS[name][key]
 	# Explicit recipe overrides let invented worlds use the same capabilities.
 	var overrides: Dictionary = recipe.get("surface", {})
+	for key in PRESETS.get(str(overrides.get("preset", "")), {}):
+		p[key] = PRESETS[str(overrides.preset)][key]
 	for key in overrides:
 		if p.has(key) and key not in ["solid", "seed"]:
 			p[key] = overrides[key]
@@ -193,6 +214,13 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		p[key] = clampf(float(p[key]), 0.0, 10000.0)
 	p.crater_scale_km = clampf(float(p.crater_scale_km), 0.1, 200.0)
 	p.wave_scale = clampf(float(p.wave_scale), 0.1, 8.0)
+	p.vegetation_density = clampf(float(p.vegetation_density), 0.0, 1.0)
+	p.tree_spacing_m = clampf(float(p.tree_spacing_m), 12.0, 200.0)
+	p.tree_height_m = clampf(float(p.tree_height_m), 2.0, 80.0)
+	p.tree_line_m = clampf(float(p.tree_line_m), 0.0, 12000.0)
+	p.snow_polar_drop_m = clampf(float(p.snow_polar_drop_m), 0.0, 12000.0)
+	p.sea_ice_latitude = clampf(float(p.sea_ice_latitude), 0.0, 1.0)
+	p.wave_strength = clampf(float(p.wave_strength), 0.0, 0.3)
 	p.snow_line_m = clampf(float(p.get("snow_line_m", 0.0)), 0.0, 12000.0)
 	if not solid:
 		for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "mountain_m", "crater_density", "hills_m"]:
@@ -200,6 +228,7 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		p.crater_count = 0
 		p.volcano_count = 0
 		p.snow_line_m = 0.0
+		p.vegetation_density = 0.0
 	var rng := RandomNumberGenerator.new()
 	rng.seed = int(p.seed * 10000.0) + 713
 	p.craters = _landmarks(rng, clampi(int(p.crater_count), 0, 48), 0.003, 0.009, 1.7)

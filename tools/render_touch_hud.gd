@@ -32,7 +32,10 @@ func _process(_dt: float) -> void:
 	if _saved:
 		return
 	_wait += 1
-	if _wait < OUT_WAIT:
+	if _wait == 2 and OS.get_environment("SHOT_SYSTEMS") == "1":
+		get_node("Main").hud.toggle_systems()
+	var frames := int(OS.get_environment("SHOT_FRAMES")) if OS.has_environment("SHOT_FRAMES") else OUT_WAIT
+	if _wait < frames:
 		return
 	_saved = true
 	var shot_dir := OS.get_environment("SHOT_DIR")

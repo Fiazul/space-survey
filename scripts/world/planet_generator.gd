@@ -83,7 +83,8 @@ const RECIPES := {
 		"source": "ready-map",
 		"evidence": "Solar System Scope / NASA Blue Marble",
 		"cloud_amount": 1.0,
-		"city_amount": 1.0,
+		"city_amount": 0.0,
+		"surface": {"settlement_preset": "earth_graveyard"},
 		"water_shine": 0.85,
 		"ice_amount": 0.1,
 		"air_amount": 1.0,
@@ -386,48 +387,25 @@ const CLOSE_KEYS := ["clouds", "night", "height", "specular", "normal"]
 
 # Catalog row → cook spec. No GLB. Spectral/size pick kind and colour.
 static func color_from_spectral(sp: String) -> Color:
-	var c := sp.strip_edges().to_upper()
-	if c.is_empty():
-		return Color(1.00, 0.85, 0.50)
-	match c[0]:
-		"O":
-			return Color(0.60, 0.70, 1.00)
-		"B":
-			return Color(0.70, 0.80, 1.00)
-		"A":
-			return Color(0.95, 0.96, 1.00)
-		"F":
-			return Color(1.00, 0.98, 0.92)
-		"G":
-			return Color(1.00, 0.92, 0.65)
-		"K":
-			return Color(1.00, 0.76, 0.42)
-		"M":
-			return Color(1.00, 0.50, 0.30)
-		"L", "T":
-			return Color(0.72, 0.34, 0.26)
-		"D":
-			return Color(0.86, 0.90, 1.00)
-		_:
-			return Color(1.00, 0.85, 0.50)
+	return StarRecipe.resolve({"spectral": sp}).color_a
 
 
 static func catalog_star(row: Dictionary) -> Dictionary:
 	var sp := str(row.get("spectral", ""))
-	var col := color_from_spectral(sp)
-	if row.has("color"):
-		col = row.color
-	return {
+	var recipe := StarRecipe.resolve(row)
+	var result := row.duplicate(true)
+	result.merge({
 		"name": str(row.get("name", "Star")),
 		"star": true,
 		"live": false,
 		"pos": row.get("pos", Vector3.ZERO),
-		"radius": float(row.get("radius", 5.0)),
+		"radius": float(row.get("radius", StarRecipe.scene_radius(recipe))),
 		"mass": float(row.get("mass", 40000.0)),
-		"color": col,
+		"color": recipe.color_a,
 		"glow": 2.0,
 		"spectral": sp,
-	}
+	}, true)
+	return result
 
 
 static func catalog_planet(row: Dictionary) -> Dictionary:
@@ -462,6 +440,8 @@ static func catalog_planet(row: Dictionary) -> Dictionary:
 
 static func recipe_for(spec: Dictionary) -> Dictionary:
 	var name := str(spec.get("name", ""))
+	if spec.get("star", false) or spec.get("kind", "") == "star" or name == "Sun":
+		return StarRecipe.resolve(spec)
 	if RECIPES.has(name):
 		var r: Dictionary = (RECIPES[name] as Dictionary).duplicate(true)
 		r["name"] = name
@@ -476,11 +456,16 @@ static func recipe_for(spec: Dictionary) -> Dictionary:
 			r["seed"] = float(name.hash() % 10000) * 0.017
 		if not has_map(r):
 			r["source"] = "named-pending-map"
+		r["materials"] = preload("res://scripts/world/world_resources.gd").resolve(r)
 		return r
-	return invent(spec)
+	var invented := invent(spec)
+	invented["materials"] = preload("res://scripts/world/world_resources.gd").resolve(invented)
+	return invented
 
 
 static func invent(spec: Dictionary) -> Dictionary:
+	if spec.get("star", false) or spec.get("kind", "") == "star":
+		return StarRecipe.resolve(spec)
 	var name := str(spec.get("name", ""))
 	var color: Color = spec.get("color", Color(0.5, 0.5, 0.5))
 	var kind := "rocky"
@@ -542,10 +527,11 @@ static func invent(spec: Dictionary) -> Dictionary:
 		"cloud_amount": clouds,
 		"city_amount": 0.0,
 		"water_shine": shine,
-		"air_amount": 0.0,
+		"air_amount": float(spec.get("air_amount", 0.0)),
 		"seed": float(name.hash() % 10000) * 0.017,
 		"features": [],
 		"surface": spec.get("surface", {}).duplicate(true),
+		"materials": spec.get("materials", preload("res://scripts/world/world_resources.gd").resolve({"kind": kind, "ice_amount": ice})).duplicate(true),
 	}
 
 
@@ -582,12 +568,27 @@ static func paint(spec: Dictionary, radius: float) -> Dictionary:
 	mesh.height = radius * 2.0
 	mesh.radial_segments = 192 if physical else 32
 	mesh.rings = 96 if physical else 16
-	if is_star and physical:
+	if is_star:
 		mesh.radial_segments = 96
 		mesh.rings = 48
 	mi.mesh = mesh
 	var mat := make_material(recipe, spec)
 	mi.material_override = mat
+	if recipe.has("stellar"):
+		var corona := MeshInstance3D.new()
+		var quad := QuadMesh.new()
+		quad.size = Vector2.ONE*radius*3.0
+		corona.mesh = quad
+		var halo := ShaderMaterial.new()
+		halo.shader = preload("res://shaders/stellar_corona.gdshader")
+		var tint: Color = recipe.color_a
+		halo.set_shader_parameter("tint", Vector3(tint.r,tint.g,tint.b))
+		halo.set_shader_parameter("strength", float(recipe.stellar.brightness)*(.12+float(recipe.stellar.activity)*.6))
+		halo.set_shader_parameter("seed", recipe.seed)
+		halo.set_shader_parameter("pulse", 1.0 if recipe.stellar.type in ["pulsar", "magnetar"] else 0.0)
+		corona.material_override = halo
+		corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mi.add_child(corona)
 	mi.visible = false
 	if physical:
 		mi.extra_cull_margin = 8000.0
@@ -774,16 +775,17 @@ static func has_surface(recipe: Dictionary) -> bool:
 
 
 # Which kit morphology dresses the tile. Recipe-driven, per the asset-kit spec:
-# recognizable vegetation needs a biosphere, so "tree" is gated on real air AND
-# standing liquid, not on a colour. Cold worlds get ice shards, the rest bare
+# Vegetation requires an explicit recipe biosphere; air and liquid alone
+# cannot establish life. Cold worlds get ice shards, the rest bare
 # rock. These are separate meshes on purpose — recolouring a tree blue does not
 # make it an ice spire, and recolouring lava does not make it cryovolcanism.
 static func surface_kit(recipe: Dictionary) -> String:
 	if not has_surface(recipe):
 		return "none"
-	if float(recipe.get("air_amount", 0.0)) > 0.5 and float(recipe.get("water_shine", 0.0)) > 0.3:
+	var profile := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
+	if float(profile.vegetation_density) > 0.0 and float(profile.ice_surface) < 0.5:
 		return "tree"
-	if float(recipe.get("ice_amount", 0.0)) > 0.25:
+	if float(profile.ice_surface) > 0.25 or float(recipe.get("ice_amount", 0.0)) > 0.25:
 		return "ice"
 	return "rock"
 
@@ -880,9 +882,12 @@ static func terrain_material(recipe: Dictionary, spec: Dictionary) -> ShaderMate
 	var mat := ShaderMaterial.new()
 	mat.shader = TERRAIN_SHADER
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
-	for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "wave_scale"]:
+	for key in ["rock_amount", "liquid_amount", "lava_amount", "ice_surface", "wave_scale", "wave_strength", "vegetation_density", "sea_ice_latitude"]:
 		mat.set_shader_parameter(key, surface[key])
 	mat.set_shader_parameter("snow_line_km", float(surface.get("snow_line_m", 0.0)) / 1000.0)
+	mat.set_shader_parameter("snow_polar_drop_km", surface.snow_polar_drop_m / 1000.0)
+	mat.set_shader_parameter("tree_line_km", surface.tree_line_m / 1000.0)
+	mat.set_shader_parameter("vegetation_from_albedo", surface.vegetation_from_albedo)
 	mat.set_shader_parameter("surface_seed", surface.seed)
 	mat.set_shader_parameter("term_lo", TERMINATOR_LO)
 	mat.set_shader_parameter("term_hi", TERMINATOR_HI)
@@ -1007,6 +1012,10 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	var mat := ShaderMaterial.new()
 	mat.shader = COOK_SHADER
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
+	if recipe.has("stellar"):
+		var stellar: Dictionary = recipe.stellar
+		for key in ["mode", "cells", "spots", "activity", "brightness"]:
+			mat.set_shader_parameter("stellar_"+key, stellar[key])
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)
 	mat.set_shader_parameter("exposure", surface.exposure)

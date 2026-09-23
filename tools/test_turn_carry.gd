@@ -22,6 +22,17 @@ func _initialize() -> void:
 
 	var same: Vector3 = S.apply(vel, old_b, old_b)
 	failed += _check("no_turn_no_change", same.distance_to(vel) < 0.0001)
+	var falling := -vel
+	failed += _check("backwards_fall_does_not_reverse", S.apply(falling,old_b,new_b).is_equal_approx(falling))
+	var drift := Vector3.RIGHT*5
+	failed += _check("side_slip_is_not_rotated", S.apply(drift,old_b,new_b).is_equal_approx(drift))
+	# Manual steering is incremental, so test the entire turn, not only a 180° snap.
+	var basis := old_b
+	for i in 180:
+		var turned := basis.rotated(Vector3.UP,deg_to_rad(1))
+		falling = S.apply(falling,basis,turned)
+		failed += _check("turn_cannot_flip_fall_outwards_%d" % i, falling.z > 0)
+		basis = turned
 
 	if failed == 0:
 		print("turn_carry: OK")

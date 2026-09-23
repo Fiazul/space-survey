@@ -92,12 +92,12 @@ func _initialize() -> void:
 
 	var sun_r := G.recipe_for({ "name": "Sun", "star": true })
 	failed += _check("sun_star", sun_r.kind == "star")
-	failed += _check("sun_map", G.has_map(sun_r))
+	failed += _check("sun_stellar_recipe", sun_r.has("stellar") and sun_r.stellar.temperature_k == 5772.0)
 	var sun_p := G.paint({ "name": "Sun", "star": true, "physical": true, "radius": 20.0 }, 20.0)
 	if sun_p.mat is ShaderMaterial:
 		var sun_sm := sun_p.mat as ShaderMaterial
 		failed += _check("sun_kind3", int(sun_sm.get_shader_parameter("kind")) == 3)
-		failed += _check("sun_uses_map", float(sun_sm.get_shader_parameter("has_albedo")) > 0.5)
+		failed += _check("sun_procedural_photosphere", float(sun_sm.get_shader_parameter("has_albedo")) < 0.5)
 		G.ensure_close_maps(sun_sm, sun_r, false)
 		failed += _check("sun_binds_no_height", float(sun_sm.get_shader_parameter("has_height")) < 0.5)
 	sun_p.sphere.free()
@@ -173,9 +173,7 @@ func _initialize() -> void:
 	var doc := FileAccess.get_file_as_string("res://PLANET_GENERATOR.md")
 	failed += _check("cook_doc", doc.find("Pacman") >= 0)
 	failed += _check("cook_log_spec", doc.find("Cook    ") >= 0)
-	var hud_src := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
-	failed += _check("hud_cook_line", hud_src.find("Cook    ") >= 0)
-	failed += _check("hud_look_line", hud_src.find("Look    ") >= 0)
+	# Cook diagnostics moved out of the flight HUD during its redesign.
 	var patch_src := FileAccess.get_file_as_string("res://scripts/world/surface_patch.gd")
 	failed += _check("trees_unshaded", patch_src.find("SHADING_MODE_UNSHADED") >= 0)
 

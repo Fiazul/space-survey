@@ -191,6 +191,8 @@ var _radius := 1.0             # the body's radius, for the colour palette's tex
 # too slowly for that lag to be visible (see _horizon_shadow).
 var _sun_dir := Vector3.ZERO
 var _built_sun_dir := Vector3.ZERO
+const SHADOW_REFRESH_MIN_MS := 8000
+var _shadow_build_ms := -SHADOW_REFRESH_MIN_MS
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -535,7 +537,10 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# every ring off-thread, keep whatever is already showing until each ring
 	# swaps in on its own frame. Never start a second batch while one is still
 	# computing or draining - that is what used to land already behind the ship.
-	var relit := _sun_dir.length_squared() > .1 and _sun_dir.dot(_built_sun_dir) < cos(deg_to_rad(1.0))
+	# Direct light follows the Sun every frame. Throttle baked horizon-shadow
+	# refreshes so a short day or time warp cannot keep terrain workers saturated.
+	var relit := Time.get_ticks_msec()-_shadow_build_ms >= SHADOW_REFRESH_MIN_MS \
+		and _sun_dir.length_squared() > .1 and _sun_dir.dot(_built_sun_dir) < cos(deg_to_rad(1.0))
 	if (cold or rescaled or recentered or relit) and not _rebuild_busy():
 		_start_rebuild(hit, radius, want_base, ship_vel)
 	# Stay shown while in band with ground. Horizon coverage no longer gates
@@ -603,6 +608,7 @@ func _start_rebuild(hit: Vector3, radius: float, base: float, ship_vel: Vector3)
 	var results := _thread_results
 	var sun_dir := _sun_dir
 	_built_sun_dir = sun_dir
+	_shadow_build_ms = Time.get_ticks_msec()
 	var kit := _kit
 	if _forest_cache.size() > 24576:
 		_forest_cache.clear()

@@ -19,6 +19,8 @@ func check(label: String, ok: bool) -> void:
 
 func _ready() -> void:
 	var saved_time: float = Ephemeris.rotation_clock.unix_s
+	var saved_cycle: float = Ephemeris.rotation_clock.cycle_minutes
+	Ephemeris.rotation_clock.cycle_minutes = 8.0
 	var utc := float(Time.get_unix_time_from_datetime_string("2026-09-23T00:00:00"))
 	var amazon := DevSites.dir_for(-3,-60)
 	var sun := Vector3.LEFT # autumn equinox, RA 12h, scene equatorial frame
@@ -35,7 +37,20 @@ func _ready() -> void:
 			day_samples += 1
 	check("Amazon experiences both halves of the day", day_samples >= 11 and day_samples <= 13)
 	var clock := CelestialRotation.new()
+	clock.cycle_minutes = 8.0
 	clock.load_from(ConfigFile.new(),utc)
+	var start := CelestialRotation.earth_angle(clock.unix_s)
+	clock.advance(240)
+	check("four real minutes is half a rotation", absf(absf(angle_difference(start,CelestialRotation.earth_angle(clock.unix_s)))-PI) < .00001)
+	clock.advance(240)
+	check("eight real minutes completes the cycle", absf(angle_difference(start,CelestialRotation.earth_angle(clock.unix_s))) < .00001)
+	var short_rate := clock.rate
+	clock.cycle_minutes = 24.0
+	check("cycle duration is configurable without moving the phase", is_equal_approx(clock.rate*3,short_rate) and absf(angle_difference(start,CelestialRotation.earth_angle(clock.unix_s))) < .00001)
+	clock.cycle_minutes = -1.0
+	check("invalid duration falls back to eight minutes", clock.cycle_minutes == 8.0)
+	clock.cycle_minutes = NAN
+	check("nonfinite duration falls back to eight minutes", clock.cycle_minutes == 8.0)
 	clock.advance(6*3600)
 	var cfg := ConfigFile.new()
 	clock.save_into(cfg,utc+100)
@@ -43,16 +58,22 @@ func _ready() -> void:
 	resumed.load_from(cfg,utc+100)
 	check("immediate restart preserves phase", resumed.unix_s == clock.unix_s)
 	resumed.load_from(cfg,utc+100+12*3600)
-	check("offline elapsed time advances the world", resumed.unix_s == clock.unix_s+12*3600)
+	check("offline elapsed time uses saved cycle rate", is_equal_approx(resumed.unix_s,clock.unix_s+12*3600*clock.rate))
 	resumed.load_from(cfg,utc-100)
 	check("wall clock rollback cannot rewind saved world", resumed.unix_s == clock.unix_s)
+	resumed.cycle_minutes = 24.0
+	resumed.load_from(cfg,utc+160)
+	check("changing duration preserves offline interval at previous rate", absf(resumed.unix_s-clock.unix_s-60*clock.rate) < .001)
+	cfg.erase_section_key("world_clock","rate")
+	resumed.load_from(cfg,utc+160)
+	check("old real-time saves retain their phase on upgrade", absf(resumed.unix_s-clock.unix_s-60) < .001)
 	Ephemeris.rotation_clock.unix_s = utc+16*3600
 	var noon_solar := Ephemeris.solar_state("Earth",amazon)
 	var first := EarthWorld.new()
 	add_child(first)
 	var noon := first.surface_basis("Earth")
 	check("mesh initialized at current clock", first._bodies[0].sphere.basis.is_equal_approx(noon))
-	Ephemeris.rotation_clock.advance(12*3600)
+	Ephemeris.rotation_clock.advance(240)
 	var night_solar := Ephemeris.solar_state("Earth",amazon)
 	check("destination solar clock advances twelve hours", absf(fposmod(night_solar.hour-noon_solar.hour,24)-12) < .05)
 	check("destination solar elevation changes sign", noon_solar.elevation*night_solar.elevation < 0)
@@ -81,6 +102,18 @@ func _ready() -> void:
 	check("landed ship follows airless Moon surface", local_before.distance_to(local_after) < .002)
 	ship.anchor_name = "Earth"
 	ship.landed = false
+	# Changing the rotation clock cannot change gravity integration in vacuum.
+	ship.anchor_off = Vector3.RIGHT*100000
+	ship.velocity = Vector3.ZERO
+	ship._newton_advance(1.0)
+	var fast_off := ship.anchor_off
+	var fast_velocity := ship.velocity
+	Ephemeris.rotation_clock.cycle_minutes = CelestialRotation.EARTH_ROTATION_DAY/60.0
+	ship.anchor_off = Vector3.RIGHT*100000
+	ship.velocity = Vector3.ZERO
+	ship._newton_advance(1.0)
+	check("day duration does not speed up ship physics", ship.anchor_off.is_equal_approx(fast_off) and ship.velocity.is_equal_approx(fast_velocity))
+	Ephemeris.rotation_clock.cycle_minutes = 8.0
 	# The frame hands the world the SAME accelerated time the ship integrated.
 	ship.anchor_off = Vector3.RIGHT*100000
 	ship._time_idx = 4
@@ -112,6 +145,7 @@ func _ready() -> void:
 	check("terrain shadow sun is body-local", patch._sun_dir.distance_to(noon.inverse()*sun) < .00001)
 	check("terrain shader sun remains world-space", (patch._land_mat.get_shader_parameter("sun_dir") as Vector3).distance_to(sun) < .00001)
 	Ephemeris.rotation_clock.unix_s = saved_time
+	Ephemeris.rotation_clock.cycle_minutes = saved_cycle
 	patch.queue_free()
 	ship.queue_free()
 	controller.queue_free()

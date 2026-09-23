@@ -486,7 +486,10 @@ func solar_state(body_name: String, local_direction: Vector3) -> Dictionary:
 	return {"hour":hour,"elevation":elevation,"phase":"DAY" if elevation > 0 else ("TWILIGHT" if elevation > -6 else "NIGHT")}
 
 func scene_spin_rad_s(body_name: String) -> float:
-	return -spin_rad_s(body_name)
+	# Transport the surface frame at the same rate as visual rotation. This
+	# never changes the integration delta used for gravity, thrust or weapons.
+	var spin := TAU / _ROT.EARTH_ROTATION_DAY if body_name == "Earth" else spin_rad_s(body_name)
+	return -spin * rotation_clock.rate
 
 
 func spin_rad_s(body_name: String) -> float:

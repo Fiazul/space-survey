@@ -1,4 +1,4 @@
-# Astryx · v0.12.0-dev.20260923.2
+# Astryx · v0.12.0-dev.20260923.3
 
 A potato-friendly **third-person space explorer** in Godot 4 / GDScript. Launch
 from Earth, fly the **real** solar system, wormhole across a tested interstellar
@@ -79,8 +79,13 @@ cursor / back.
 
 **Teleport destinations** — click/tap **TELEPORT** at the top right (or `Ctrl+P`) to pick a Sol planet or landmark.
 Earth landmarks show local solar time and DAY/TWILIGHT/NIGHT. Earth's rotation
-starts from UTC, persists across sessions, and advances while offline; returning
-to a surface save preserves its geographic location as the planet turns.
+starts from UTC, persists across sessions, and advances while offline. A full
+day/night cycle takes **8 real minutes at 1×** (roughly 4 minutes each near the
+equator). Configure `world/day_night/cycle_minutes` in `project.godot` to change
+that duration. This scales the rotation clock and surface co-rotation, not ship
+gravity/thrust or weapon timing. Returning to a surface save preserves its
+geographic location as the planet turns. Other bodies retain their relative spin
+rates; the 8-minute reference is Earth's cycle against the current ephemeris Sun.
 
 **Interaction** — `Tab` cycle nose-aim waypoint target · `V` scan / hold to
 capture · `L` codex · `J` mission log · `G` body details · `M` star map ·

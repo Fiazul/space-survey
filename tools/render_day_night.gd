@@ -36,8 +36,10 @@ func _ready() -> void:
 	var utc := float(Time.get_unix_time_from_datetime_string("2026-09-23T00:00:00"))
 	DirAccess.make_dir_recursive_absolute("/tmp/day-night")
 	var captures: Array[Image] = []
-	for hour in [16,4]:
-		Ephemeris.rotation_clock.unix_s = utc+hour*3600
+	Ephemeris.rotation_clock.unix_s = utc+16*3600
+	for phase in ["day","night"]:
+		if phase == "night":
+			Ephemeris.rotation_clock.advance(Ephemeris.rotation_clock.cycle_minutes*30.0)
 		var body_basis := world.surface_basis("Earth")
 		var off := body_basis*local*radius
 		var up := body_basis*local
@@ -51,7 +53,6 @@ func _ready() -> void:
 				break
 		await RenderingServer.frame_post_draw
 		assert(world._surface.has_ground() and not world._surface._rebuild_busy(), "Terrain did not finish streaming")
-		var phase := "day" if hour == 16 else "night"
 		var capture := get_viewport().get_texture().get_image()
 		captures.append(capture)
 		capture.save_png("/tmp/day-night/amazon-%s.png" % phase)

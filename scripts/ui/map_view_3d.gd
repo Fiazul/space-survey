@@ -341,7 +341,8 @@ func _build_local() -> void:
 				if not filters.wormholes:
 					continue
 				_add_wormhole(mp, 0.55)
-				_add_name_tag(mp, 0.55, r.name, Color(0.75, 0.65, 1.0), str(r.id), stagger, li)
+				# Pin gate names onto an outer annotation ring — keeps Sol's center readable.
+				_add_name_tag(mp, 0.55, r.name, Color(0.75, 0.65, 1.0), str(r.id), stagger, li, LOCAL_MAP_R * 0.72)
 				_pickables.append({ "id": r.id, "pos": mp })
 			"station":
 				if not filters.platforms:
@@ -497,10 +498,39 @@ func _pick_label_tip(anchor: Vector3, marker_r: float, index: int, stagger: floa
 		tip = best
 	_label_tips.append(tip)
 	return tip
-func _add_name_tag(anchor: Vector3, marker_r: float, text: String, col: Color, pick_id: String = "", stagger: float = 0.0, index: int = 0) -> void:
+
+
+func _pick_ring_tip(anchor: Vector3, index: int, stagger: float, ring_r: float) -> Vector3:
+	# Place label on a map-radius ring (used for wormhole gates near Sol).
+	var base_ang: float = atan2(anchor.z, anchor.x)
+	if Vector3(anchor.x, 0.0, anchor.z).length() < 0.2:
+		base_ang = float(index) * 0.9
+	var best := Vector3.ZERO
+	var best_c := -1.0
+	for k in 12:
+		var ang: float = base_ang + float(k) * TAU / 12.0 + stagger * 0.15
+		var y: float = 2.0 + float((index + k) % 5) * 0.55
+		var tip := Vector3(cos(ang) * ring_r, y, sin(ang) * ring_r)
+		var c: float = 100.0
+		for p in _label_tips:
+			c = minf(c, Vector2(tip.x, tip.z).distance_to(Vector2(p.x, p.z)))
+		if _label_tips.is_empty():
+			c = 10.0
+		if c > best_c:
+			best_c = c
+			best = tip
+	_label_tips.append(best)
+	return best
+
+
+func _add_name_tag(anchor: Vector3, marker_r: float, text: String, col: Color, pick_id: String = "", stagger: float = 0.0, index: int = 0, ring_r: float = 0.0) -> void:
 	# Short Z-ish leader (mostly +Y) from marker to a deconflicted name tip.
 	var base := anchor + Vector3(0.0, marker_r * 0.9, 0.0)
-	var tip := _pick_label_tip(anchor, marker_r, index, stagger)
+	var tip: Vector3
+	if ring_r > 0.1:
+		tip = _pick_ring_tip(anchor, index, stagger, ring_r)
+	else:
+		tip = _pick_label_tip(anchor, marker_r, index, stagger)
 	_add_leader_arrow(base, tip, col)
 	var lab := Label3D.new()
 	lab.text = text

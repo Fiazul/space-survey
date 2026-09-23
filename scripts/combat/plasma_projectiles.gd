@@ -1,17 +1,18 @@
 class_name PlasmaProjectiles
 extends Node3D
-## Kilometres throughout. Collision stays small; the hot core/corona and short
-## wake communicate the pulse's energy at the actual chase-camera distance.
+## Kilometres throughout. Each pulse is one dense additive ray with no outer shell.
+## Its swept collision remains narrow and independent of the visual length.
 const RADIUS := .00015
-const LENGTH := .0035
-const CORE_DIAMETER := .0012
+const LENGTH := .080
+const CORE_DIAMETER := .0008
 const BASE_SPEED := 1.2 # km/s at 1x
-const DEFAULT_SPEED_MULTIPLIER := 8.0
+const DEFAULT_SPEED_MULTIPLIER := 32.0
+const DEFAULT_DAMAGE_MULTIPLIER := 32.0
+var damage_multiplier := DEFAULT_DAMAGE_MULTIPLIER
 var speed_multiplier := DEFAULT_SPEED_MULTIPLIER
 const RANGE := 3.0
 const MAX_SHOTS := 48
 const COLOR := Color(.94, .98, 1.0)
-const WAKE_LENGTH := .035
 const FLASH_TIME := .065
 const IMPACT_TIME := .12
 const GLOW := preload("res://shaders/plasma_glow.gdshader")
@@ -19,12 +20,10 @@ var shots: Array = []
 var flashes: Array = []
 var bursts: Array = []
 var _mesh: CapsuleMesh
-var _material: StandardMaterial3D
+var _material: ShaderMaterial
 var _halo_mesh: SphereMesh
-var _wake_mesh: CylinderMesh
 var _flash_mesh: SphereMesh
 var _glow: ShaderMaterial
-var _wake_glow: ShaderMaterial
 
 func _init() -> void:
 	_mesh = CapsuleMesh.new()
@@ -32,12 +31,8 @@ func _init() -> void:
 	_mesh.height = LENGTH
 	_mesh.radial_segments = 6
 	_mesh.rings = 1
-	_material = StandardMaterial3D.new()
-	_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	_material.albedo_color = COLOR
-	_material.emission_enabled = true
-	_material.emission = COLOR
-	_material.emission_energy_multiplier = 12.0
+	_material = ShaderMaterial.new()
+	_material.shader = preload("res://shaders/plasma_ray.gdshader")
 	_halo_mesh = SphereMesh.new()
 	_halo_mesh.radius = .002
 	_halo_mesh.height = .006
@@ -46,17 +41,6 @@ func _init() -> void:
 	_glow = ShaderMaterial.new()
 	_glow.shader = GLOW
 	_glow.set_shader_parameter("energy", 6.0)
-	_wake_glow = _glow.duplicate()
-	_wake_glow.set_shader_parameter("axial_length", WAKE_LENGTH)
-	_wake_glow.set_shader_parameter("energy", 4.0)
-	_wake_mesh = CylinderMesh.new()
-	_wake_mesh.top_radius = .001
-	_wake_mesh.bottom_radius = .00002
-	_wake_mesh.height = WAKE_LENGTH
-	_wake_mesh.radial_segments = 8
-	_wake_mesh.rings = 1
-	_wake_mesh.cap_top = false
-	_wake_mesh.cap_bottom = false
 	_flash_mesh = SphereMesh.new()
 	_flash_mesh.radius = .004
 	_flash_mesh.height = .012
@@ -72,14 +56,6 @@ func emit(origin: Vector3, inherited_velocity: Vector3, direction: Vector3,
 	node.material_override = _material
 	node.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(node)
-	node.position = origin - render_origin
-	var up := Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > .98 else Vector3.UP
-	node.basis = Basis.looking_at(direction, up) * Basis(Vector3.RIGHT, -PI*.5)
-	_scale_for_view(node, get_viewport().get_camera_3d())
-	var corona := _add_effect(node, _halo_mesh, _glow)
-	corona.scale = Vector3(.7, 1.0, .7)
-	var wake := _add_effect(node, _wake_mesh, _wake_glow)
-	wake.visible = false
 	if is_instance_valid(muzzle):
 		var flash := _add_effect(muzzle, _flash_mesh, _glow)
 		flash.rotation.x = -PI*.5
@@ -94,7 +70,8 @@ func emit(origin: Vector3, inherited_velocity: Vector3, direction: Vector3,
 		flashes.append({"node": flash, "life": FLASH_TIME})
 	var speed := muzzle_speed()
 	shots.append({"pos": origin, "vel": inherited_velocity + direction * speed,
-		"life": RANGE / speed, "speed": speed, "damage": damage, "node": node, "wake": wake, "age": 0.0})
+		"life": RANGE / speed, "speed": speed, "damage": maxi(1, roundi(damage*maxf(damage_multiplier,.1))), "node": node, "age": 0.0})
+	_pose_ray(shots.back(), render_origin, get_viewport().get_camera_3d())
 
 func muzzle_speed() -> float:
 	return BASE_SPEED * maxf(speed_multiplier, .1)
@@ -147,13 +124,7 @@ func advance(delta: float, render_origin: Vector3, targets: Array,
 		shot.life -= dt
 		shot.age += dt
 		shot.pos = end
-		shot.node.position = end - render_origin
-		_scale_for_view(shot.node, camera)
-		# A short attached wake ends behind each pulse; never tether it to the gun.
-		var wake_scale := minf(shot.age*shot.speed / WAKE_LENGTH, 1.0)
-		shot.wake.visible = wake_scale > .001
-		shot.wake.scale.y = maxf(wake_scale, .001)
-		shot.wake.position.y = -WAKE_LENGTH*.5*wake_scale
+		_pose_ray(shot, render_origin, camera)
 		if first < INF:
 			_impact(start.lerp(end, first), render_origin)
 			if target != null:
@@ -208,16 +179,22 @@ func _add_effect(parent: Node3D, mesh: Mesh, material: Material) -> MeshInstance
 	parent.add_child(effect)
 	return effect
 
-func _scale_for_view(node: Node3D, camera: Camera3D) -> void:
-	if camera == null:
-		return
-	# The core should cover ~3 pixels from the chase camera instead of aliasing
-	# into a dribble of disappearing subpixel dots. Cap at 7.2 m visual diameter;
-	# this scales only the light effect, never the 30 cm collision diameter.
-	var distance := node.global_position.distance_to(camera.global_position)
-	var height := maxf(get_viewport().get_visible_rect().size.y, 1.0)
-	var km_per_pixel := 2.0*distance*tan(deg_to_rad(camera.fov)*.5)/height
-	node.scale = Vector3.ONE * clampf(3.0*km_per_pixel / CORE_DIAMETER, 1.0, 6.0)
+func _pose_ray(shot: Dictionary, render_origin: Vector3, camera: Camera3D) -> void:
+	var node: MeshInstance3D = shot.node
+	var direction: Vector3 = shot.vel.normalized()
+	var length := minf(LENGTH, maxf(.004, shot.age*shot.speed))
+	var center: Vector3 = shot.pos + direction*length*(.5 if shot.age == 0.0 else -.5)
+	node.position = center-render_origin
+	var up := Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > .98 else Vector3.UP
+	node.basis = Basis.looking_at(direction, up)*Basis(Vector3.RIGHT, -PI*.5)
+	var width := 1.0
+	if camera != null:
+		var distance := node.global_position.distance_to(camera.global_position)
+		var height := maxf(get_viewport().get_visible_rect().size.y, 1.0)
+		var km_per_pixel := 2.0*distance*tan(deg_to_rad(camera.fov)*.5)/height
+		# Keep a fine 2-pixel ray, capped at 4.8 m. Never scale its length with distance.
+		width = clampf(2.0*km_per_pixel/CORE_DIAMETER, 1.0, 6.0)
+	node.scale = Vector3(width, length/LENGTH, width)
 
 func _impact(position: Vector3, render_origin: Vector3) -> void:
 	if bursts.size() >= 16:

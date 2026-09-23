@@ -19,12 +19,13 @@ var _root: Control
 var _list: VBoxContainer
 var _filter: LineEdit
 var _title: Label
+var _close_button: Button
 var _open := false
 
 
 func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
-	layer = 97
+	layer = 110
 	_build()
 	_root.visible = false
 
@@ -51,7 +52,9 @@ func _open_panel() -> void:
 	get_tree().paused = true
 	if ship != null:
 		ship._set_capture(false)
-	_filter.grab_focus()
+	# Keep the phone keyboard closed until the player explicitly taps Search.
+	if not OS.has_feature("mobile") and not "--touch" in OS.get_cmdline_user_args():
+		_filter.grab_focus()
 
 
 func _close() -> void:
@@ -65,8 +68,8 @@ func _close() -> void:
 # ---------------------------------------------------------------------------
 func _refresh() -> void:
 	var in_sol := ship != null and ship.newton
-	_title.text = "DEV SITES        Ctrl+P / Esc to close" if in_sol \
-		else "DEV SITES        Sol only — fly home first"
+	_title.text = "TELEPORT — SOL" if in_sol \
+		else "TELEPORT — return to Sol first"
 	for c in _list.get_children():
 		c.queue_free()
 	if not in_sol:
@@ -95,6 +98,9 @@ func _refresh() -> void:
 			row.focus_mode = Control.FOCUS_NONE
 			row.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			row.flat = true
+			row.custom_minimum_size.y = 52
+			row.add_theme_font_size_override("font_size", 16)
+			row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			row.text = "    %s   —  %s" % [str(site.name), str(site.get("note", ""))]
 			row.pressed.connect(_pick.bind(site))
 			_list.add_child(row)
@@ -181,20 +187,29 @@ func _build() -> void:
 	var margin := MarginContainer.new()
 	margin.set_anchors_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
-		margin.add_theme_constant_override("margin_" + side, 60)
+		margin.add_theme_constant_override("margin_" + side, 28)
 	_root.add_child(margin)
 
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 12)
 	margin.add_child(col)
 
+	var header := HBoxContainer.new()
+	col.add_child(header)
 	_title = Label.new()
-	_title.add_theme_font_size_override("font_size", 30)
+	_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_title.add_theme_font_size_override("font_size", 26)
 	_title.add_theme_color_override("font_color", Color(0.6, 1.0, 0.95))
-	col.add_child(_title)
+	header.add_child(_title)
+	_close_button = Button.new()
+	_close_button.text = "CLOSE"
+	_close_button.custom_minimum_size = Vector2(112, 48)
+	_close_button.pressed.connect(_close)
+	header.add_child(_close_button)
 
 	_filter = LineEdit.new()
-	_filter.placeholder_text = "filter by name / body / note…"
+	_filter.placeholder_text = "Search planets and landmarks…"
+	_filter.custom_minimum_size.y = 48
 	_filter.text_changed.connect(_on_filter_changed)
 	col.add_child(_filter)
 	col.add_child(HSeparator.new())
@@ -208,6 +223,6 @@ func _build() -> void:
 	scroll.add_child(_list)
 
 	var close := Label.new()
-	close.text = "click a site to jump there   ·   Ctrl+P / Esc to close"
+	close.text = "Choose a destination to jump there · Ctrl+P / Esc to close"
 	close.add_theme_color_override("font_color", Color(0.7, 0.75, 0.85))
 	col.add_child(close)

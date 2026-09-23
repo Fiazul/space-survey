@@ -22,7 +22,7 @@ SDK + a JDK + the export templates. This walks you through it end to end.
 
 You can preview the touch layout on desktop right now:
 ```
-godot --touch        # forces touch mode; drag with the mouse, click the buttons
+godot -- --touch     # forces touch mode; drag with the mouse, click the buttons
 ```
 
 ## One-time toolchain setup
@@ -78,3 +78,9 @@ godot --headless --export-debug "Android" builds/android/Astryx.apk
   steer-dragging (`TouchControls._draw_steer_ring`) — there was previously no visual at
   all for the steer zone, only the invisible drag-to-look behavior.
 - None of the touch feel could be tested off-device — expect to adjust `LOOK_SENS` and button sizes after the first run.
+
+## September 23 prerelease
+
+The flight screen has a visible **TELEPORT** button beside **SYSTEMS**. It opens the Sol planet/landmark picker without enabling DEV; large destination rows and a **CLOSE** button work by touch. The keyboard shortcut remains Ctrl+P.
+
+`test-2026-09-23` uses version `0.12.0-dev.20260923` (Android version code `2026092301`), sensor landscape and the Mobile renderer. The APK is a signed debug build for sideload testing. Weapon defaults are 32× speed and damage, with one thin additive ray and stable converging gun aim.

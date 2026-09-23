@@ -1,4 +1,4 @@
-# Astryx · v0.11.4
+# Astryx · v0.12.0-dev.20260923
 
 A potato-friendly **third-person space explorer** in Godot 4 / GDScript. Launch
 from Earth, fly the **real** solar system, wormhole across a tested interstellar
@@ -76,6 +76,8 @@ height/contact/props all read from the same sampler.
 `Num Lock` toggle hands-free auto-cruise (W + boost) · `W`+`C` cinematic drift-flip
 (`A`/`D` picks the side) · `,`/`.` (or `[`/`]`) step time warp rate · `Esc` free
 cursor / back.
+
+**Teleport destinations** — click/tap **TELEPORT** at the top right (or `Ctrl+P`) to pick a Sol planet or landmark.
 
 **Interaction** — `Tab` cycle nose-aim waypoint target · `V` scan / hold to
 capture · `L` codex · `J` mission log · `G` body details · `M` star map ·

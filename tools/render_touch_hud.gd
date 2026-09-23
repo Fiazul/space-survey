@@ -22,6 +22,7 @@ var _saved := false
 
 
 func _ready() -> void:
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	get_viewport().transparent_bg = false
 	var main: Node = load("res://scripts/core/main.gd").new()
 	main.name = "Main"
@@ -34,6 +35,8 @@ func _process(_dt: float) -> void:
 	_wait += 1
 	if _wait == 2 and OS.get_environment("SHOT_SYSTEMS") == "1":
 		get_node("Main").hud.toggle_systems()
+	if _wait == 2 and OS.get_environment("SHOT_TELEPORT") == "1":
+		get_node("Main").hud.teleport_sites_button.pressed.emit()
 	var frames := int(OS.get_environment("SHOT_FRAMES")) if OS.has_environment("SHOT_FRAMES") else OUT_WAIT
 	if _wait < frames:
 		return

@@ -29,7 +29,7 @@ func _ready() -> void:
 	ship.systems.step(1)
 	var combat := Combat.new()
 	add_child(combat)
-	check("default speed is 8x", is_equal_approx(combat.plasma.muzzle_speed(), 9.6))
+	check("default speed is 32x", is_equal_approx(combat.plasma.muzzle_speed(), 38.4))
 	var target := {"alive": true, "pos": ship.muzzle_off()+Vector3(.004,0,-1), "vel": Vector3(.1,0,0), "size": .01, "name": "Test drone"}
 	combat._aliens = [target]
 	combat.update_aim(ship)

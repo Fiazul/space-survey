@@ -58,7 +58,8 @@ func _ready() -> void:
 			var shot: Dictionary = combat.plasma.shots.back()
 			check("shot born at live muzzle hull %d slot %d" % [index, slot], shot.pos.distance_to(ship.muzzle_off(slot)) < .00001)
 			check("shot follows barrel and inherits momentum", shot.vel.is_equal_approx(ship.velocity + ship.barrel_direction(slot)*combat.plasma.muzzle_speed()))
-			check("compact pulse geometry", shot.node.mesh.get_aabb().size.length() < .005)
+			check("ray stays thin", shot.node.mesh.get_aabb().size.x < .001)
+			check("stronger damage keeps each hull base damage", shot.damage == ship.bolt_damage*32)
 			check("flash belongs to firing muzzle", combat.plasma.flashes.back().node.get_parent() == ship.systems.muzzle_node(slot))
 		ship.anchor_off = Vector3.UP * 6471.1
 		var before := combat.energy
@@ -72,7 +73,7 @@ func _ready() -> void:
 	var far := {"alive": true, "pos": Vector3(0, 0, -.4), "size": .02}
 	pulses.emit(Vector3.ZERO, Vector3.ZERO, Vector3.FORWARD, 2, Vector3.ZERO)
 	var hits := pulses.advance(.5, Vector3.ZERO, [far, near])
-	check("sweep hits closest target despite large frame step", hits.size() == 1 and hits[0].target == near and pulses.shots.is_empty())
+	check("sweep hits closest target despite large frame step", hits.size() == 1 and hits[0].target == near and hits[0].damage == 64 and pulses.shots.is_empty())
 	var flat := FlatLand.new({})
 	flat.surface = {"solid": true}
 	var buried := {"alive": true, "pos": Vector3.UP * 6370.9, "size": .01}
@@ -98,8 +99,8 @@ func _ready() -> void:
 	pulses.emit(Vector3(2, 3, 4), Vector3.RIGHT, Vector3.FORWARD, 2, Vector3.ZERO)
 	pulses.shift_frame(Vector3(1, 2, 3))
 	check("reanchoring preserves shot placement", pulses.shots[0].pos == Vector3.ONE)
-	pulses.advance(.1, Vector3.ZERO, [])
-	check("pulse travels independently after firing", pulses.shots[0].pos.distance_to(Vector3(1.1, 1, 1.0-.1*pulses.muzzle_speed())) < .00001)
+	pulses.advance(.02, Vector3.ZERO, [])
+	check("pulse travels independently after firing", pulses.shots[0].pos.distance_to(Vector3(1.02, 1, 1.0-.02*pulses.muzzle_speed())) < .00001)
 	pulses.advance(4, Vector3.ZERO, [])
 	check("shots expire at finite range", pulses.shots.is_empty())
 	for i in 60:
@@ -111,7 +112,8 @@ func _ready() -> void:
 	pulses.emit(Vector3.ZERO, Vector3.ZERO, Vector3.FORWARD, 1, Vector3.ZERO, muzzle)
 	pulses.advance(PlasmaProjectiles.FLASH_TIME+.01, Vector3.ZERO, [])
 	check("muzzle flash is brief while projectile continues", pulses.flashes.is_empty() and pulses.shots.size() == 1)
-	check("wake is bounded behind projectile", absf(pulses.shots[0].wake.position.y) <= PlasmaProjectiles.WAKE_LENGTH*.5 + .000001)
+	check("one ray with no halo or wake geometry", pulses.shots[0].node.get_child_count() == 0)
+	check("ray length remains bounded", pulses.shots[0].node.scale.y <= 1.0)
 	pulses.clear()
 	muzzle.queue_free()
 	ship.queue_free()

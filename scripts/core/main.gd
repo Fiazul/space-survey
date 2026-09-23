@@ -14,7 +14,10 @@ extends Node3D
 # motion first, then the planet system reads the fresh anchor + offset, then the HUD.
 
 ## 1x = 1.2 km/s. Editable on Main in the Inspector, including Remote while running.
-@export_range(0.5, 32.0, 0.5, "or_greater") var plasma_speed_multiplier := 8.0
+@export_range(0.5, 32.0, 0.5, "or_greater") var plasma_speed_multiplier := 32.0
+
+## Damage scales separately so speed tuning does not change hit strength.
+@export_range(0.5, 64.0, 0.5, "or_greater") var plasma_damage_multiplier := 32.0
 
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way backdrop; loomed toward the core on the voyage
@@ -291,6 +294,7 @@ func _ready() -> void:
 	dev_sites.ship = ship
 	dev_sites.main = self
 	add_child(dev_sites)
+	hud.open_teleport_sites.connect(dev_sites.toggle)
 
 	# Waypoint navigator (Tab) + corner radar.
 	var nav_canvas := CanvasLayer.new()
@@ -421,6 +425,7 @@ func _perf_mark(key: String, t0: int) -> void:
 
 func _process(delta: float) -> void:
 	combat.plasma.speed_multiplier = plasma_speed_multiplier
+	combat.plasma.damage_multiplier = plasma_damage_multiplier
 	_update_holds(delta)
 	var _pt := _perf_t0()
 	ship.fly(delta)

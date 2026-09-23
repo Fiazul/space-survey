@@ -27,6 +27,7 @@ var _text_shader := load("res://shaders/hud_text.gdshader") as Shader
 signal ship_selected(index: int)   # emitted when a hangar row is clicked
 signal ship_color_selected(part: String, key: String)
 signal ship_finish_selected(key: String)
+signal open_teleport_sites() # visible TELEPORT shortcut, including Android
 signal open_teleport_map()   # clicked the dock's "TELEPORT NETWORK" button -> open the map
 
 var ship: Ship
@@ -94,6 +95,7 @@ var _objective_label: Label # "→ <star> <dist>" — the Survey guide line
 var _scan_label: Label  # scan prompt / progress (center-lower)
 var _toast_label: Label # "✓ X discovered" pop
 var _controls: PanelContainer   # the controls cheat-sheet menu (toggled by ?)
+var teleport_sites_button: Button
 var teleport_button: Button   # connected by main -> teleport_home()
 var _tp_net_button: Button    # bottom-centre "TELEPORT NETWORK" → open_teleport_map (while docked)
 var tp_cancel_button: Button  # shown only during a teleport ritual -> main.cancel_teleport()
@@ -491,8 +493,21 @@ func _build_button_bar(canvas: CanvasLayer) -> void:
 			_systems_scrim.accept_event()
 			_set_systems_open(false))
 	_systems_button = _icon_button(systems_layer, "SYSTEMS  [F1]", Vector2(1136, 22), 112, C_ACCENT)
-	_systems_button.size.y = 32
-	_systems_button.position.x = get_viewport().get_visible_rect().size.x - 144.0
+	_systems_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_systems_button.offset_left = -144
+	_systems_button.offset_right = -24
+	_systems_button.offset_top = 18
+	_systems_button.offset_bottom = 62
+	teleport_sites_button = _icon_button(systems_layer, "TELEPORT", Vector2.ZERO, 116, C_ACCENT)
+	teleport_sites_button.tooltip_text = "Choose a planet or landmark · Ctrl+P"
+	teleport_sites_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	teleport_sites_button.offset_left = -272
+	teleport_sites_button.offset_right = -156
+	teleport_sites_button.offset_top = 18
+	teleport_sites_button.offset_bottom = 62
+	teleport_sites_button.pressed.connect(func():
+		_set_systems_open(false)
+		open_teleport_sites.emit())
 	_btn_bar = Panel.new()
 	_btn_bar.size = Vector2(224, 300)
 	var background := _metal_box(C_ACCENT, 0.35)
@@ -552,7 +567,8 @@ func toggle_systems() -> void:
 	_set_systems_open(not is_systems_open())
 
 func blocks_flight_touch(pos: Vector2) -> bool:
-	return is_systems_open() or _systems_button.get_global_rect().has_point(pos)
+	return is_systems_open() or _systems_button.get_global_rect().has_point(pos) \
+		or teleport_sites_button.get_global_rect().has_point(pos)
 
 func _set_systems_open(open: bool) -> void:
 	if open and not is_systems_open():

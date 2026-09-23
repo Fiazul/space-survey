@@ -51,6 +51,9 @@ var _t := 0.0
 
 var _local_center := Vector3.ZERO
 var _local_ref := 1000.0
+var _player_pulse: MeshInstance3D = null  # outer ring scaled in _process
+var _player_core: MeshInstance3D = null
+var _player_label: Label3D = null
 
 
 func _ready() -> void:
@@ -169,6 +172,9 @@ func rebuild() -> void:
 			c.queue_free()
 	_pickables.clear()
 	_label_tips.clear()
+	_player_pulse = null
+	_player_core = null
+	_player_label = null
 	_lanes.mesh = null
 	if mode == Mode.GLOBAL:
 		_build_global()
@@ -215,8 +221,10 @@ func _build_global() -> void:
 				_add_platform(p + Vector3(0.55, 0.45, 0.0), st != "locked")
 
 	var hp := _gpos(here)
-	_add_ring(hp, 1.15, Color(0.45, 1.0, 0.7, 0.85), 0.04)
-	_add_player(hp + Vector3(0, 1.35, 0))
+	_add_ring(hp, 1.35, Color(0.45, 1.0, 0.7, 0.9), 0.06)
+	var you_g := hp + Vector3(0, 1.35, 0)
+	_add_player(you_g)
+	_add_you_label(you_g)
 
 
 func _build_global_lanes() -> void:
@@ -318,6 +326,7 @@ func _build_local() -> void:
 	_add_ring(Vector3.ZERO, LOCAL_MAP_R * 0.9, Color(0.35, 0.6, 0.9, 0.12), 0.015)
 
 	var li := 0
+	var you_map = null
 	for r in rows:
 		var mp := _compress_local(r.pos)
 		# Stagger stem length so inner-system names don't pile up ("soggy").
@@ -352,9 +361,10 @@ func _build_local() -> void:
 				_pickables.append({ "id": r.id, "pos": mp })
 			"player":
 				_add_player(mp)
-				_add_name_tag(mp, 0.55, "YOU", Color(0.65, 1.0, 0.8), "", stagger * 0.5, li)
+				_add_you_label(mp)
+				you_map = mp
 
-	_focus = Vector3.ZERO
+	_focus = you_map if you_map != null else Vector3.ZERO
 
 
 func _compress_local(true_pos: Vector3) -> Vector3:
@@ -445,16 +455,66 @@ func _add_platform(pos: Vector3, lit: bool) -> void:
 
 
 func _add_player(pos: Vector3) -> void:
+	# Bright ship / YOU marker — lime core + cyan rim + pulsing outer ring.
 	var mi := MeshInstance3D.new()
 	var mesh := PrismMesh.new()
-	mesh.size = Vector3(0.55, 1.1, 0.55)
+	mesh.size = Vector3(0.85, 1.55, 0.85)
 	mi.mesh = mesh
-	mi.material_override = _mat(Color(0.55, 1.0, 0.75), 2.2)
+	mi.material_override = _mat(Color(0.75, 1.0, 0.85), 3.4)
 	mi.position = pos
 	mi.rotation_degrees = Vector3(0, 0, 180)
 	_world.add_child(mi)
-	_add_ring(pos, 1.0, Color(0.5, 1.0, 0.7, 0.55), 0.05)
+	_player_core = mi
+	# Inner halo sphere (always-on bright).
+	var halo := MeshInstance3D.new()
+	var hs := SphereMesh.new()
+	hs.radius = 0.55
+	hs.height = 1.1
+	hs.radial_segments = 12
+	hs.rings = 8
+	halo.mesh = hs
+	var hm := _mat(Color(0.55, 1.0, 0.95), 2.8, 0.55)
+	hm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	halo.material_override = hm
+	halo.position = pos
+	_world.add_child(halo)
+	# Static inner ring.
+	_add_ring(pos, 1.15, Color(0.6, 1.0, 0.85, 0.75), 0.07)
+	# Outer pulse ring (scaled in _process).
+	var pulse := MeshInstance3D.new()
+	var tm := TorusMesh.new()
+	tm.inner_radius = 1.55
+	tm.outer_radius = 1.75
+	tm.rings = 28
+	tm.ring_segments = 12
+	pulse.mesh = tm
+	var pm := _mat(Color(0.55, 1.0, 0.9), 2.0, 0.7)
+	pm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	pulse.material_override = pm
+	pulse.position = pos
+	pulse.rotation_degrees = Vector3(90, 0, 0)
+	_world.add_child(pulse)
+	_player_pulse = pulse
 
+
+
+func _add_you_label(anchor: Vector3) -> void:
+	# Oversized billboard so current position stays readable on phone screens.
+	var tip := anchor + Vector3(0.0, 2.4, 0.0)
+	_add_leader_arrow(anchor + Vector3(0.0, 0.9, 0.0), tip, Color(0.85, 1.0, 0.95))
+	var lab := Label3D.new()
+	lab.text = "⌖ YOU"
+	lab.font_size = 42
+	lab.pixel_size = 0.018
+	lab.modulate = Color(0.9, 1.0, 0.95)
+	lab.outline_modulate = Color(0.0, 0.05, 0.0, 0.95)
+	lab.outline_size = 12
+	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	lab.no_depth_test = true
+	lab.position = tip + Vector3(0.0, 0.35, 0.0)
+	_world.add_child(lab)
+	_player_label = lab
+	_label_tips.append(tip)
 
 func _label_stagger(mp: Vector3, index: int) -> float:
 	# Kept for call-site bias; real separation is greedy in _pick_label_tip.
@@ -613,6 +673,16 @@ func _process(delta: float) -> void:
 	if not is_visible_in_tree():
 		return
 	_t += delta
+	# Pulse the YOU / ship marker so current position stays obvious on both modes.
+	if _player_pulse != null and is_instance_valid(_player_pulse):
+		var s: float = 1.0 + 0.28 * (0.5 + 0.5 * sin(_t * 4.2))
+		_player_pulse.scale = Vector3(s, 1.0, s)
+		var mat := _player_pulse.material_override as StandardMaterial3D
+		if mat != null:
+			var a: float = 0.35 + 0.45 * (0.5 + 0.5 * sin(_t * 4.2))
+			mat.albedo_color.a = a
+	if _player_core != null and is_instance_valid(_player_core):
+		_player_core.rotate_y(delta * 1.8)
 	if not _dragging and mode == Mode.GLOBAL:
 		_yaw += delta * 0.05
 		_apply_cam()

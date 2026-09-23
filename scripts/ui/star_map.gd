@@ -9,8 +9,8 @@ extends CanvasLayer
 
 const PANEL := Vector2(1140, 624)
 const PANEL_POS := Vector2((1280 - 1140) * 0.5, (720 - 624) * 0.5)
-const CHART_OFF := Vector2(18, 96)              # chart top-left, relative to PANEL_POS
-const CHART_SIZE := Vector2(700, 500)
+const CHART_OFF := Vector2(18, 110)             # below Local/Global tabs + filter chips
+const CHART_SIZE := Vector2(700, 486)
 const RIGHT_X := CHART_OFF.x + CHART_SIZE.x + 16
 
 var main: Node
@@ -168,7 +168,7 @@ func _build() -> void:
 
 	var hint := Label.new()
 	_hint = hint
-	hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   ◌ wormhole · 🪐 planet · ⌖ you   ·   Tab local/global · M / Esc to close"
+	hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   ◌ wormhole · 🪐 planet · ⌖ YOU   ·   Local / Global tabs · M / Esc to close"
 	hint.position = PANEL_POS + Vector2(0, 40)
 	hint.size = Vector2(PANEL.x, 18)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -181,12 +181,14 @@ func _build() -> void:
 	var fy := PANEL_POS.y + 62.0
 	fx = _mode_chip("LOCAL", true, fx, fy)
 	fx = _mode_chip("GLOBAL", false, fx, fy)
-	fx += 14.0
-	fx = _chip("✦ Stars", "stars", fx, fy, Color(1.0, 0.84, 0.4))
-	fx = _chip("◌ Wormholes", "wormholes", fx, fy, Color(0.7, 0.6, 1.0))
-	fx = _chip("🪐 Planets", "planets", fx, fy, Color(0.6, 0.85, 1.0))
-	fx = _chip("⧓ Lanes", "lanes", fx, fy, Color(0.45, 0.85, 1.0))
-	fx = _chip("⬡ Platforms", "platforms", fx, fy, Color(0.35, 1.0, 0.85))
+	fx += 16.0
+	# Filter chips are shorter — nudge down so they sit mid-aligned with the tabs.
+	var cy := fy + 7.0
+	fx = _chip("✦ Stars", "stars", fx, cy, Color(1.0, 0.84, 0.4))
+	fx = _chip("◌ Wormholes", "wormholes", fx, cy, Color(0.7, 0.6, 1.0))
+	fx = _chip("🪐 Planets", "planets", fx, cy, Color(0.6, 0.85, 1.0))
+	fx = _chip("⧓ Lanes", "lanes", fx, cy, Color(0.45, 0.85, 1.0))
+	fx = _chip("⬡ Platforms", "platforms", fx, cy, Color(0.35, 1.0, 0.85))
 
 	# The chart canvas.
 	_chart = MapView3D.new()
@@ -269,23 +271,26 @@ func _chip_box(col: Color, fill: float) -> StyleBoxFlat:
 
 
 
-# LOCAL / GLOBAL mode toggle. Only one is "pressed" at a time.
+# LOCAL / GLOBAL mode tabs — large, touch-friendly (Android MAP button users).
+# Only one is "pressed" at a time; wired to MapView3D.Mode.LOCAL / GLOBAL.
 func _mode_chip(text: String, local: bool, x: float, y: float) -> float:
 	var b := Button.new()
-	b.text = text
+	b.text = ("◉  " if local else "✦  ") + text
 	b.toggle_mode = true
 	b.button_pressed = not local  # GLOBAL starts selected; open_map keeps them in sync
 	b.focus_mode = Control.FOCUS_NONE
 	b.position = Vector2(x, y)
-	b.size = Vector2(0, 26)
-	b.add_theme_font_size_override("font_size", 12)
+	# ~44 px tall, wide enough for thumbs on phone landscape.
+	var tab_w := 118.0
+	b.size = Vector2(tab_w, 40)
+	b.add_theme_font_size_override("font_size", 15)
 	var col := Color(0.55, 1.0, 0.75) if local else Color(0.45, 0.85, 1.0)
 	b.add_theme_color_override("font_color", col)
-	b.add_theme_color_override("font_pressed_color", col)
+	b.add_theme_color_override("font_pressed_color", Color(1.0, 1.0, 1.0))
 	b.add_theme_color_override("font_hover_color", Color(1, 1, 1))
-	b.add_theme_stylebox_override("normal", _chip_box(col, 0.06))
-	b.add_theme_stylebox_override("hover", _chip_box(col, 0.18))
-	b.add_theme_stylebox_override("pressed", _chip_box(col, 0.30))
+	b.add_theme_stylebox_override("normal", _tab_box(col, false))
+	b.add_theme_stylebox_override("hover", _tab_box(col, false, 0.18))
+	b.add_theme_stylebox_override("pressed", _tab_box(col, true))
 	b.toggled.connect(func(on: bool):
 		if not on:
 			# Keep at least one mode selected — re-press if the user clicked the active one off.
@@ -307,9 +312,22 @@ func _mode_chip(text: String, local: bool, x: float, y: float) -> float:
 		_mode_local = b
 	else:
 		_mode_global = b
-	var w: float = ThemeDB.fallback_font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x + 26.0
-	b.size.x = w
-	return x + w + 8.0
+	return x + tab_w + 10.0
+
+
+func _tab_box(col: Color, active: bool, fill_override: float = -1.0) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	var fill: float = (0.38 if active else 0.10) if fill_override < 0.0 else fill_override
+	sb.bg_color = Color(col.r, col.g, col.b, fill)
+	sb.border_color = Color(col.r, col.g, col.b, 0.95 if active else 0.55)
+	sb.set_border_width_all(2 if active else 1)
+	sb.border_width_bottom = 4 if active else 1
+	sb.set_corner_radius_all(8)
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 6
+	sb.content_margin_bottom = 6
+	return sb
 
 
 func _on_mode_changed(mode: String) -> void:
@@ -319,9 +337,9 @@ func _on_mode_changed(mode: String) -> void:
 		_mode_global.set_pressed_no_signal(mode == "global")
 	if _hint != null:
 		if mode == "local":
-			_hint.text = "LOCAL SYSTEM  ·  star / planets / wormholes / station / you  ·  Tab or GLOBAL to zoom out"
+			_hint.text = "LOCAL SYSTEM  ·  star / planets / wormholes / station / ⌖ YOU  ·  tap GLOBAL to zoom out"
 		else:
-			_hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   ◌ wormhole · 🪐 planet · ⌖ you   ·   Tab local/global · M / Esc to close"
+			_hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   ◌ wormhole · 🪐 planet · ⌖ YOU   ·   Local / Global tabs · M / Esc to close"
 
 
 func _refresh() -> void:

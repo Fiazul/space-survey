@@ -1,5 +1,5 @@
 extends Node
-# Capture GLOBAL + LOCAL MapView3D frames for visual review.
+# Capture GLOBAL + LOCAL MapView3D frames (with Local/Global tabs + YOU) for visual review.
 # Run: xvfb-run -a /home/box/godot/Godot_v4.7.2-stable_linux.x86_64 --path . res://tools/render_map_view_3d.tscn
 # Plain --headless captures nothing.
 
@@ -14,74 +14,87 @@ func _ready() -> void:
 	var stub := MapStub.new()
 	add_child(stub)
 
-	var root := Control.new()
-	root.set_anchors_preset(Control.PRESET_FULL_RECT)
-	root.size = Vector2(1280, 720)
-	add_child(root)
-
-	var bg := ColorRect.new()
-	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
-	bg.color = Color(0.02, 0.03, 0.06)
-	root.add_child(bg)
-
-	var title := Label.new()
-	title.position = Vector2(24, 16)
-	title.add_theme_font_size_override("font_size", 22)
-	title.add_theme_color_override("font_color", Color(0.55, 0.9, 1.0))
-	root.add_child(title)
-
-	var view := MapView3D.new()
-	view.main = stub
-	view.position = Vector2(40, 56)
-	view.size = Vector2(1200, 620)
-	root.add_child(view)
+	# Full StarMap overlay so Local/Global tabs are visible in the shots.
+	var sm := StarMap.new()
+	sm.main = stub
+	add_child(sm)
 	await get_tree().process_frame
-	await get_tree().process_frame
+	# StarMap._build uses `main` during chip toggles; set chart.main too.
+	if sm._chart != null:
+		sm._chart.main = stub
+	sm._tp_mode = false
+	sm._open = true
+	sm._view_system = stub.current_system
+	sm._chart.view_system = stub.current_system
+	sm._root.visible = true
+	# Keep tree unpaused so pulse animates during settle.
+	get_tree().paused = false
 
-	# GLOBAL
-	title.text = "GLOBAL map (Elite-style 3D)"
-	view.set_mode(MapView3D.Mode.GLOBAL)
-	view.init_view()
+	# GLOBAL tab + YOU
+	sm._chart.set_mode(MapView3D.Mode.GLOBAL)
+	if sm._mode_global != null:
+		sm._mode_global.set_pressed_no_signal(true)
+	if sm._mode_local != null:
+		sm._mode_local.set_pressed_no_signal(false)
+	sm._chart.init_view()
+	sm._chart.center_on(stub.current_system)
+	sm._refresh()
+	sm._on_mode_changed("global")
 	await _settle()
 	await _shot("01_global.png")
 
-	# GLOBAL another angle
-	view._yaw = 1.2
-	view._pitch = 0.55
-	view._dist = 70.0
-	view._apply_cam()
+	# GLOBAL orbit angle — YOU still visible near Sol
+	sm._chart._yaw = 1.15
+	sm._chart._pitch = 0.58
+	sm._chart._dist = 55.0
+	sm._chart._apply_cam()
 	await _settle()
 	await _shot("02_global_orbit.png")
 
-	# LOCAL
-	title.text = "LOCAL map (Sol system)"
-	view.set_mode(MapView3D.Mode.LOCAL)
+	# LOCAL tab + YOU at true_pos
+	sm._chart.set_mode(MapView3D.Mode.LOCAL)
+	if sm._mode_local != null:
+		sm._mode_local.set_pressed_no_signal(true)
+	if sm._mode_global != null:
+		sm._mode_global.set_pressed_no_signal(false)
+	sm._refresh()
+	sm._on_mode_changed("local")
 	await _settle()
 	await _shot("03_local.png")
 
-	view._yaw = 0.2
-	view._pitch = 0.65
-	view._dist = max(view._dist_min * 1.4, view._dist * 0.55)
-	view._apply_cam()
+	sm._chart._yaw = 0.25
+	sm._chart._pitch = 0.62
+	sm._chart._dist = max(sm._chart._dist_min * 1.4, sm._chart._dist * 0.55)
+	sm._chart._apply_cam()
 	await _settle()
 	await _shot("04_local_close.png")
 
-	# Extra label-focused angles (stems / clickable names)
-	title.text = "GLOBAL labels (leaders)"
-	view.set_mode(MapView3D.Mode.GLOBAL)
-	view._yaw = 0.35
-	view._pitch = 0.72
-	view._dist = 36.0
-	view._apply_cam()
+	# Label / YOU close-ups
+	sm._chart.set_mode(MapView3D.Mode.GLOBAL)
+	if sm._mode_global != null:
+		sm._mode_global.set_pressed_no_signal(true)
+	if sm._mode_local != null:
+		sm._mode_local.set_pressed_no_signal(false)
+	sm._refresh()
+	sm._on_mode_changed("global")
+	sm._chart._yaw = 0.4
+	sm._chart._pitch = 0.7
+	sm._chart._dist = 32.0
+	sm._chart._apply_cam()
 	await _settle()
 	await _shot("05_global_labels.png")
 
-	title.text = "LOCAL labels (leaders / Sol)"
-	view.set_mode(MapView3D.Mode.LOCAL)
-	view._yaw = 1.05
-	view._pitch = 0.48
-	view._dist = 48.0
-	view._apply_cam()
+	sm._chart.set_mode(MapView3D.Mode.LOCAL)
+	if sm._mode_local != null:
+		sm._mode_local.set_pressed_no_signal(true)
+	if sm._mode_global != null:
+		sm._mode_global.set_pressed_no_signal(false)
+	sm._refresh()
+	sm._on_mode_changed("local")
+	sm._chart._yaw = 1.0
+	sm._chart._pitch = 0.5
+	sm._chart._dist = 42.0
+	sm._chart._apply_cam()
 	await _settle()
 	await _shot("06_local_labels.png")
 
@@ -91,10 +104,10 @@ func _ready() -> void:
 
 
 func _settle() -> void:
-	# Labels/leaders are built in rebuild(); a few extra frames let Label3D settle.
-	for i in 18:
+	# Enough frames for Label3D + YOU pulse to show mid-cycle.
+	for i in 24:
 		await get_tree().process_frame
-	await get_tree().create_timer(0.2).timeout
+	await get_tree().create_timer(0.35).timeout
 
 
 func _shot(name: String) -> void:
@@ -119,6 +132,9 @@ class MapStub extends Node:
 		ship = ShipStub.new()
 		add_child(ship)
 
+	func notify_map_opened() -> void:
+		pass
+
 	func star_state(id: String) -> String:
 		if id == current_system:
 			return "here"
@@ -132,6 +148,21 @@ class MapStub extends Node:
 		return a == SystemDB.SOL or b == SystemDB.SOL \
 			or a == SystemDB.PROXIMA or b == SystemDB.PROXIMA
 
+	func is_wormhole_known(sys: String) -> bool:
+		return star_state(sys) != "locked" or sys == SystemDB.PROXIMA
+
+	func is_teleport_unlocked(_sys: String) -> bool:
+		return false
+
+	func nav_cost(_sys: String) -> int:
+		return 50
+
+	func unlock_nav(_sys: String) -> bool:
+		return false
+
+	func navigate_to(_id: String) -> void:
+		pass
+
 	func _known_portals(id: String) -> Array:
 		var out := []
 		for p in SystemDB.portals(id):
@@ -142,22 +173,30 @@ class MapStub extends Node:
 	func planet_system(id: String):
 		return planets
 
-	func navigate_to(_id: String) -> void:
-		pass
-
 	func chart_lane(_a: String, _b: String) -> void:
 		pass
 
 
 class ShipStub extends Node3D:
-	var true_pos := Vector3(12000.0, 800.0, -4000.0)
+	# Near Earth GEO-ish so YOU sits clearly off the Sol star in LOCAL.
+	var true_pos := Vector3(42000.0, 1200.0, -8000.0)
+	var frozen := false
+
+	func _set_capture(_on: bool) -> void:
+		pass
 
 
 class PlanetsStub:
 	func body_by_id(id: String):
 		return null
 
+	func rel_of(_name: String) -> Vector3:
+		return Vector3(1.0, 0.0, 0.0)
+
 
 class CodexStub:
 	func is_scanned(_id: String) -> bool:
+		return true
+
+	func is_discovered(_id: String) -> bool:
 		return true

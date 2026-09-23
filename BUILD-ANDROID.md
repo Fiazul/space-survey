@@ -11,12 +11,7 @@ SDK + a JDK + the export templates. This walks you through it end to end.
 
 ## What's already done (no action needed)
 - `rendering/renderer/rendering_method.mobile = "mobile"` (Vulkan) + `scaling_3d/scale.mobile = 0.75` (phone perf). Desktop is unchanged.
-- `window/handheld/orientation = 5` (Sensor Landscape) in `project.godot`, set 2026-09-09.
-  It was `4` (Sensor, all four rotations): in portrait the whole HUD, authored in a fixed
-  1280×720 top-left space, squeezed into the top quarter of the tall canvas because
-  `canvas_items`+`expand` only adds canvas height. The touch overlay itself is now
-  viewport-relative and does not overlap in any orientation (verified by capture); the rest
-  of the HUD is landscape-only by design.
+- `window/handheld/orientation = 4` (Sensor Landscape) in Godot 4.6. Value `5` is Sensor Portrait. Keep the flight HUD in landscape.
 - Touch controls (`scripts/flight/touch_controls.gd`), auto-enabled on mobile. Drag empty space to steer; buttons: **THRUST** (toggle auto-fly), **BOOST**, **FIRE**, **CAP** (capture/survey, hold), **INTERACT** (F — wormholes/dock), **MAP** (M), **HOME** (H emergency return).
 - `Android` export preset (arm64-v8a, package `com.fiazul.astryx`, `builds/android/Astryx.apk`).
 

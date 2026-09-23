@@ -5,6 +5,8 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 | File | Type | Role |
 |---|---|---|
 | `ship.gd` | feature area | Flight physics, visuals (boosters/streaks), warp, autopilot, customization |
+| `ship_systems.gd` | feature area | Retractable landing gear, split weapon bay doors and independently aimed cannon mounts |
+| `plasma_mount_mesh.gd` | geometry | Procedural bevelled cannon housings, cooling fins and recessed emitters, batched into four material surfaces per gun |
 | `ship_mesh.gd` | feature area | Stateless mesh/material/FX build helpers for the hulls, split out of `ship.gd` |
 | `anchor_frame.gd` | data | `AnchorFrame` — 64-bit arithmetic for the anchored ship frame (docs/adr/0002); static, autoload-free |
 | `flight_mode.gd` | feature area | Zone (CENTER/INSIDE/SKIN/AIR/SPACE) vs mode (LOCAL/CRUISE/AIR) + exclusion-zone math |

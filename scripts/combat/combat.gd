@@ -420,19 +420,20 @@ func update_aim(ship: Ship, delta := 0.0) -> void:
 	var forward := ship.weapon_direction()
 	for slot in ship.systems.mounts.size():
 		ship.aim_mount(slot, forward)
-	var origin := ship.muzzle_off(_next_mount)
+	# A shared neutral battery origin keeps the sight independent of the gun
+	# firing this frame. Averaging ship-local offsets also avoids anchor rounding.
+	var battery := Vector3.ZERO
+	for slot in ship.systems.mounts.size():
+		battery += ship.muzzle_local(slot)
+	battery /= maxf(1, ship.systems.mounts.size())
+	var origin := ship.anchor_off + ship.transform.basis*battery
 	var acquired := WeaponAim.acquire(origin, ship.velocity, forward, _aliens, plasma.muzzle_speed(), _aim_target)
 	_aim_target = acquired.get("target")
 	var assisted := not acquired.is_empty() and bool(acquired.assist) and ship.weapons_ready()
-	if assisted:
-		for slot in ship.systems.mounts.size():
-			var lead := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, _aim_target.pos,
-				_aim_target.get("vel", Vector3.ZERO), plasma.muzzle_speed())
-			if not lead.is_empty() and forward.angle_to(lead.direction) <= deg_to_rad(WeaponAim.ASSIST_DEG):
-				ship.aim_mount(slot, lead.direction)
-		origin = ship.muzzle_off(_next_mount)
-	var direction := ship.barrel_direction(_next_mount)
+	var direction := forward
 	var time := PlasmaProjectiles.RANGE/plasma.muzzle_speed()
+	if assisted:
+		direction = acquired.intercept.direction
 	if not acquired.is_empty() and acquired.in_range:
 		time = acquired.intercept.time
 	var motion := ship.velocity + direction*plasma.muzzle_speed()
@@ -460,6 +461,16 @@ func update_aim(ship: Ship, delta := 0.0) -> void:
 			point = center + ship.terrain_basis*_aim_trace.position
 			surface = true
 			blocked = not acquired.is_empty()
+	# Converge every gun on the same surface/free-aim point. For a moving
+	# assisted target, each muzzle solves its own flight time to that same target.
+	# Iterate because rotating the carriage also shifts the muzzle position.
+	for slot in ship.systems.mounts.size():
+		for iteration in 3:
+			var goal: Vector3 = _aim_target.pos if assisted and not blocked else point
+			var target_velocity: Vector3 = _aim_target.get("vel", Vector3.ZERO) if assisted and not blocked else Vector3.ZERO
+			var lead := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, goal, target_velocity, plasma.muzzle_speed())
+			if not lead.is_empty():
+				ship.aim_mount(slot, lead.direction)
 	var state := "PLASMA"
 	if not ship.weapons_in_atmosphere():
 		state = "ATMOSPHERE REQUIRED"

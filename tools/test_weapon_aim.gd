@@ -38,6 +38,25 @@ func _ready() -> void:
 		var aim := WeaponAim.intercept(ship.muzzle_off(slot),ship.velocity,target.pos,target.vel,combat.plasma.muzzle_speed())
 		var predicted: Vector3 = ship.muzzle_off(slot)+(ship.velocity+ship.barrel_direction(slot)*combat.plasma.muzzle_speed())*aim.time
 		check("actual barrel points at intercept", predicted.distance_to(target.pos+target.vel*aim.time) < .001)
+	var stable: Vector3 = combat.aim_solution.point
+	for shot in 12:
+		combat._next_mount = shot % ship.systems.mounts.size()
+		combat.update_aim(ship)
+		check("alternating guns keeps assisted sight stable", combat.aim_solution.point.distance_to(stable) < .00001)
+	combat._aliens.clear()
+	combat.update_aim(ship)
+	stable = combat.aim_solution.point
+	for shot in 12:
+		combat._next_mount = shot % ship.systems.mounts.size()
+		combat.update_aim(ship)
+		check("alternating guns keeps free sight stable", combat.aim_solution.point.distance_to(stable) < .00001)
+	for slot in ship.systems.mounts.size():
+		var goal := stable+ship.anchor_off
+		var aim := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, goal, Vector3.ZERO, combat.plasma.muzzle_speed())
+		var predicted := ship.muzzle_off(slot)+(ship.velocity+ship.barrel_direction(slot)*combat.plasma.muzzle_speed())*float(aim.time)
+		check("all guns converge at free sight including inherited velocity", predicted.distance_to(goal) < .001)
+	combat._aliens = [target]
+	combat.update_aim(ship)
 	var before: Vector3 = combat.aim_solution.point
 	combat.plasma.speed_multiplier = 2
 	combat.update_aim(ship)
@@ -71,6 +90,23 @@ func _ready() -> void:
 	var snapshot: Vector3 = combat.plasma.shots[0].vel
 	combat.plasma.speed_multiplier = 12
 	check("live tuning doesn't accelerate existing bullets", combat.plasma.shots[0].vel == snapshot)
+	# Every hull, including the four-gun battery, shares one ground impact point.
+	combat._aliens.clear()
+	ship.velocity = Vector3.ZERO
+	for model in ship.ship_count():
+		ship.swap_ship(model)
+		ship.newton = true
+		ship.systems.weapons_target = true
+		ship.systems.step(1)
+		combat.update_aim(ship)
+		var ground_point: Vector3 = combat.aim_solution.point+ship.anchor_off
+		for slot in ship.systems.mounts.size():
+			combat._next_mount = slot
+			combat.update_aim(ship)
+			check("ground sight stable on hull %d slot %d" % [model,slot], (combat.aim_solution.point+ship.anchor_off).distance_to(ground_point) < .00001)
+			var offset := ground_point-ship.muzzle_off(slot)
+			var closest := ship.muzzle_off(slot)+ship.barrel_direction(slot)*offset.dot(ship.barrel_direction(slot))
+			check("ground convergence on hull %d slot %d" % [model,slot], closest.distance_to(ground_point) < .001)
 	combat._aliens.clear()
 	combat.queue_free()
 	ship.queue_free()

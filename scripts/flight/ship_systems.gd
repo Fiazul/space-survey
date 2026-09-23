@@ -60,19 +60,28 @@ func configure(box: AABB, model_index: int, tint: Color, geometry: Node3D = null
 		var pair := i / 2
 		var root := Node3D.new()
 		root.name = "WeaponSlot%d" % i
-		# Underside side mounts; slide down before barrels telescope forward.
+		# Underside bay: split doors open before the cannon lowers and slides out.
 		root.position = _socket(surfaces, Vector3(side * box.size.x * (.15 + pair*.10), box.position.y, -box.size.z*.40 + pair*length_km*.18))
 		add_child(root)
-		var cover := _box(root, Vector3(length_km*.075, length_km*.012, length_km*.17), _paint)
+		var doors := []
+		for door_side in [-1.0, 1.0]:
+			var hinge := Node3D.new()
+			hinge.position = Vector3(door_side*length_km*.038, -length_km*.015, 0)
+			root.add_child(hinge)
+			var cover := _box(hinge, Vector3(length_km*.037, length_km*.006, length_km*.14), _paint)
+			cover.position.x = -door_side*length_km*.019
+			doors.append(hinge)
+		var lift := _cylinder(root, length_km*.009, _steel)
 		var carriage := Node3D.new()
+		carriage.name = "Gimbal"
 		root.add_child(carriage)
-		_box(carriage, Vector3(length_km*.046, length_km*.033, length_km*.12), _dark)
-		var barrel := _cylinder(carriage, length_km*.009, _steel)
-		var ring := _cylinder(carriage, length_km*.013, _dark)
+		carriage.add_child(PlasmaMountMesh.new().build(length_km, _paint, _dark, _steel))
 		var muzzle := Marker3D.new()
 		muzzle.name = "Muzzle"
+		muzzle.position = PlasmaMountMesh.MUZZLE*length_km
 		carriage.add_child(muzzle)
-		mounts.append({"root": root, "cover": cover, "carriage": carriage, "barrel": barrel, "ring": ring, "muzzle": muzzle, "side": side})
+		mounts.append({"root": root, "doors": doors, "lift": lift, "carriage": carriage, "muzzle": muzzle, "side": side})
+
 	pose()
 
 func step(delta: float) -> void:
@@ -102,14 +111,13 @@ func pose() -> void:
 			part.visible = gear_fraction > .1
 	var w := smoothstep(.15, 1.0, weapons_fraction)
 	for mount in mounts:
-		mount.cover.rotation.z = float(mount.side)*smoothstep(0.0, .3, weapons_fraction)*1.4
-		mount.cover.position.y = -length_km*.015
-		mount.carriage.position.y = -length_km*.07*w
+		var opening := smoothstep(0.0, .3, weapons_fraction)
+		mount.doors[0].rotation.z = opening*1.15
+		mount.doors[1].rotation.z = -opening*1.15
+		mount.carriage.position = Vector3(0, -length_km*.075*w, -length_km*.025*w)
 		mount.carriage.visible = weapons_fraction > .15
-		var tip := Vector3(0, 0, -length_km*(.065 + .16*w))
-		_segment(mount.barrel, Vector3(0, 0, -length_km*.025), tip)
-		_segment(mount.ring, tip, tip + Vector3(0, 0, length_km*.012))
-		mount.muzzle.position = tip
+		mount.lift.visible = weapons_fraction > .15
+		_segment(mount.lift, Vector3.ZERO, mount.carriage.position+Vector3.UP*length_km*.025)
 
 func foot_points() -> PackedVector3Array:
 	var out := PackedVector3Array()

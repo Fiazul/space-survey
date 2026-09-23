@@ -43,6 +43,11 @@ func _ready() -> void:
 	ship._set_capture(false)
 	ship.newton = true
 	ship.anchor_off = Vector3.UP*6372
+	var rotating := OS.get_environment("PLASMA_ROTATING") == "1"
+	if rotating:
+		ship.anchor_off = Vector3.RIGHT*6372
+	var cruise := float(OS.get_environment("PLASMA_CRUISE_KMS"))
+	ship.velocity = Vector3(cruise,0,-cruise*.5)
 	ship.systems.weapons_target = true
 	ship.systems.step(1)
 	var camera := Camera3D.new()
@@ -53,7 +58,7 @@ func _ready() -> void:
 	ship._update_camera(1)
 	var combat := Combat.new()
 	add_child(combat)
-	var target := {"alive": true, "pos": ship.anchor_off+Vector3(.035,0,-1), "vel": Vector3(.3,0,0), "name": "Preview drone", "size": .01}
+	var target := {"alive": true, "pos": ship.anchor_off+Vector3(.035,0,-1), "vel": ship.velocity+Vector3(.3,0,0), "name": "Preview drone", "size": .01}
 	combat._aliens = [target]
 	var target_mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
@@ -67,19 +72,32 @@ func _ready() -> void:
 	layer.add_child(reticle)
 	var plasma := PlasmaProjectiles.new()
 	add_child(plasma)
-	DirAccess.make_dir_recursive_absolute("/tmp/plasma-chase")
+	var output := OS.get_environment("PLASMA_SHOTS")
+	if output.is_empty():
+		output = "/tmp/plasma-chase"
+	DirAccess.make_dir_recursive_absolute(output)
 	for frame in 90:
+		if rotating:
+			ship._newton_corotate(1.0/60.0)
+			plasma.sync_surface_frame("Earth",Vector3.ZERO,ship.terrain_basis)
+			if frame >= 20 and frame < 60:
+				ship.rotate_y(.025)
+			ship._update_camera(1.0/60.0)
+		ship.anchor_off += ship.velocity/60.0
+		target.pos = ship.anchor_off+ship.transform.basis*Vector3(.035,0,-1)
+		ship.systems.step(1.0/60.0)
 		combat.update_aim(ship)
 		target_mesh.position = target.pos-ship.anchor_off
 		reticle.set_solution(combat.aim_solution, camera)
 		reticle.set_target(1,0)
-		plasma.advance(1.0/60.0, Vector3.ZERO, [])
+		plasma.advance(1.0/60.0, ship.anchor_off, [],null,Vector3.ZERO,Basis.IDENTITY,0,ship.velocity)
 		if frame % 6 == 0:
 			var slot := (frame/6) % ship.systems.mounts.size()
-			plasma.emit(ship.muzzle_local(slot), Vector3.ZERO, ship.barrel_direction(slot), 1, Vector3.ZERO, ship.systems.muzzle_node(slot))
+			ship.systems.discharge(slot)
+			plasma.emit(ship.muzzle_off(slot), ship.velocity, ship.barrel_direction(slot), 1, ship.anchor_off, ship.systems.muzzle_node(slot))
 		await get_tree().process_frame
 		await RenderingServer.frame_post_draw
-		get_viewport().get_texture().get_image().save_png("/tmp/plasma-chase/%03d.png" % frame)
-	print("plasma chase sequence: /tmp/plasma-chase")
+		get_viewport().get_texture().get_image().save_png("%s/%03d.png" % [output,frame])
+	print("plasma chase sequence: ",output)
 	combat._aliens.clear()
 	get_tree().quit()

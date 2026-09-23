@@ -41,6 +41,9 @@ func _ready() -> void:
 	ship.newton = true
 	var combat := Combat.new()
 	add_child(combat)
+	# Fixed fixtures remain reproducible while the live tuning defaults change.
+	combat.plasma.speed_multiplier = 32.0
+	combat.plasma.damage_multiplier = 32.0
 	for index in ship.ship_count():
 		ship.swap_ship(index)
 		ship.systems.weapons_target = false
@@ -61,6 +64,9 @@ func _ready() -> void:
 			check("ray stays thin", shot.node.mesh.get_aabb().size.x < .001)
 			check("stronger damage keeps each hull base damage", shot.damage == ship.bolt_damage*32)
 			check("flash belongs to firing muzzle", combat.plasma.flashes.back().node.get_parent() == ship.systems.muzzle_node(slot))
+			check("firing energizes the correct cannon emitter", ship.systems.mounts[slot].heat == 1.0)
+		ship.systems.step(.15)
+		check("cannon discharge glow decays without moving aim", ship.systems.mounts[0].heat == 0.0)
 		ship.anchor_off = Vector3.UP * 6471.1
 		var before := combat.energy
 		combat._cool = 0
@@ -74,6 +80,14 @@ func _ready() -> void:
 	pulses.emit(Vector3.ZERO, Vector3.ZERO, Vector3.FORWARD, 2, Vector3.ZERO)
 	var hits := pulses.advance(.5, Vector3.ZERO, [far, near])
 	check("sweep hits closest target despite large frame step", hits.size() == 1 and hits[0].target == near and hits[0].damage == 64 and pulses.shots.is_empty())
+	check("same-frame hit leaves a readable final exposure", pulses.traces.size() == 1)
+	var trace: Dictionary = pulses.traces.back()
+	check("impact exposure ends at the near face, never beyond the target", absf(trace.pos.z-(-.2+.01+PlasmaProjectiles.RADIUS)) < .00001)
+	check("impact exposure cannot stretch behind the muzzle", trace.visual_length <= trace.pos.length()+.00001)
+	hits = pulses.advance(.01,Vector3.ZERO,[near])
+	check("visual afterimage cannot damage the target again", hits.is_empty() and pulses.shots.is_empty())
+	pulses.advance(PlasmaProjectiles.TRACE_TIME,Vector3.ZERO,[])
+	check("resolved exposure fades promptly", pulses.traces.is_empty())
 	var flat := FlatLand.new({})
 	flat.surface = {"solid": true}
 	var buried := {"alive": true, "pos": Vector3.UP * 6370.9, "size": .01}
@@ -113,7 +127,31 @@ func _ready() -> void:
 	pulses.advance(PlasmaProjectiles.FLASH_TIME+.01, Vector3.ZERO, [])
 	check("muzzle flash is brief while projectile continues", pulses.flashes.is_empty() and pulses.shots.size() == 1)
 	check("one ray with no halo or wake geometry", pulses.shots[0].node.get_child_count() == 0)
-	check("ray length remains bounded", pulses.shots[0].node.scale.y <= 1.0)
+	check("ray length remains bounded", pulses.shots[0].visual_length <= PlasmaProjectiles.MAX_STREAK_LENGTH)
+	pulses.clear()
+	# A fast lateral ship must see shots leave straight out of its barrel.
+	var inherited := Vector3(80,0,-40)
+	pulses.emit(Vector3.ZERO,inherited,Vector3.FORWARD,1,Vector3.ZERO)
+	pulses.advance(1.0/60.0,inherited/60.0,[],null,Vector3.ZERO,Basis.IDENTITY,0,inherited)
+	check("fast cruise does not skew the visible launch", pulses.shots[0].visual_direction.distance_to(Vector3.FORWARD) < .00001)
+	check("fast shot exposure remains substantial", pulses.shots[0].visual_length > .5)
+	check("visual changes preserve actual projectile velocity", pulses.shots[0].vel.is_equal_approx(inherited+Vector3.FORWARD*pulses.muzzle_speed()))
+	pulses.advance(.5,inherited*.5,[],null,Vector3.ZERO,Basis.IDENTITY,0,inherited)
+	var trace_position: Vector3 = pulses.traces[0].pos
+	pulses.shift_frame(Vector3.ONE)
+	check("resolved exposures follow anchor changes", pulses.traces[0].pos.is_equal_approx(trace_position-Vector3.ONE))
+	for batch in 3:
+		for shot in 48:
+			pulses.emit(Vector3.ZERO,Vector3.ZERO,Vector3.FORWARD,1,Vector3.ZERO)
+		pulses.advance(.01,Vector3.ZERO,[{"alive":true,"pos":Vector3(0,0,-.05),"size":.01}])
+	check("retained exposure population is bounded", pulses.traces.size() <= PlasmaProjectiles.MAX_SHOTS)
+	pulses.clear()
+	check("reset removes all firing effects", pulses.shots.is_empty() and pulses.traces.is_empty() and pulses.flashes.is_empty() and pulses.bursts.is_empty())
+	pulses.speed_multiplier = 256
+	pulses.emit(Vector3.ZERO,Vector3.ZERO,Vector3.FORWARD,1,Vector3.ZERO)
+	pulses.advance(1.0/30.0,Vector3.ZERO,[])
+	check("sub-frame flight at high multiplier still leaves visible exposure", pulses.shots.is_empty() and pulses.traces.size() == 1 and pulses.traces[0].visual_length > .5)
+	check("high-speed exposure stops at maximum range", absf(pulses.traces[0].pos.length()-PlasmaProjectiles.RANGE) < .00001)
 	pulses.clear()
 	muzzle.queue_free()
 	ship.queue_free()

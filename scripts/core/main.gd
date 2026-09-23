@@ -14,10 +14,10 @@ extends Node3D
 # motion first, then the planet system reads the fresh anchor + offset, then the HUD.
 
 ## 1x = 1.2 km/s. Editable on Main in the Inspector, including Remote while running.
-@export_range(0.5, 32.0, 0.5, "or_greater") var plasma_speed_multiplier := 32.0
+@export_range(0.5, 32.0, 0.5, "or_greater") var plasma_speed_multiplier := PlasmaProjectiles.DEFAULT_SPEED_MULTIPLIER
 
 ## Damage scales separately so speed tuning does not change hit strength.
-@export_range(0.5, 64.0, 0.5, "or_greater") var plasma_damage_multiplier := 32.0
+@export_range(0.5, 64.0, 0.5, "or_greater") var plasma_damage_multiplier := PlasmaProjectiles.DEFAULT_DAMAGE_MULTIPLIER
 
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way backdrop; loomed toward the core on the voyage

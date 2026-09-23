@@ -5,25 +5,35 @@ const ACQUIRE_DEG := 8.0
 const ASSIST_DEG := 2.5
 
 static func intercept(origin: Vector3, inherited: Vector3, target: Vector3,
-		velocity: Vector3, speed: float) -> Dictionary:
+		velocity: Vector3, speed: float, preferred_direction := Vector3.ZERO) -> Dictionary:
 	var r := target-origin
 	var v := velocity-inherited
 	var a := v.length_squared()-speed*speed
 	var b := 2.0*r.dot(v)
 	var c := r.length_squared()
 	var t := INF
+	var roots: Array[float] = []
 	if c < 1e-12:
 		return {}
 	if absf(a) < 1e-8:
 		if absf(b) > 1e-8:
-			t = -c/b
+			roots.append(-c/b)
 	else:
 		var discriminant := b*b-4.0*a*c
 		if discriminant >= 0:
 			var root := sqrt(discriminant)
-			for value in [(-b-root)/(2.0*a), (-b+root)/(2.0*a)]:
-				if value > 0 and value < t:
-					t = value
+			roots.assign([(-b-root)/(2.0*a), (-b+root)/(2.0*a)])
+	var score := -INF
+	for value in roots:
+		if not is_finite(value) or value <= 0:
+			continue
+		# At drift speeds above muzzle speed there can be TWO positive times.
+		# Free-aim convergence must preserve the selected firing direction rather
+		# than swinging the guns around to use the fastest backwards solution.
+		var rank := -value if preferred_direction == Vector3.ZERO else (r+v*value).normalized().dot(preferred_direction.normalized())
+		if rank > score:
+			score = rank
+			t = value
 	if not is_finite(t) or t <= 0:
 		return {}
 	return {"time": t, "direction": (r+v*t).normalized(), "point": target+velocity*t}

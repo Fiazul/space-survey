@@ -75,19 +75,32 @@ func configure(box: AABB, model_index: int, tint: Color, geometry: Node3D = null
 		var carriage := Node3D.new()
 		carriage.name = "Gimbal"
 		root.add_child(carriage)
-		carriage.add_child(PlasmaMountMesh.new().build(length_km, _paint, _dark, _steel))
+		var cannon := PlasmaMountMesh.new().build(length_km, _paint, _dark, _steel)
+		carriage.add_child(cannon)
 		var muzzle := Marker3D.new()
 		muzzle.name = "Muzzle"
 		muzzle.position = PlasmaMountMesh.MUZZLE*length_km
 		carriage.add_child(muzzle)
-		mounts.append({"root": root, "doors": doors, "lift": lift, "carriage": carriage, "muzzle": muzzle, "side": side})
+		mounts.append({"root": root, "doors": doors, "lift": lift, "carriage": carriage, "muzzle": muzzle, "side": side,
+			"emitter": cannon.mesh.surface_get_material(3), "heat": 0.0})
 
 	pose()
 
 func step(delta: float) -> void:
+	for mount in mounts:
+		if mount.heat > 0.0:
+			mount.heat = maxf(0.0,mount.heat-delta/.12)
+			mount.emitter.emission_energy_multiplier = 1.8+22.0*mount.heat*mount.heat
 	gear_fraction = move_toward(gear_fraction, 1.0 if gear_target else 0.0, delta / 2.0)
 	weapons_fraction = move_toward(weapons_fraction, 1.0 if weapons_target else 0.0, delta / 1.0)
 	pose()
+
+func discharge(slot: int) -> void:
+	if mounts.is_empty():
+		return
+	var mount: Dictionary = mounts[posmod(slot,mounts.size())]
+	mount.heat = 1.0
+	mount.emitter.emission_energy_multiplier = 23.8
 
 func pose() -> void:
 	var state := Vector2(gear_fraction, weapons_fraction)

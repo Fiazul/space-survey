@@ -38,6 +38,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_surface_integration.gd` (+ `.tscn`) | Live Moon placement + Earth/Moon death entry |
 | `test_surface_streaming.gd` (+ `.tscn`) | Fast Earth/Moon flight keeps ground coverage while terrain rebuilds |
 | `test_day_night.gd` (+ `.tscn`) | UTC rotation, restart/offline phase, solar clock, co-rotation, body-fixed saves and terrain shadow frame |
+| `test_plasma_frame.gd` (+ `.tscn`) | Atmospheric projectile co-rotation, steering independence, fast-drift convergence and floating-origin handoffs |
 | `test_surface_recipes.gd` | Recipe routing, crater/caldera geometry, height bounds, contact, repeatability |
 | `test_terrain_light.gd` | Ground lighting/haze matches the globe's rule |
 | `test_turn_carry.gd` | A turn carries Sol velocity with the hull |
@@ -48,6 +49,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | File | Captures |
 |---|---|
 | `render_day_night.gd` (+ `.tscn`) | Same Amazon location and heading at local noon/midnight; writes `/tmp/day-night/amazon-{day,night}.png` using the production terrain/cloud path without touching saves |
+| `render_plasma.gd` (+ `.tscn`) | 90 chase-camera firing frames; `PLASMA_CRUISE_KMS`, `PLASMA_ROTATING=1` and `PLASMA_SHOTS` select fast drift, turning with planetary rotation and output directory |
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
 | `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |
 | `render_thruster.gd` (+ `.tscn`) | Contact sheet of every ship's boosters, matching the live WorldEnvironment |

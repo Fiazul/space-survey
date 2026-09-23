@@ -301,6 +301,7 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	if (pressed or laser) and mounts_ready and slow_enough and _cool <= 0.0 and ship.can_fire and energy >= bolt_cost:
 		_cool = ship.fire_cooldown if ship.has_method("is_hypersonic") else BOLT_COOLDOWN
 		energy -= bolt_cost
+		ship.systems.discharge(_next_mount)
 		plasma.emit(ship.muzzle_off(_next_mount), ship.velocity, ship.barrel_direction(_next_mount), int(ship.bolt_damage), sp, ship.systems.muzzle_node(_next_mount))
 		_next_mount = (_next_mount + 1) % ship.systems.mounts.size()
 		if _any_alien_alive():
@@ -468,7 +469,7 @@ func update_aim(ship: Ship, delta := 0.0) -> void:
 		for iteration in 3:
 			var goal: Vector3 = _aim_target.pos if assisted and not blocked else point
 			var target_velocity: Vector3 = _aim_target.get("vel", Vector3.ZERO) if assisted and not blocked else Vector3.ZERO
-			var lead := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, goal, target_velocity, plasma.muzzle_speed())
+			var lead := WeaponAim.intercept(ship.muzzle_off(slot), ship.velocity, goal, target_velocity, plasma.muzzle_speed(),direction)
 			if not lead.is_empty():
 				ship.aim_mount(slot, lead.direction)
 	var state := "PLASMA"
@@ -498,8 +499,10 @@ func update_aim(ship: Ship, delta := 0.0) -> void:
 func _step_plasma(ship: Ship, delta: float) -> void:
 	var body := ship.nearest_name if not ship.nearest_name.is_empty() else ship.anchor_name
 	var center: Vector3 = Vector3.ZERO if body == ship.anchor_name else ship.anchor_off + ship.nearest_dir * ship.nearest_dist
+	var rotating_body := body if ship.newton and FlightMode.has_drag_model(body) else ""
+	plasma.sync_surface_frame(rotating_body,center,ship.terrain_basis)
 	var impacts := plasma.advance(delta, ship.anchor_off, _aliens, ship.terrain,
-		center, ship.terrain_basis, Ephemeris.body_radius_km(body))
+		center, ship.terrain_basis, Ephemeris.body_radius_km(body), ship.velocity)
 	for impact in impacts:
 		_damage_alien(impact.target, ship.anchor_off, impact.damage)
 		hitmarker = .18

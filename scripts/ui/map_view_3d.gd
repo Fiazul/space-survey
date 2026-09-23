@@ -14,9 +14,12 @@ signal mode_changed(mode: String)  # "local" | "global"
 enum Mode { GLOBAL, LOCAL }
 
 const HIT_PX := 18.0
+const LABEL_HIT_PX := 28.0
 const ZOOM_STEP := 1.15
 const GLOBAL_SCALE := 1.0
 const LOCAL_MAP_R := 28.0
+# Short Elite-style stem: world +Y (~map "up" / Z-ish on screen), keeps names off meshes.
+const LABEL_LEADER := 1.9
 
 var main: Node
 var view_system := ""
@@ -41,7 +44,8 @@ var _dist_max := 220.0
 var _dragging := false
 var _moved := false
 var _press := Vector2.ZERO
-var _pickables: Array = []  # { id: String, pos: Vector3 }
+var _pickables: Array = []  # { id: String, pos: Vector3, hit?: float }
+var _label_tips: Array = []  # Vector3 tips already placed (deconflict)
 var _hover := ""
 var _t := 0.0
 
@@ -164,6 +168,7 @@ func rebuild() -> void:
 		if c != _lanes:
 			c.queue_free()
 	_pickables.clear()
+	_label_tips.clear()
 	_lanes.mesh = null
 	if mode == Mode.GLOBAL:
 		_build_global()
@@ -203,7 +208,8 @@ func _build_global() -> void:
 			var alpha: float = 0.55 if st == "locked" else 1.0
 			_add_sphere(p, r, core, ring, alpha)
 			if st == "here" or st == "discovered" or id == view_system:
-				_add_label(p + Vector3(0, r + 0.4, 0), SystemDB.display_name(id), ring)
+				var gstag: float = float(abs(hash(id)) % 19) * 0.07
+				_add_name_tag(p, r, SystemDB.display_name(id), ring, id, gstag, abs(hash(id)) % 32)
 			_pickables.append({ "id": id, "pos": p })
 			if filters.platforms and SystemDB.has_station(id):
 				_add_platform(p + Vector3(0.55, 0.45, 0.0), st != "locked")
@@ -263,6 +269,7 @@ func _build_local() -> void:
 				"kind": "star" if bool(spec.get("star", false)) else "body",
 				"color": spec.get("color", Color(0.7, 0.8, 0.9)),
 				"radius": float(spec.get("radius", 1.0)), "id": sys,
+				"moon": spec.has("parent"),
 			})
 		for p in main._known_portals(sys):
 			rows.append({
@@ -310,34 +317,41 @@ func _build_local() -> void:
 	_add_ring(Vector3.ZERO, LOCAL_MAP_R * 0.55, Color(0.35, 0.6, 0.9, 0.22), 0.02)
 	_add_ring(Vector3.ZERO, LOCAL_MAP_R * 0.9, Color(0.35, 0.6, 0.9, 0.12), 0.015)
 
+	var li := 0
 	for r in rows:
 		var mp := _compress_local(r.pos)
+		# Stagger stem length so inner-system names don't pile up ("soggy").
+		var stagger: float = _label_stagger(mp, li)
+		li += 1
 		match String(r.kind):
 			"star":
 				_add_sphere(mp, 1.6, r.color, Color(1.0, 0.9, 0.5), 1.0)
-				_add_label(mp + Vector3(0, 2.1, 0), r.name, Color(1.0, 0.9, 0.55))
+				_add_name_tag(mp, 1.6, r.name, Color(1.0, 0.9, 0.55), str(r.id), stagger, li)
 				_pickables.append({ "id": r.id, "pos": mp })
 			"body":
 				if not filters.planets:
 					continue
 				var br: float = clampf(0.25 + log(1.0 + float(r.radius)) * 0.12, 0.28, 0.85)
 				_add_sphere(mp, br, r.color, Color(0.55, 0.8, 1.0), 1.0)
-				_add_label(mp + Vector3(0, br + 0.35, 0), r.name, Color(0.7, 0.9, 1.0))
+				# Moons keep markers but no name — they were the soggy inner/outer piles.
+				if not bool(r.get("moon", false)):
+					_add_name_tag(mp, br, r.name, Color(0.7, 0.9, 1.0), str(r.id), stagger, li)
 				_pickables.append({ "id": r.id, "pos": mp })
 			"wormhole":
 				if not filters.wormholes:
 					continue
 				_add_wormhole(mp, 0.55)
-				_add_label(mp + Vector3(0, 0.9, 0), r.name, Color(0.75, 0.65, 1.0))
+				_add_name_tag(mp, 0.55, r.name, Color(0.75, 0.65, 1.0), str(r.id), stagger, li)
 				_pickables.append({ "id": r.id, "pos": mp })
 			"station":
 				if not filters.platforms:
 					continue
 				_add_platform(mp, true)
-				_add_label(mp + Vector3(0, 0.7, 0), r.name, Color(0.4, 1.0, 0.85))
+				_add_name_tag(mp, 0.45, r.name, Color(0.4, 1.0, 0.85), str(r.id), stagger, li)
+				_pickables.append({ "id": r.id, "pos": mp })
 			"player":
 				_add_player(mp)
-				_add_label(mp + Vector3(0, 1.1, 0), "YOU", Color(0.65, 1.0, 0.8))
+				_add_name_tag(mp, 0.55, "YOU", Color(0.65, 1.0, 0.8), "", stagger * 0.5, li)
 
 	_focus = Vector3.ZERO
 
@@ -441,18 +455,102 @@ func _add_player(pos: Vector3) -> void:
 	_add_ring(pos, 1.0, Color(0.5, 1.0, 0.7, 0.55), 0.05)
 
 
-func _add_label(pos: Vector3, text: String, col: Color) -> void:
+func _label_stagger(mp: Vector3, index: int) -> float:
+	# Kept for call-site bias; real separation is greedy in _pick_label_tip.
+	var ang: float = atan2(mp.z, mp.x)
+	return fmod(abs(ang) * 0.55 + float(index) * 0.32, 2.1)
+
+
+func _pick_label_tip(anchor: Vector3, marker_r: float, index: int, stagger: float) -> Vector3:
+	# Short Elite-style stem along world +Y (map "up" / Z-ish on screen).
+	# Clock-fan in XZ when tips would otherwise collide (inner Sol + gates).
+	var stem: float = LABEL_LEADER + marker_r * 0.35 + stagger * 0.55
+	var y0: float = maxf(marker_r + stem, 1.4)
+	var tip := Vector3(anchor.x, maxf(anchor.y + y0, y0), anchor.z)
+	var need_fan := Vector3(anchor.x, 0.0, anchor.z).length() < 4.0
+	for p in _label_tips:
+		if Vector2(tip.x, tip.z).distance_to(Vector2(p.x, p.z)) < 2.6:
+			need_fan = true
+			break
+	if need_fan:
+		var ang: float = float(index) * 0.95 + stagger * 0.7
+		var best := tip
+		var best_c := -1.0
+		for grow in 4:
+			var horiz: float = 1.7 + float(index % 5) * 0.45 + float(grow) * 0.85
+			for k in 10:
+				var a2: float = ang + float(k) * TAU / 10.0
+				var y_lift: float = maxf(marker_r + stem + float((index + k) % 4) * 0.4, 1.4)
+				var t2 := Vector3(anchor.x + cos(a2) * horiz, maxf(anchor.y + y_lift, y_lift), anchor.z + sin(a2) * horiz)
+				var c: float = 100.0
+				for p in _label_tips:
+					c = minf(c, Vector2(t2.x, t2.z).distance_to(Vector2(p.x, p.z)))
+				if _label_tips.is_empty():
+					c = 10.0
+				# Prefer mostly-up leaders: penalize very long horizontal throw.
+				c -= horiz * 0.08
+				if c > best_c:
+					best_c = c
+					best = t2
+			if best_c >= 2.6:
+				break
+		tip = best
+	_label_tips.append(tip)
+	return tip
+func _add_name_tag(anchor: Vector3, marker_r: float, text: String, col: Color, pick_id: String = "", stagger: float = 0.0, index: int = 0) -> void:
+	# Short Z-ish leader (mostly +Y) from marker to a deconflicted name tip.
+	var base := anchor + Vector3(0.0, marker_r * 0.9, 0.0)
+	var tip := _pick_label_tip(anchor, marker_r, index, stagger)
+	_add_leader_arrow(base, tip, col)
 	var lab := Label3D.new()
 	lab.text = text
-	lab.font_size = 28
-	lab.pixel_size = 0.018
+	lab.font_size = 26
+	lab.pixel_size = 0.014
 	lab.modulate = col
-	lab.outline_modulate = Color(0, 0, 0, 0.85)
-	lab.outline_size = 6
+	lab.outline_modulate = Color(0.0, 0.0, 0.0, 0.92)
+	lab.outline_size = 8
 	lab.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	lab.no_depth_test = true
-	lab.position = pos
+	lab.position = tip + Vector3(0.0, 0.2, 0.0)
 	_world.add_child(lab)
+	if pick_id != "":
+		# Label tip is pickable — same star_clicked path as the body marker.
+		_pickables.append({ "id": pick_id, "pos": tip, "hit": LABEL_HIT_PX })
+
+
+func _add_leader_arrow(from: Vector3, to: Vector3, col: Color) -> void:
+	var dir := to - from
+	var length: float = dir.length()
+	if length < 0.05:
+		return
+	dir /= length
+	# Tiny chevron at tip (potato: 3 line segments, one MeshInstance).
+	var axis := Vector3.RIGHT if abs(dir.dot(Vector3.UP)) > 0.85 else Vector3.UP
+	var side := dir.cross(axis).normalized()
+	var head_back := to - dir * minf(0.32, length * 0.3)
+	var head_w: float = minf(0.16, length * 0.16)
+	var lc := Color(col.r, col.g, col.b, 0.82)
+	var verts := PackedVector3Array([
+		from, to,
+		head_back + side * head_w, to,
+		head_back - side * head_w, to,
+	])
+	var cols := PackedColorArray([lc, lc, lc, lc, lc, lc])
+	var arr: Array = []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = verts
+	arr[Mesh.ARRAY_COLOR] = cols
+	var am := ArrayMesh.new()
+	am.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, arr)
+	var mi := MeshInstance3D.new()
+	mi.mesh = am
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.no_depth_test = true
+	mi.material_override = mat
+	_world.add_child(mi)
 
 
 func _set_lanes(verts: PackedVector3Array, cols: PackedColorArray) -> void:
@@ -549,14 +647,15 @@ func _gui_input(event: InputEvent) -> void:
 func _pick_at(local_px: Vector2) -> String:
 	if _cam == null or _pickables.is_empty():
 		return ""
-	var best := HIT_PX
+	var best := INF
 	var hit := ""
 	for p in _pickables:
 		if _cam.is_position_behind(p.pos):
 			continue
 		var sp: Vector2 = _cam.unproject_position(p.pos)
 		var d: float = sp.distance_to(local_px)
-		if d < best:
+		var lim: float = float(p.get("hit", HIT_PX))
+		if d < lim and d < best:
 			best = d
 			hit = str(p.id)
 	return hit

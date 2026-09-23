@@ -124,9 +124,8 @@ float grain(vec3 p) {
 
 
 void vertex() {
-	// The tile's parent carries translation only (floating origin), so the model
-	// normal is already the world normal — but go through MODEL_MATRIX anyway so a
-	// future rotation cannot silently break the lighting.
+	// Mesh vertices/normals are body-local; the parent carries the planet's
+	// current rotation and floating-origin translation.
 	v_world_n = normalize((MODEL_MATRIX * vec4(NORMAL, 0.0)).xyz);
 	v_radial = normalize((MODEL_MATRIX * vec4(normalize(VERTEX), 0.0)).xyz);
 	v_height = length(VERTEX) - body_radius_km;

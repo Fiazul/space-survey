@@ -37,11 +37,14 @@ void fragment() {
 	vec3 stone = pow(COLOR.rgb, vec3(2.2)) * (0.78 + 0.18 * grit + 0.12 * seam);
 	stone = mix(stone, vec3(0.46, 0.66, 0.76), ice_surface * 0.5);
 	vec3 l = normalize(sun_dir);
+	// The planet blocks sunlight below the local horizon, including on faces
+	// whose normals happen to point toward the Sun through the planet.
+	float day = smoothstep(-0.04, 0.28, dot(up, l));
 	float ndl = max(dot(n, l), 0.0);
 	float sun_term = 0.92 * ndl;
 	float sky = air_amount * (0.22 + 0.28 * max(dot(n, up), 0.0));
 	float fill = 0.03;
-	float lit = (fill + sun_term + sky) * exposure;
+	float lit = (fill + day * (sun_term + sky)) * exposure;
 	float haze = clamp((1.0 - exp(-length(VERTEX) / haze_km)) * air_amount * haze_density, 0.0, 1.0);
 	ALBEDO = mix(stone * lit, color_air * lit, haze) * stream_fade;
 }

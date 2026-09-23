@@ -272,7 +272,7 @@ func hush() -> void:
 
 func update_for(body_pos_rel: Vector3, body: String, physical: bool, radius_km: float,
 		alt_km: float, kill_km: float, ceiling_km: float, recipe: Dictionary,
-		sun_dir: Vector3, sim_time_s: float) -> void:
+		sun_dir: Vector3, sim_time_s: float, body_basis: Basis = Basis.IDENTITY) -> void:
 	var show := should_show(body, physical, alt_km, kill_km, ceiling_km, recipe)
 	visible_now = show
 	_mesh.visible = show
@@ -287,6 +287,7 @@ func update_for(body_pos_rel: Vector3, body: String, physical: bool, radius_km: 
 		var segs := _segments_for(want_r, cloud_thickness_km(recipe))
 		mesh.radial_segments = segs
 		mesh.rings = maxi(segs / 2, 8)
+	_mesh.basis = body_basis
 	_mesh.position = body_pos_rel
 	_bind(recipe)
 	_sim_time_s = sim_time_s

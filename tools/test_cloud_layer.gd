@@ -17,6 +17,9 @@ func _initialize() -> void:
 	var mesh: SphereMesh = layer.get("_mesh").mesh
 	check("shell_radius_is_body_plus_cloud_alt",
 		is_equal_approx(mesh.radius, 6371.0 + CL.cloud_alt_km(earth)))
+	var rotation := Basis(Vector3.UP, 1.2)
+	layer.update_for(Vector3.ZERO, "Earth", true, 6371.0, 10.0, 0.02, ceiling, earth, Vector3.RIGHT, 0.0, rotation)
+	check("cloud_map_follows_body_rotation", layer.get("_mesh").basis.is_equal_approx(rotation))
 
 	# Visible-gate mirrors the ring gate (SurfacePatch.should_show), narrowed by
 	# whether the recipe carries any cloud coverage.

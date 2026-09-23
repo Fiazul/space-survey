@@ -102,6 +102,10 @@ func _refresh() -> void:
 			row.add_theme_font_size_override("font_size", 16)
 			row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 			row.text = "    %s   —  %s" % [str(site.name), str(site.get("note", ""))]
+			if site.body == "Earth" and site.get("mode", "surface") == "surface":
+				var solar := Ephemeris.solar_state("Earth", DS.dir_for(site.lat_deg,site.lon_deg))
+				var minutes := int(solar.hour*60) % 1440
+				row.text += "  ·  %02d:%02d solar / %s" % [minutes/60,minutes%60,solar.phase]
 			row.pressed.connect(_pick.bind(site))
 			_list.add_child(row)
 

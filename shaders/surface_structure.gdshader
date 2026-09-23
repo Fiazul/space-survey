@@ -28,7 +28,10 @@ void fragment() {
 	concrete *= .80 + grain * .08 * detail + stain * .16;
 	concrete = mix(concrete, vec3(.027, .035, .037), windows * .86);
 	vec3 n = normalize(normal_world);
-	float lit = .04 + max(dot(n, normalize(sun_dir)), 0.0) * .95 + air_amount * (.22 + .18 * max(dot(n, normalize(up_world)), 0.0));
+	vec3 up = normalize(up_world);
+	vec3 l = normalize(sun_dir);
+	float day = smoothstep(-0.04, 0.28, dot(up, l));
+	float lit = .04 + day * (max(dot(n, l), 0.0) * .95 + air_amount * (.22 + .18 * max(dot(n, up), 0.0)));
 	float fog = clamp((1.0 - exp(-length(VERTEX) / 50.0)) * air_amount * haze_density, 0.0, 1.0);
-	ALBEDO = mix(concrete * lit, color_air * .65, fog);
+	ALBEDO = mix(concrete * lit, color_air * (.04 + .61 * day), fog);
 }

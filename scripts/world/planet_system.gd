@@ -316,6 +316,8 @@ func _build_planet(p: Dictionary) -> void:
 		if dir == Vector3.ZERO:
 			dir = Vector3(0, 0, -1)
 		drift_vel = dir * float(p.get("drift", 0.0))
+	if sphere != null and p.get("physical", false):
+		sphere.basis = eph.surface_basis(str(p.name))
 	_bodies.append({
 		"name": p.name, "radius": float(p.radius),
 		"mass": float(p.get("mass", float(p.radius) * float(p.radius) * 0.05)),   # Earth=1; fallback ~ size
@@ -430,7 +432,7 @@ func _place_body_sky(b: Dictionary, rel: Vector3, dist: float, too_far: bool) ->
 	var ang := asin(clampf(float(b.radius) / dist, 0.0, 0.999))
 	var r: float = shell * tan(ang)
 	r = maxf(r, 2.0)
-	b.sky.scale = Vector3.ONE * r
+	b.sky.basis = surface_basis(str(b.name)).scaled(Vector3.ONE*r)
 	b.sky.position = (rel / dist) * shell
 	b.sky.visible = true
 	if b.sky.material_override is ShaderMaterial:
@@ -655,7 +657,10 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 				b.model.rotate_y(b.spin * delta)
 		else:
 			b.sphere.position = rel
-			b.sphere.rotate_y(b.spin * delta)
+			if physical:
+				b.sphere.basis = eph.surface_basis(str(b.name))
+			else:
+				b.sphere.rotate_y(b.spin * delta)
 			b.sphere.visible = (physical and not too_far) or ((not physical) and sphere_a > 0.45)
 
 		if b.get("sky") != null:
@@ -782,6 +787,9 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		# speed cap fold that used to sit here (and its inward-only gate)
 		# is removed; FlightMode.band_speed_cap_* is removed alongside it.
 		_surface.transform = Transform3D(body_basis, _rel.get(nearest_name, Vector3.ZERO))
+		var to_star: Vector3 = (eph.rel_km("Sun", anchor) if anchored else star_true) \
+			- (ship_off + _rel.get(nearest_name, Vector3.ZERO))
+		_surface.set_sun_direction(to_star)
 		var vel_body: Vector3 = body_basis.inverse() * ship_vel
 		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler, vel_body)
@@ -799,13 +807,11 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 					b.sphere.visible = false
 		# Light and air. The sun vector is body -> star, exactly what
 		# PlanetGenerator.apply_view() hands the globe's material.
-		var to_star: Vector3 = (eph.rel_km("Sun", anchor) if anchored else star_true) \
-			- (ship_off + _rel.get(nearest_name, Vector3.ZERO))
 		var deck_recipe: Dictionary = _cloud_recipe(near_recipe)
 		if _cloud_layer != null:
 			_cloud_layer.update_for(_rel.get(nearest_name, Vector3.ZERO), nearest_name,
 				near_physical, nearest_radius, salt, eph.surface_kill_km(nearest_name),
-				ceiling, deck_recipe, to_star, _cloud_time_s)
+				ceiling, deck_recipe, to_star, _cloud_time_s, body_basis)
 		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, near_physical, from_centre)
 
 
@@ -822,7 +828,9 @@ func _rel_to_ship(b: Dictionary, anchored: bool, anchor: String, ship_off: Vecto
 func surface_basis(body: String) -> Basis:
 	for b in _bodies:
 		if str(b.name) == body:
-			return b.sphere.basis.orthonormalized()
+			if b.get("physical", false):
+				return eph.surface_basis(body)
+			return b.sphere.basis.orthonormalized() if b.sphere != null else Basis.IDENTITY
 	return Basis.IDENTITY
 
 

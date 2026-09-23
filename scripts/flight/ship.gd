@@ -261,6 +261,7 @@ var air_load := 0.0            # FlightMode.air_load: 0 in vacuum, saturates nea
 var mach_number := 0.0         # FlightMode.mach(speed); only meaningful in Sol km/s
 var last_newton_g := Vector3.ZERO      # true-space g vector, for the HUD G readout
 var last_thrust_accel := Vector3.ZERO  # true-space thrust accel this frame
+var simulation_delta := 0.0 # actual elapsed simulation time of the latest fly()
 var time_rate := 1.0           # Sol coast warp (1 / 5 / 10 / 50 / 100 / 1000)
 var debug_toast := ""          # one-shot note for the HUD (F6/F7/F9 snaps)
 var dev_speed := false         # Sol debug: fat engines + burn-warp so GEO is reachable
@@ -747,22 +748,22 @@ func _newton_corotate(dt: float) -> void:
 	# Inside the air the ship rides with the body. You should not see the ground
 	# race. Vector3.UP is the celestial pole, so this is exact for Earth and a
 	# known approximation elsewhere — Ephemeris carries a spin RATE, not an axis.
-	# Gated on has_drag_model with air_load/mach/drag (finding 5): no body-shaped
-	# behaviour should fire somewhere that has no body model backing it yet.
-	if not _FM.has_drag_model(anchor_name):
-		return
-	var air := Ephemeris.atmo_top_km(anchor_name)
-	if air <= 0.0:
-		return
-	if anchor_off.length() - anchor_radius_km() >= air:
-		return
-	var ang := Ephemeris.spin_rad_s(anchor_name) * dt
+	# Airborne co-rotation requires a drag model; landed ships follow any body's
+	# solid surface so the terrain cannot rotate out from under their gear.
+	if not landed:
+		if not _FM.has_drag_model(anchor_name):
+			return
+		var air := Ephemeris.atmo_top_km(anchor_name)
+		if air <= 0.0 or anchor_off.length()-anchor_radius_km() >= air:
+			return
+	var ang := Ephemeris.scene_spin_rad_s(anchor_name) * dt
 	if absf(ang) < 1.0e-12:
 		return
 	anchor_off = anchor_off.rotated(Vector3.UP, ang)
 	velocity = velocity.rotated(Vector3.UP, ang)
 	rotate(Vector3.UP, ang)
 	_cam_basis = _cam_basis.rotated(Vector3.UP, ang)
+	terrain_basis = Basis(Vector3.UP, ang)*terrain_basis
 
 
 func surface_clearance_km() -> float:
@@ -853,8 +854,11 @@ func _newton_ground(previous: Vector3 = Vector3.INF) -> void:
 	var inverse := terrain_basis.inverse()
 	var contact := resolve_surface_motion(terrain, inverse * start, inverse * anchor_off,
 		inverse * velocity, anchor_radius_km(), terrain_basis)
-	anchor_off = terrain_basis * (contact.position as Vector3)
-	velocity = terrain_basis * (contact.velocity as Vector3)
+	# A miss must leave inertial coordinates untouched. Rotating out and back
+	# loses metres at large radii and invalidates fractional-motion accumulation.
+	if contact.hit or contact.budget_limited:
+		anchor_off += terrain_basis*((contact.position as Vector3)-inverse*anchor_off)
+		velocity = terrain_basis * (contact.velocity as Vector3)
 	surface_impact = surface_impact or bool(contact.hit)
 
 # True while the galactic drive is carrying us — the drive hull, spooled up, in clear deep space.
@@ -1018,6 +1022,7 @@ func _clear_air_fx() -> void:
 
 
 func fly(delta: float) -> void:
+	simulation_delta = delta
 	update_weapon_environment()
 	if systems != null:
 		systems.step(delta)
@@ -1259,6 +1264,7 @@ func fly(delta: float) -> void:
 		if drop_flash > 0.0:
 			drop_flash = maxf(drop_flash - delta, 0.0)
 		var sim: float = delta * time_rate
+		simulation_delta = sim
 		_newton_advance(sim)
 		_footprint_tick(delta, fwd < 0.0, fwd > 0.0)
 		last_newton_g = _newton_g()

@@ -21,6 +21,8 @@ extends Node3D
 
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way backdrop; loomed toward the core on the voyage
+var _sun_light: DirectionalLight3D
+var _fill_light: DirectionalLight3D
 var planets: PlanetSystem
 var props: Props
 var hud: HUD
@@ -103,6 +105,8 @@ var _saved_pos := Vector3.ZERO
 var _has_saved_pos := false
 var _saved_anchor := ""           # anchored save (docs/adr/0002); "" = a pre-anchor save
 var _saved_off := Vector3.ZERO
+var _saved_surface_off: Variant = null
+var _saved_surface_basis: Variant = null
 var _saved_ship_index := -1
 var _autosave_t := 5.0            # periodic position autosave (also guards against the crash)
 var _scan := 0.0             # scan progress 0..1 of the nearest body
@@ -216,14 +220,16 @@ func _ready() -> void:
 	# detail instead of washing pale. Stars/planets are emissive/unshaded, so the
 	# "dots and glow" look is untouched. Shadows off = nearly free on a potato.
 	var sun_dir: Vector3 = eph.scene_pos("Sun").normalized()
-	var sun_light := DirectionalLight3D.new()
+	_sun_light = DirectionalLight3D.new()
+	var sun_light := _sun_light
 	sun_light.light_energy = 1.05
 	sun_light.light_color = Color(1.0, 0.96, 0.88)
 	sun_light.shadow_enabled = false
 	add_child(sun_light)
 	sun_light.look_at(-sun_dir, Vector3.UP)   # rays travel from the Sun outward
 
-	var fill := DirectionalLight3D.new()
+	_fill_light = DirectionalLight3D.new()
+	var fill := _fill_light
 	fill.light_energy = 0.35
 	fill.light_color = Color(0.6, 0.72, 1.0)   # cool counter-light
 	fill.shadow_enabled = false
@@ -369,13 +375,20 @@ func _restore_location() -> void:
 	if _saved_anchor != "" and Ephemeris.has_pos(_saved_anchor) and _saved_off.length() < MAX_SANE_POS:
 		_anchor_ship(_saved_anchor)
 		ship.anchor_off = _saved_off
-		ship.face_toward(-_saved_off)
+		if _saved_surface_off is Vector3:
+			var body_basis := eph.surface_basis(_saved_anchor)
+			ship.anchor_off = body_basis*_saved_surface_off
+			if _saved_surface_basis is Basis:
+				ship.transform.basis = body_basis*_saved_surface_basis
+				ship._cam_basis = ship.transform.basis
+		else:
+			ship.face_toward(-_saved_off)
 	elif _has_saved_pos and _saved_pos.length() > 0.001:
 		ship.true_pos = _saved_pos
 		ship.face_toward(-_saved_pos)
 	# Pre-1:1 Sol saves sit inside the real Earth. Night-side GEO saves stare at
 	# a black planet that covers the Sun — snap those to the sunlit start too.
-	if current_system == SystemDB.SOL and ship.anchor_name == "Earth":
+	if current_system == SystemDB.SOL and ship.anchor_name == "Earth" and not _saved_surface_off is Vector3:
 		var r := ship.anchor_off.length()
 		var sun := Ephemeris.scene_pos("Sun")
 		var inside := r < Ephemeris.EARTH_RADIUS_KM + 200.0
@@ -414,6 +427,16 @@ func _anchor_ship(who: String) -> void:
 	combat.shift_frame(ship.set_anchor(who))
 
 
+func _update_solar_light() -> void:
+	if _sun_light == null or _fill_light == null:
+		return
+	var direction := (eph.rel_km("Sun",ship.anchor_name)-ship.anchor_off).normalized() if ship.newton else -ship.true_pos.normalized()
+	if direction.length_squared() < .1:
+		return
+	var up := Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > .98 else Vector3.UP
+	_sun_light.look_at(-direction,up)
+	_fill_light.look_at(direction+Vector3(0,-.6,0),up)
+
 func _perf_t0() -> int:
 	return Time.get_ticks_usec() if _perf_profile else 0
 
@@ -429,6 +452,7 @@ func _process(delta: float) -> void:
 	_update_holds(delta)
 	var _pt := _perf_t0()
 	ship.fly(delta)
+	eph.rotation_clock.advance(ship.simulation_delta)
 	_perf_mark("ship_fly", _pt)
 	if ship.pending_frame_shift != Vector3.ZERO:
 		combat.shift_frame(ship.pending_frame_shift)
@@ -442,6 +466,7 @@ func _process(delta: float) -> void:
 	planets.refresh(ship.anchor_off, delta, refresh_anchor, ship.velocity)
 	_perf_mark("planets_refresh", _pt)
 	_reanchor_to_nearest()
+	_update_solar_light()
 	ship.speed_limit = planets.speed_limit   # eases the ship down near a body
 	# Hand the ship the SAME height function the ground rings and the contact kill
 	# read, so its substep ground clamp cannot disagree with either.
@@ -769,6 +794,7 @@ func reset_progress() -> void:
 func _load_profile() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(PROFILE_PATH) == OK:
+		eph.rotation_clock.load_from(cfg, Time.get_unix_time_from_system())
 		GameState.load_from(cfg)   # all persisted profile fields (coins/visited/onboarding/customization…)
 		_active_quest = str(cfg.get_value("player", "active_quest", ""))
 		# Where you left off last session (restored after the world is built — see
@@ -780,8 +806,11 @@ func _load_profile() -> void:
 		# is Earth-centred by definition — the empty anchor decomposes onto Earth.
 		_saved_anchor = str(cfg.get_value("player", "anchor", ""))
 		_saved_off = cfg.get_value("player", "off", Vector3.ZERO)
+		_saved_surface_off = cfg.get_value("player", "surface_off", null)
+		_saved_surface_basis = cfg.get_value("player", "surface_basis", null)
 		_saved_ship_index = int(cfg.get_value("player", "ship_index", -1))
 	else:
+		eph.rotation_clock.load_from(ConfigFile.new(), Time.get_unix_time_from_system())
 		GameState.reset()    # autoload survives scene reload — clear stale memory on a fresh/reset game
 		_fresh_game = true   # no save on disk → a brand-new game (drives the tutorial)
 	# Home (Sol) is always known — you start there, so it's instant-travel from frame one.
@@ -792,6 +821,7 @@ func _save_profile() -> void:
 	cfg.load(PROFILE_PATH)            # keep any other keys we add later
 	if ship != null:
 		GameState.customization = ship.customization_state()
+	eph.rotation_clock.save_into(cfg, Time.get_unix_time_from_system())
 	GameState.save_into(cfg)   # all persisted profile fields
 	cfg.set_value("player", "active_quest", _active_quest)
 	if ship != null:
@@ -803,6 +833,13 @@ func _save_profile() -> void:
 			cfg.set_value("player", "anchor", ship.anchor_name)
 			cfg.set_value("player", "off", ship.anchor_off)
 			cfg.set_value("player", "ship_index", ship.current_index())
+			# Surface saves follow the same longitude while the world turns offline.
+			cfg.erase_section_key("player", "surface_off")
+			cfg.erase_section_key("player", "surface_basis")
+			if ship.newton and (ship.landed or ship.anchor_distance_km()-ship.anchor_radius_km() < eph.atmo_top_km(ship.anchor_name)):
+				var inv := eph.surface_basis(ship.anchor_name).inverse()
+				cfg.set_value("player", "surface_off", inv*ship.anchor_off)
+				cfg.set_value("player", "surface_basis", inv*ship.transform.basis)
 	cfg.save(PROFILE_PATH)
 
 
@@ -1611,7 +1648,8 @@ func _update_skin_kill(_delta: float) -> void:
 		body_basis.inverse() * ship.velocity, planets.nearest_radius, body_basis)
 	var corrected: Vector3 = contact.position
 	ship.anchor_off += body_basis * (corrected - position)
-	ship.velocity = body_basis * (contact.velocity as Vector3)
+	if contact.hit or contact.budget_limited:
+		ship.velocity = body_basis * (contact.velocity as Vector3)
 	ship.surface_impact = bool(contact.hit)
 	_prev_from_centre = corrected
 	_prev_body = body

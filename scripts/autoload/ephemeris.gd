@@ -3,6 +3,9 @@ extends Node
 # Preloaded rather than referenced as the global class `AnchorFrame`: autoloads
 # resolve before the editor's class cache is guaranteed to be current, and the
 # headless test runs have no cache at all.
+const _ROT := preload("res://scripts/world/celestial_rotation.gd")
+var rotation_clock := _ROT.new()
+
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # REAL positions for Cold Light. Earth is the anchor at the scene origin (0,0,0) —
 # every coordinate here is GEOCENTRIC, the frame NASA RA/Dec are measured in.
@@ -220,6 +223,7 @@ func _catalog_num(body_name: String, key: String, fallback: float) -> float:
 
 
 func _ready() -> void:
+	rotation_clock.unix_s = Time.get_unix_time_from_system()
 	_catalog = live_worlds()
 	for p in PLANETS:
 		_store_pos(str(p.name), p.eq.x, p.eq.y, p.eq.z)
@@ -233,7 +237,7 @@ func _ready() -> void:
 	_mu_extra["Pluto"] = 869.6
 	_spin_extra["Pluto"] = 1.1386e-5
 	_build_gravity_bodies()
-	var d := Time.get_date_dict_from_system()
+	var d := Time.get_date_dict_from_system(true)
 	_today = "%04d-%02d-%02d" % [d.year, d.month, d.day]
 
 	if _load_cache() and _cache_complete():
@@ -470,6 +474,21 @@ func body_radius_km(body_name: String) -> float:
 			return float(_catalog_num(body_name, "radius", _radius_extra.get(body_name, 0.0)))
 
 
+func surface_basis(body_name: String) -> Basis:
+	return _ROT.basis_at(body_name, spin_rad_s(body_name), rotation_clock.unix_s)
+
+func solar_state(body_name: String, local_direction: Vector3) -> Dictionary:
+	var sun := surface_basis(body_name).inverse()*rel_km("Sun",body_name).normalized()
+	var longitude := atan2(local_direction.z,local_direction.x)
+	var sun_longitude := atan2(sun.z,sun.x)
+	var hour := fposmod(12.0+(longitude-sun_longitude)*12.0/PI,24.0)
+	var elevation := rad_to_deg(asin(clampf(local_direction.normalized().dot(sun),-1.0,1.0)))
+	return {"hour":hour,"elevation":elevation,"phase":"DAY" if elevation > 0 else ("TWILIGHT" if elevation > -6 else "NIGHT")}
+
+func scene_spin_rad_s(body_name: String) -> float:
+	return -spin_rad_s(body_name)
+
+
 func spin_rad_s(body_name: String) -> float:
 	match body_name:
 		"Earth":
@@ -628,7 +647,7 @@ func _save_cache() -> void:
 
 
 func _date_plus_one() -> String:
-	var d := Time.get_date_dict_from_system()
+	var d := Time.get_date_dict_from_system(true)
 	var unix := Time.get_unix_time_from_datetime_dict(d) + 86400
 	var n := Time.get_datetime_dict_from_unix_time(unix)
 	return "%04d-%02d-%02d" % [n.year, n.month, n.day]

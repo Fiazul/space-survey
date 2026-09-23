@@ -190,6 +190,7 @@ var _radius := 1.0             # the body's radius, for the colour palette's tex
 # batch can start a frame or two behind the sun's own update; the sun moves
 # too slowly for that lag to be visible (see _horizon_shadow).
 var _sun_dir := Vector3.ZERO
+var _built_sun_dir := Vector3.ZERO
 # Recipe-bound sources. Any of the three images may be null; the noise path covers it.
 var _himg: Image               # height map (land elevation), else fbm crust
 var _simg: Image               # water mask (white = liquid), else the land_amount cut
@@ -534,7 +535,8 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 	# every ring off-thread, keep whatever is already showing until each ring
 	# swaps in on its own frame. Never start a second batch while one is still
 	# computing or draining - that is what used to land already behind the ship.
-	if (cold or rescaled or recentered) and not _rebuild_busy():
+	var relit := _sun_dir.length_squared() > .1 and _sun_dir.dot(_built_sun_dir) < cos(deg_to_rad(1.0))
+	if (cold or rescaled or recentered or relit) and not _rebuild_busy():
 		_start_rebuild(hit, radius, want_base, ship_vel)
 	# Stay shown while in band with ground. Horizon coverage no longer gates
 	# visibility - the globe stays under the patch when the tile lags (see
@@ -600,6 +602,7 @@ func _start_rebuild(hit: Vector3, radius: float, base: float, ship_vel: Vector3)
 	_thread_results.resize(RING_COUNT)
 	var results := _thread_results
 	var sun_dir := _sun_dir
+	_built_sun_dir = sun_dir
 	var kit := _kit
 	if _forest_cache.size() > 24576:
 		_forest_cache.clear()
@@ -1684,12 +1687,16 @@ func _publish_props() -> void:
 # the right world's ground".
 # Feed the light and air state the shader needs. Called every frame by
 # PlanetSystem, with the SAME sun vector the globe's material receives.
+func set_sun_direction(sun_dir: Vector3) -> void:
+	var d := sun_dir.normalized() if sun_dir.length_squared() > .0001 else Vector3(.72,.28,.63).normalized()
+	# Ring height samples are body-local. Shader normals remain world-space.
+	_sun_dir = basis.inverse()*d
+
 func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
+	set_sun_direction(sun_dir)
 	if _land_mat == null:
 		return
-	var d: Vector3 = sun_dir.normalized() if sun_dir.length_squared() > 0.0001 \
-		else Vector3(0.72, 0.28, 0.63)
-	_sun_dir = d
+	var d := (basis*_sun_dir).normalized()
 	var density: float = PlanetGenerator.haze_density_at(alt_km, atmo_top_km)
 	for m in [_land_mat, _water_mat]:
 		m.set_shader_parameter("sun_dir", d)

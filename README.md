@@ -40,7 +40,7 @@ a small reusable surface kit.
 - **Ray Tab-targeting** — **Tab** locks onto whatever your nose points at (nearest the aim
   *ray* by angle, not the nearest object), cycling the 4 closest; unscanned targets read
   "Unknown Star/Planet" until you **scan (V)**. See [`TAB_TARGETING.md`](TAB_TARGETING.md).
-- **Navigation & discovery** — a real zoomable/pannable star **map** (M): star/wormhole/
+- **Navigation & discovery** — Elite-style **local + global 3D map** (M / Tab): real catalogue coords, wormhole lanes, system bodies + ship marker (see `docs/STAR_MAP.md`)
   planet icons on toggleable layers, a live player cursor, hover read-outs, wormhole lanes,
   out to ~150 ly. Wormholes show live on the **corner radar** and the always-on nav arrow
   points you to the nearest unsurveyed body first, falling back to the nearest wormhole

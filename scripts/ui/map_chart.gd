@@ -1,5 +1,6 @@
 class_name MapChart
 extends Control
+# DEPRECATED: replaced by MapView3D (Elite local+global 3D chart). Kept only so old refs compile.
 # The interactive star-chart canvas (the heart of the Star Map). A real, zoomable, pannable
 # map drawn entirely in _draw() — no per-star Button nodes, so it stays crisp at any zoom:
 #   • LANES      — known wormhole links between systems (cyan).

@@ -18,10 +18,13 @@ const MeshStyler := preload("res://scripts/flight/ship_mesh.gd")
 const ShipScript := preload("res://scripts/flight/ship.gd")
 
 const SHIPS := [
-	"res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj",
-	"res://assets/snarkrans_starship/spaceship.obj",
-	"res://assets/dingo57_starship/3d-model.obj",
-	"res://assets/jazoone_spaceship/spaceship.glb",
+	"res://assets/ships/wren/wren.glb",
+	"res://assets/ships/kestrel/kestrel.glb",
+	"res://assets/ships/swift/swift.glb",
+	"res://assets/ships/harrier/harrier.glb",
+	"res://assets/ships/osprey/osprey.glb",
+	"res://assets/ships/condor/condor.glb",
+	"res://assets/ships/albatross/albatross.glb",
 ]
 
 

@@ -27,6 +27,7 @@ var _text_shader := load("res://shaders/hud_text.gdshader") as Shader
 signal ship_selected(index: int)   # emitted when a hangar row is clicked
 signal ship_color_selected(part: String, key: String)
 signal ship_finish_selected(key: String)
+signal ship_module_selected(kind: String, key: String)
 signal open_teleport_sites() # visible TELEPORT shortcut, including Android
 signal open_teleport_map()   # clicked the dock's "TELEPORT NETWORK" button -> open the map
 
@@ -921,7 +922,7 @@ const GUIDE := [
 	["PLATFORMS & STATIONS",
 	 "Every charted system has a dockable platform; Earth has the home station. Press F nearby to dock, then swap among the five ships (1–5) and open the TELEPORT NETWORK. From the network you can jump to any platform you have already reached and arrive right beside it. All platforms share the same ship roster and the same network."],
 	["LANDING & HARDPOINTS",
-	 "Press B to lower the landing gear. Approach level and slowly; Ctrl descends and Space lifts. The HUD confirms LANDED when the feet support the ship. Lift off before retracting the gear. Inside atmosphere, R deploys or stows the weapon mounts; holding fire also deploys them. Firing waits for full deployment. Gear down or leaving atmosphere locks weapons; atmosphere exit automatically stows them. On touch screens use GEAR and ARMS; UP/DOWN provides vertical thrust with gear down."],
+	 "After five seconds without flight input, the ship assistant slowly levels the hull with the planet; steering, thrust, Q/E, and touch input stop it. Terrain protection stays automatic. Press B to lower the landing gear. Approach a designated pad slowly; Ctrl descends and Space lifts. PAD LOCKED requires supported feet on the pad. Ordinary ground never grants a pad lock. Lift off before retracting the gear. Inside atmosphere, R deploys or stows the weapon mounts; holding fire also deploys them. Firing waits for full deployment. Gear down or leaving atmosphere locks weapons; atmosphere exit automatically stows them. On touch screens use GEAR and ARMS; UP/DOWN provides vertical thrust with gear down."],
 	["WARP & FLIGHT",
 	 "WASD thrusts, Shift boosts (drains the boost bar), Q/E roll, Space/Ctrl climb and dive. Hold W in open space to spool the warp drive and cross light-years; near stars and planets you are held to sublight. Num Lock toggles hands-free auto-cruise. Hold W and tap C for a drift-flip LEAP — a quick boost with a slow, wide cinematic barrel roll (A/D picks the side). The leap punches through a star/planet slow-zone, so it's how you break free when gravity is holding you in."],
 	["COMBAT & DISCOVERY",
@@ -1179,7 +1180,13 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 	# Colour is NOT in this sig. A pick (or a drag on the RGB tab) used to
 	# change body_key, rebuild the rows, and queue_free the ColorPickerButton
 	# popup — that's the RGB tab vanishing. Layout changes still rebuild.
-	var sig := ("%d|%s|%s|%s|%s" % [current, station, ",".join(names), finish, tp_sig]) if open else ""
+	var modules: bool = open and ship != null and ship.current_is_modular()
+	var locks := ""
+	if open and ship != null:
+		for i in names.size():
+			locks += ship.ship_lock_text(i) + ","
+	var module_sig: String = "%s/%s" % [ship.current_weapon_set(), ship.current_pad_set()] if modules else ""
+	var sig := ("%d|%s|%s|%s|%s|%s|%s" % [current, station, ",".join(names), finish, tp_sig, locks, module_sig]) if open else ""
 	if sig == _hangar_sig:
 		if open and has_color:
 			_sync_hangar_color(body_key)
@@ -1209,6 +1216,12 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 		_hangar_rows.add_child(_make_choice_row("FINISH",
 			[{"key": "metallic", "label": "METALLIC"}, {"key": "glassy", "label": "GLASSY"}],
 			finish, _on_finish_choice))
+	if modules:
+		var sets := [{"key": "mk1", "label": "MK1"}, {"key": "mk2", "label": "MK2"}]
+		_hangar_rows.add_child(_make_choice_row("WEAPONS", sets, ship.current_weapon_set(),
+			func(key: String) -> void: ship_module_selected.emit("weapon", key)))
+		_hangar_rows.add_child(_make_choice_row("LANDING PADS", sets, ship.current_pad_set(),
+			func(key: String) -> void: ship_module_selected.emit("pad", key)))
 	# (Teleport-network button now lives bottom-centre — see _build_teleport_net_button.)
 
 
@@ -1239,13 +1252,14 @@ func _make_hangar_row(ship_name: String, idx: int, is_current: bool) -> PanelCon
 	icon.text = "◈"
 	h.add_child(icon)
 
-	var nm := _new_label(13, Color(1, 1, 1) if is_current else C_TEXT)
+	var lock: String = ship.ship_lock_text(idx) if ship != null else ""
+	var nm := _new_label(13, Color(1, 1, 1) if is_current else (C_DIM if lock != "" else C_TEXT))
 	nm.text = ship_name
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(nm)
 
 	var key := _new_label(11, Color(0.7, 1.0, 1.0) if is_current else C_DIM)
-	key.text = ("◄ %d" % (idx + 1)) if is_current else str(idx + 1)
+	key.text = ("◄ %d" % (idx + 1)) if is_current else (lock if lock != "" else str(idx + 1))
 	h.add_child(key)
 
 	return row
@@ -1486,7 +1500,7 @@ func refresh() -> void:
 		if stellar:
 			_tape_label.text = "PHOTO ALT  %s\nRADIAL  %s %s   /   %.2f g" % [altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
 			if vertical < 0 and ship.last_thrust_accel.dot(outward) > 0 \
-					and (ship.last_thrust_accel+ship.last_newton_g).dot(outward) < 0:
+					and (ship.last_thrust_accel+ship.support_accel+ship.last_newton_g).dot(outward) < 0:
 				_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
 		elif agl < 100.0:
 			_tape_label.text = "AGL  %s   /   V/S  %s%s\nGRAVITY  %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
@@ -1508,10 +1522,26 @@ func refresh() -> void:
 		elif ship.warp_ready():
 			_mode_label.text = "SUPERCRUISE READY"
 	if ship.systems != null:
-		if ship.landed:
-			_mode_label.text = "LANDED   ·   SPACE TO LIFT"
+		if not ship.landing_site.is_empty():
+			_mode_label.text = "%s / PAD LOCKED · %s LIFT" % [ship.landing_site, "UP" if ship.touch_active else "SPACE"]
 		elif ship.systems.gear_fraction > .01 or ship.systems.gear_target:
 			_mode_label.text = "GEAR DOWN" if ship.systems.gear_fraction >= .999 else ("GEAR LOWERING" if ship.systems.gear_target else "GEAR RETRACTING")
+			if ship.support_active:
+				_mode_label.text += " / SHIP ASSISTANT"
+			if ship.newton and ship.terrain != null and ship.anchor_name == ship.nearest_name:
+				var body_inverse := ship.terrain_basis.inverse()
+				for site in ship.terrain.facilities:
+					var inverse: Transform3D = site.transform.affine_inverse()
+					var center: Vector3 = inverse*(body_inverse*ship.anchor_off)
+					if center.length() > .6: continue
+					var clearance := center.y
+					var pose: Basis = inverse.basis*body_inverse*ship.transform.basis
+					for foot in ship.systems.foot_points():
+						clearance = minf(clearance,(center+pose*foot).y)
+					_tape_label.text += "\nPAD 01  %.0f m CLEAR / %.0f m OFFSET" % [maxf(0,clearance*1000),Vector2(center.x,center.z).length()*1000]
+					break
+		elif ship.support_active:
+			_mode_label.text = "SHIP ASSISTANT / TERRAIN AVOIDANCE"
 		elif ship.systems.weapons_target:
 			_mode_label.text = "HARDPOINTS READY" if ship.weapons_ready() else "HARDPOINTS DEPLOYING"
 		elif ship.systems.weapons_fraction > .01:

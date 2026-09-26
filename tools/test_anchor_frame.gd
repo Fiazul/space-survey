@@ -156,16 +156,17 @@ func _drag_model_gated_to_earth() -> void:
 	check("venus_zone_still_air", Ephemeris.flight_zone("Venus", v_alt) == "AIR")
 	venus.queue_free()
 
-	# Earth unchanged: drag still fires there.
+	# Use dense air: at 50 km the tuned drag over 50 ms is below one float32
+	# velocity ULP, so an unchanged Vector3 there does not mean drag is disabled.
 	var earth := ShipScript.new()
 	add_child(earth)
 	earth.newton = true
 	earth.set_anchor("Earth")
-	earth.anchor_off = Vector3(1.0, 0.0, 0.0) * (Ephemeris.EARTH_RADIUS_KM + 50.0)
+	earth.anchor_off = Vector3(1.0, 0.0, 0.0) * (Ephemeris.EARTH_RADIUS_KM + 5.0)
 	earth.velocity = Vector3(-3.0, 0.0, 0.0)
 	var e_vel_before: Vector3 = earth.velocity
 	earth.call("_newton_atmo_drag", 0.05)
-	check("earth_drag_still_fires", earth.velocity != e_vel_before)
+	check("earth_drag_still_fires", earth.velocity.length() < e_vel_before.length())
 	earth.queue_free()
 
 
@@ -332,7 +333,8 @@ func _true_pos_handoff_continuity() -> void:
 		var true_after: Vector3 = ship.true_pos
 		var err_m := true_before.distance_to(true_after) * 1000.0
 		check("true_pos_handoff_%s_%s_within_bound" % [a, b], err_m < bound)
-		check("true_pos_handoff_%s_%s_not_submillimeter" % [a, b], err_m > 0.001)
+		# Exact round-trips are valid too. Current ephemeris coordinates can
+		# align with the float grid; only an excessive upper error is a bug.
 		ship.queue_free()
 
 

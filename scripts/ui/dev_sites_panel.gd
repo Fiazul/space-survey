@@ -133,8 +133,12 @@ func go(site: Dictionary) -> void:
 	var body: String = site.body
 	main._anchor_ship(body)
 	var mode := str(site.get("mode", "surface"))
+	var station: Dictionary = main.orbital_stations.state_for(str(site.get("station_id",""))) if mode == "station" else {}
 	var body_basis: Basis = main.planets.surface_basis(body) if main.planets != null else Basis.IDENTITY
 	match mode:
+		"station":
+			if station.is_empty(): return
+			ship.anchor_off = station.position+station.position.normalized()*.4
 		"geo":
 			ship.anchor_off = Ephemeris.geo_start_pos()
 		"park":
@@ -147,9 +151,11 @@ func go(site: Dictionary) -> void:
 			var ground_r := sampler.ground_radius_km(dir, radius) if sampler != null else radius
 			ship.anchor_off = body_basis * DS.surface_anchor_off(dir, ground_r, float(site.alt_km))
 	ship.surface_position_revision += 1
-	ship.velocity = Vector3.ZERO
+	ship.velocity = station.velocity if mode == "station" else Vector3.ZERO
 	ship.reset_mesh_pose()
-	if mode == "geo" or mode == "park":
+	if mode == "station":
+		ship.face_toward(station.position-ship.anchor_off)
+	elif mode == "geo" or mode == "park":
 		ship.face_toward(-ship.anchor_off)
 	else:
 		var dir2 := DS.dir_for(float(site.lat_deg), float(site.lon_deg))

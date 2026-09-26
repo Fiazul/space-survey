@@ -199,6 +199,7 @@ func _reset_all_input() -> void:
 		ship.touch_brake = false
 		ship.touch_pitch = 0.0
 		ship.touch_fire = false
+		ship.touch_held = false
 
 
 func _process(delta: float) -> void:
@@ -232,10 +233,12 @@ func _process(delta: float) -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventScreenTouch:
 		_touch_at(event.index, event.position, event.pressed)
+		if ship != null: ship.touch_held = not _finger.is_empty()
 	elif event is InputEventScreenDrag:
 		_drag(event.index, event.position, event.relative)
 	elif _use_mouse and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		_touch_at(MOUSE_FINGER, event.position, event.pressed)
+		if ship != null: ship.touch_held = not _finger.is_empty()
 	elif _use_mouse and event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
 		_drag(MOUSE_FINGER, event.position, event.relative)
 

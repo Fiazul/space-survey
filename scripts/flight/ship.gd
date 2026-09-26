@@ -1,11 +1,10 @@
 class_name Ship
 extends Node3D
 
-const WEDGE_DESIGN := preload("res://scripts/flight/wedge_fighter.gd")
 const _FM := preload("res://scripts/flight/flight_mode.gd")
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
-# Player ship: loads a swappable GLB/OBJ (see SHIP_MODELS — the Class II cruiser
-# is the default), with speed-reactive authored propulsion meshes and arcade 6DOF
+# Player ship: loads one of the tiered modular GLB hulls (see SHIP_MODELS), with
+# speed-reactive booster plumes, swappable weapon/pad modules, and arcade 6DOF
 # flight. If a .glb can't be loaded it falls back to a primitive fighter so the
 # game never breaks. swap_ship() rebuilds the hull at runtime (used when docked).
 #
@@ -22,26 +21,19 @@ const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # fly(delta) is called by main.gd (explicit order); mouse look is read in _input.
 
 # ============================ TWEAK ME ============================
-# Ships you can fly — swap at the station. First entry is the default cruiser.
-# Each model owns its booster geometry. Styling maps those named surfaces to the
-# shared extremely bright, edge-faded propulsion shader; no procedural booster is built.
+# Ships you can fly, tier 1 -> 7 (docs/specs/2026-09-26-ship-roster-and-modules.md).
+# `length` keeps the old convention (HULL_KM at HULL_REF_LENGTH), so length = metres
+# * 0.0075: Wren 60 m ... Albatross 200 m. Every hull is modular: styling, plumes,
+# weapons, pads and belly jets all come from its named GLB sockets (ModularHull).
+# A tier unlocks by GameState.SHIP_UNLOCK.
 const SHIP_MODELS := [
-	# Class II Galactic Cruiser — the default player ship. Herminio Nieves' authored
-	# surfaces receive a dedicated pass: preserved textured hull/cockpit, animated
-	# rainbow a1 window strip, blue engine covers, and edge-faded rear propulsion.
-	# The six authored propulsion patches remain the nozzle faces and anchor matching
-	# two-layer torch plumes; their positions are never randomized.
-	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "bolt_speed": 1250.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 119.8, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "finish_pick": true, "default_color": "silver" },
-	# Snarkrans Starship — its OBJ split preserves .000 plus .010_...018 as the
-	# upper booster, and .005_...035 plus .001_...034 as the lower twin boosters.
-	{ "name": "Snarkrans Starship", "path": "res://assets/snarkrans_starship/spaceship.obj", "length": 0.82, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 190, "bolt_scale": 1.2, "bolt_speed": 1400.0, "fire_cd": 0.08, "dmg": 3, "energy_max": 145.0, "energy_use": 0.76, "warp": 125.0, "light_accent": Color(0.30, 0.62, 1.0), "light_energy": 0.38, "snarkrans_starship": true, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
-	# Base Basic PBR — root.1 and root.3 are the authored twin boosters.
-	{ "name": "Base Basic PBR", "path": "res://assets/base_basic_pbr.glb", "length": 0.96, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.76, "hp": 250, "bolt_scale": 1.4, "bolt_speed": 1325.0, "fire_cd": 0.11, "dmg": 4, "energy_max": 165.0, "energy_use": 0.82, "warp": 112.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.34, "base_basic_pbr": true, "color_pick": true, "default_color": "silver" },
-	# Vanguard — supplied OBJ/PBR maps, with one central engine in root.1.
-	# Replaces JazOone in slot four; its exhaust travels toward local +Z.
-	{ "name": "Vanguard", "path": "res://assets/vanguard/vanguard.obj", "length": 0.88, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 235, "bolt_scale": 1.3, "bolt_speed": 1350.0, "fire_cd": 0.10, "dmg": 4, "energy_max": 160.0, "energy_use": 0.78, "warp": 116.0, "light_accent": Color(0.35, 0.68, 1.0), "light_energy": 0.36, "vanguard": true, "color_pick": true, "default_color": "silver" },
-	# Selene: ceramic interceptor with authored twin engines and exhaust.
-	{ "name": "Selene", "path": "res://assets/wedge_fighter/wedge_fighter.glb", "length": 0.72, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 1.08, "hp": 155, "bolt_scale": 0.9, "bolt_speed": 1500.0, "fire_cd": 0.075, "dmg": 2, "energy_max": 135.0, "energy_use": 0.62, "warp": 130.0, "light_accent": Color(0.16, 0.70, 1.0), "light_energy": 0.35, "wedge_fighter": true, "color_pick": true, "default_color": "gold" },
+	{ "name": "Wren", "path": "res://assets/ships/wren/wren.glb", "modular": true, "length": 0.45, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.10, "hp": 140, "bolt_scale": 0.90, "bolt_speed": 1250.0, "fire_cd": 0.120, "dmg": 2, "energy_max": 120.0, "energy_use": 0.60, "warp": 105.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "teal" },
+	{ "name": "Kestrel", "path": "res://assets/ships/kestrel/kestrel.glb", "modular": true, "length": 0.525, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.04, "hp": 165, "bolt_scale": 1.00, "bolt_speed": 1300.0, "fire_cd": 0.105, "dmg": 2, "energy_max": 130.0, "energy_use": 0.64, "warp": 110.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "navy" },
+	{ "name": "Swift", "path": "res://assets/ships/swift/swift.glb", "modular": true, "length": 0.6, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.00, "hp": 185, "bolt_scale": 1.05, "bolt_speed": 1350.0, "fire_cd": 0.095, "dmg": 3, "energy_max": 140.0, "energy_use": 0.68, "warp": 116.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "burgundy" },
+	{ "name": "Harrier", "path": "res://assets/ships/harrier/harrier.glb", "modular": true, "length": 0.70875, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.92, "hp": 215, "bolt_scale": 1.20, "bolt_speed": 1375.0, "fire_cd": 0.088, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 120.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
+	{ "name": "Osprey", "path": "res://assets/ships/osprey/osprey.glb", "modular": true, "length": 0.9, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.86, "hp": 250, "bolt_scale": 1.30, "bolt_speed": 1400.0, "fire_cd": 0.082, "dmg": 4, "energy_max": 165.0, "energy_use": 0.78, "warp": 124.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "silver" },
+	{ "name": "Condor", "path": "res://assets/ships/condor/condor.glb", "modular": true, "length": 1.125, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 290, "bolt_scale": 1.40, "bolt_speed": 1425.0, "fire_cd": 0.076, "dmg": 5, "energy_max": 180.0, "energy_use": 0.82, "warp": 128.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "emerald" },
+	{ "name": "Albatross", "path": "res://assets/ships/albatross/albatross.glb", "modular": true, "length": 1.5, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.74, "hp": 340, "bolt_scale": 1.50, "bolt_speed": 1450.0, "fire_cd": 0.070, "dmg": 6, "energy_max": 200.0, "energy_use": 0.86, "warp": 134.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "champagne" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.
@@ -65,6 +57,7 @@ const ZOOM_MIN := 0.45              # closest, in hull-length multiples
 const ZOOM_MAX := 8.0               # farthest
 const ZOOM_STEP := 0.12             # per wheel notch
 const TOUCH_DEFAULT_ZOOM := ZOOM_MIN # mobile default: camera as close as the wheel allows
+const CAM_NEAR_KM := 0.05           # main.gd cam.near; small hulls must keep their tail past it
 # Authored `length` was ~0.6 when 1 unit was a game metre. Now 1 unit = 1 km,
 # so that hull would be 600 m. Fit to this many km instead; ratios between ships stay.
 const HULL_REF_LENGTH := 0.6
@@ -303,6 +296,7 @@ var combat_lock := false        # set by main while in combat — no interstella
 var firing := false             # set by main while holding fire — force-caps to combat speed
 var touch_fire := false         # mobile: the on-screen FIRE button (NOT the emulated mouse, which
 								# every touch would otherwise trigger) — main reads this on touch builds
+var touch_held := false         # any active touch contact keeps idle leveling paused
 var touch_thrust := 0.0         # mobile joystick: 0..1 analog forward (TouchControls.stick_to_cmd)
 var touch_yaw := 0.0            # mobile joystick: -1..1 analog turn, folds into the A/D kyaw branch
 var touch_pitch := 0.0          # mobile UP/DOWN buttons: -1/0/1 nose pitch, folds into mouse-look md.y
@@ -759,11 +753,25 @@ func _newton_corotate(dt: float) -> void:
 	var ang := Ephemeris.scene_spin_rad_s(anchor_name) * dt
 	if absf(ang) < 1.0e-12:
 		return
-	anchor_off = anchor_off.rotated(Vector3.UP, ang)
+	# Keep fractional travel across the rotating frame. A float32 rotation
+	# invalidates _advance_anchor's remainder every frame; gentle takeoff then
+	# shows upward velocity while its sub-metre position steps round to zero.
+	var remainder := _motion_remainder if _motion_is_continuous() else Vector3.ZERO
+	var x := float(anchor_off.x) + float(remainder.x)
+	var y := float(anchor_off.y) + float(remainder.y)
+	var z := float(anchor_off.z) + float(remainder.z)
+	var rx := cos(ang)*x + sin(ang)*z
+	var rz := -sin(ang)*x + cos(ang)*z
+	anchor_off = Vector3(rx, y, rz)
+	_motion_remainder = Vector3(rx-float(anchor_off.x), y-float(anchor_off.y), rz-float(anchor_off.z))
+	_motion_position = anchor_off
+	_motion_anchor = anchor_name
+	_motion_revision = surface_position_revision
 	velocity = velocity.rotated(Vector3.UP, ang)
 	rotate(Vector3.UP, ang)
-	_cam_basis = _cam_basis.rotated(Vector3.UP, ang)
-	terrain_basis = Basis(Vector3.UP, ang)*terrain_basis
+	orthonormalize()
+	_cam_basis = _cam_basis.rotated(Vector3.UP, ang).orthonormalized()
+	terrain_basis = (Basis(Vector3.UP, ang)*terrain_basis).orthonormalized()
 
 
 func surface_clearance_km() -> float:
@@ -785,16 +793,25 @@ func resolve_surface_motion(sampler: TerrainSampler, from: Vector3, to: Vector3,
 		pose *= _mesh_root.basis.orthonormalized()
 	var feet := systems.foot_points() if systems != null else PackedVector3Array()
 	var hit := ShipSurfaceContact.resolve(sampler, from, to, motion, radius, pose, _hull_box, _hull_probes, feet)
+	var pad := SurfaceFacility.pad_at(sampler.facilities, hit.position, pose, feet)
 	landed = systems != null and systems.gear_fraction >= .999 and hit.gear_hit \
 		and hit.velocity.length() < .003 and pose.y.dot(to.normalized()) > .85 \
-		and hit.normal.dot(to.normalized()) > .85 and not sampler.is_water(to.normalized())
+		and hit.normal.dot(to.normalized()) > .85 and (not pad.is_empty() or not sampler.is_water(to.normalized()))
+	if not pad.is_empty() and hit.gear_hit and motion.length() < .004 and hit.velocity.length() < .0015 and _pad_release <= 0.0 \
+			and systems != null and systems.gear_fraction >= .999 and landing_site.is_empty():
+		landing_site = pad.name
+		landing_site_id = pad.id
+		_pad_position = hit.position
+		_pad_attitude = (body_basis.inverse()*transform.basis).orthonormalized()
+		_pad_revision = surface_position_revision
+		debug_toast = "%s / PAD LOCKED" % landing_site
 	return hit
 
 
 func toggle_gear() -> void:
 	if systems == null or frozen or transiting:
 		return
-	if systems.gear_target and landed:
+	if systems.gear_target and (landed or not landing_site.is_empty()):
 		debug_toast = "LIFT OFF BEFORE RETRACTING GEAR"
 		return
 	systems.gear_target = not systems.gear_target
@@ -906,7 +923,21 @@ var _cam_zoom := 1.0          # target zoom (mouse wheel / pinch)
 var _cam_zoom_smooth := 1.0   # eased toward _cam_zoom
 var touch_active := false     # set true by main.gd when the touch overlay is built
 var systems: ShipSystems
+var _socket_xforms := {}       # kind -> socket transforms in _mesh_root space (modular hulls)
+var _hull_tint := Color(0.5, 0.6, 0.7)
+var _rcs_puffs: Array = []
+var _rcs_command := Vector3.ZERO
+var _rcs_braking := false
 var landed := false
+var landing_site := ""
+var landing_site_id := ""
+var _pad_position := Vector3.ZERO
+var _pad_attitude := Basis.IDENTITY
+var _pad_revision := -1
+var _pad_release := 0.0
+var support_accel := Vector3.ZERO
+var _support_visual_accel := Vector3.ZERO
+var support_active := false
 var _hull_box := AABB(Vector3(-.02, -.01, -.04), Vector3(.04, .02, .08))
 var _hull_probes := PackedVector3Array()
 var _hull_km := HULL_KM       # live fitted hull length (km); camera sits in hull-lengths
@@ -921,6 +952,8 @@ var _mouse_delta := Vector2.ZERO
 var _steer := Vector2.ZERO     # eased mouse-steer (rotational inertia for curving turns)
 var _yaw_rate := 0.0           # yaw turn-rate (rad/s) — eases to 0 when the mouse is idle (heading-hold)
 var _pitch_rate := 0.0         # pitch turn-rate (rad/s) — self-levels to 0 when the mouse is idle
+var _level_idle_s := 0.0       # uninterrupted time with no player flight input
+var _level_input_this_frame := false
 var _strafe := 0.0             # eased A/D lateral input (heavy, drifting thrust)
 var _lift := 0.0              # eased Space/Ctrl vertical input
 var _mouse_captured := false
@@ -953,6 +986,10 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		_level_input_this_frame = true
+	elif event is InputEventMouseButton and event.pressed:
+		_level_input_this_frame = true
 	if event is InputEventMouseMotion and _mouse_captured:
 		_mouse_delta += event.relative
 	elif event is InputEventMouseButton and event.pressed:
@@ -1015,17 +1052,187 @@ func _in_yaw() -> float:
 
 # Called every frame by main.gd, before the world is rebuilt around the ship.
 func _clear_air_fx() -> void:
+	support_accel = Vector3.ZERO
+	_support_visual_accel = Vector3.ZERO
+	support_active = false
 	air_load = 0.0
 	mach_number = 0.0
 	last_thrust_accel = Vector3.ZERO
 	last_newton_g = Vector3.ZERO
 
 
+func restore_facility_attachment(id: String, sampler: TerrainSampler, body_basis: Basis) -> bool:
+	if id.is_empty() or sampler == null or systems == null:
+		return false
+	var old_fraction := systems.gear_fraction
+	var old_target := systems.gear_target
+	systems.gear_target = true
+	systems.gear_fraction = 1.0
+	systems.pose()
+	var position_body := body_basis.inverse()*anchor_off
+	var attitude := (body_basis.inverse()*transform.basis).orthonormalized()
+	var pad := SurfaceFacility.pad_at(sampler.facilities,position_body,attitude,systems.foot_points())
+	if pad.is_empty() or pad.id != id:
+		systems.gear_target = old_target
+		systems.gear_fraction = old_fraction
+		systems.pose()
+		return false
+	terrain = sampler
+	terrain_basis = body_basis
+	landing_site = pad.name
+	landing_site_id = pad.id
+	_pad_position = position_body
+	_pad_attitude = attitude
+	_pad_revision = surface_position_revision
+	landed = true
+	velocity = Vector3.ZERO
+	reset_mesh_pose()
+	return true
+
+
+func _apply_landing_support(delta: float, input: Vector3, manual_accel: Vector3) -> void:
+	# The assistant is automatic; gear authorizes landing, not hazard protection.
+	support_active = false
+	support_accel = Vector3.ZERO
+	_support_visual_accel = Vector3.ZERO
+	if not newton or systems == null \
+			or terrain == null or not bool(terrain.surface.get("solid",false)) \
+			or not landing_site.is_empty() or anchor_name != nearest_name:
+		return
+	var up := anchor_off.normalized()
+	if transform.basis.y.dot(up) < .85:
+		return
+	var local_position := terrain_basis.inverse()*anchor_off
+	var clearance := terrain.alt_above_ground_km(local_position,anchor_radius_km())-surface_clearance_km()
+	if clearance > 2.0:
+		return
+	var pose := terrain_basis.inverse()*transform.basis
+	var feet := systems.foot_points()
+	var pad := SurfaceFacility.approach_at(terrain.facilities,local_position,pose,feet) if systems.gear_fraction >= .999 else {}
+	var manual := transform.basis*manual_accel
+	# Raw pilot intent matters even while the weighted thrust is still ramping.
+	if input.y != 0.0 and absf(manual.dot(up)) < .0001: manual += up*input.y*.001
+	var assistance := ShipAssistant.correction(clearance,up,velocity,_newton_g(),manual,not pad.is_empty(),delta)
+	# Sweep ahead against real structures. Landing decks are excluded only for
+	# a qualified gear-down approach; buildings remain physical hazards.
+	if velocity.length() > .001 and velocity.length() < .3:
+		var horizon := minf(3.0,.5+velocity.length()/LandingThrusters.MAX_ACCEL)
+		var future := local_position+terrain_basis.inverse()*velocity*horizon
+		var obstacle := terrain.resolve_structure_hull(local_position+pose*_hull_box.get_center(),future+pose*_hull_box.get_center(),velocity,anchor_radius_km(),.005,pose,_hull_box.size*.5)
+		if pad.is_empty():
+			var ridge := terrain._resolve_terrain_motion(local_position,future,terrain_basis.inverse()*velocity,anchor_radius_km(),surface_clearance_km()+.005)
+			if ridge.hit:
+				var ridge_normal: Vector3 = terrain_basis*ridge.normal
+				assistance += ridge_normal*maxf(0.0,-velocity.dot(ridge_normal)/maxf(delta,.05))
+		if obstacle.hit and (pad.is_empty() or obstacle.normal.dot(local_position.normalized()) < .85):
+			var normal: Vector3 = terrain_basis*obstacle.normal
+			assistance += normal*maxf(0.0,-velocity.dot(normal)/maxf(delta,.05))
+	assistance = assistance.limit_length(LandingThrusters.MAX_ACCEL)
+	velocity += assistance*delta
+	support_active = assistance.length_squared() > .00000001
+	support_accel = assistance
+	# Manual Space/Ctrl changes support output; main forward thrust remains
+	# on the original rear engines. Only the assistance above adds new force.
+	_support_visual_accel = assistance+transform.basis*Vector3(manual_accel.x,manual_accel.y,0)
+
+
+func _flight_controls_active(md: Vector2) -> bool:
+	return absf(md.x) > MOUSE_DEADZONE or absf(md.y) > MOUSE_DEADZONE \
+		or _free_look or autopilot or auto_cruise or _flip_t > 0.0 \
+		or _in_fwd() > .01 or _in_brake() or absf(_in_yaw()) > .01 \
+		or absf(touch_pitch) > .01 or touch_fire or touch_held or firing \
+		or Input.is_physical_key_pressed(KEY_Q) or Input.is_physical_key_pressed(KEY_E) \
+		or Input.is_physical_key_pressed(KEY_SPACE) or Input.is_physical_key_pressed(KEY_CTRL) \
+		or Input.is_physical_key_pressed(KEY_SHIFT) or Input.is_physical_key_pressed(KEY_C) \
+		or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) or Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+
+
+func _level_near_planet(delta: float, player_active: bool) -> void:
+	if player_active or frozen or transiting or locked or not landing_site.is_empty():
+		_level_idle_s = 0.0
+		return
+	if terrain == null or not bool(terrain.surface.get("solid",false)):
+		_level_idle_s = 0.0
+		return
+	var up := anchor_off.normalized() if newton else -nearest_dir.normalized()
+	var altitude := anchor_distance_km()-anchor_radius_km() if newton else nearest_dist-nearest_radius
+	if newton and anchor_name != nearest_name:
+		_level_idle_s = 0.0
+		return
+	var band := maxf(35.0,Ephemeris.atmo_top_km(nearest_name))
+	if altitude > band or up.length_squared() < .5:
+		_level_idle_s = 0.0
+		return
+	_level_idle_s += minf(delta,.1)
+	if _level_idle_s <= 5.0: return
+	# Ease the first turn in, then cap attitude change at six degrees per second.
+	transform.basis = ShipAssistant.level(transform.basis,up,delta,smoothstep(5.0,6.5,_level_idle_s))
+
+
+# Only a qualified facility pad can hold the ship. This path never changes
+# ordinary airborne steering, banking, camera framing or engine tuning.
+func _hold_facility_pad(delta: float) -> bool:
+	if _pad_revision != surface_position_revision or frozen or transiting or locked:
+		landing_site = ""
+		landing_site_id = ""
+		_pad_release = 0.0
+	if landing_site.is_empty(): return false
+	if Input.is_physical_key_pressed(KEY_SPACE) or touch_pitch < -.1:
+		landing_site = ""
+		landing_site_id = ""
+		landed = false
+		_pad_release = 2.0
+		_lift = 1.0
+		return false
+	velocity = Vector3.ZERO
+	last_thrust_accel = Vector3.ZERO
+	auto_cruise = false
+	autopilot = false
+	is_boosting = false
+	_strafe = 0.0
+	_lift = 0.0
+	_yaw_rate = 0.0
+	_pitch_rate = 0.0
+	_bank = 0.0
+	_lean = 0.0
+	_flip_t = 0.0
+	time_rate = 1.0
+	_time_idx = 0
+	_warp_charge = 0.0
+	var spin := Basis(Vector3.UP, Ephemeris.scene_spin_rad_s(anchor_name)*delta)
+	terrain_basis = (spin*terrain_basis).orthonormalized()
+	anchor_off = terrain_basis*_pad_position
+	transform.basis = terrain_basis*_pad_attitude
+	_cam_basis = (spin*_cam_basis).orthonormalized()
+	_free_look = _want_free_look(delta)
+	if _free_look: _apply_free_look(_mouse_delta, delta)
+	else:
+		_look_yaw = 0.0
+		_look_pitch = 0.0
+	_mouse_delta = Vector2.ZERO
+	reset_mesh_pose()
+	_clear_air_fx()
+	_update_authored_propulsion(0.0,delta)
+	_update_streaks(0.0)
+	_update_camera(delta)
+	if audio: audio.engine_off()
+	return true
+
+
 func fly(delta: float) -> void:
 	simulation_delta = delta
+	if frozen or transiting or locked or not landing_site.is_empty(): _level_idle_s = 0.0
+	support_accel = Vector3.ZERO
+	_support_visual_accel = Vector3.ZERO
+	support_active = false
 	update_weapon_environment()
 	if systems != null:
 		systems.step(delta)
+		# Early returns (pad lock, transit, menus) must not leave old jets firing.
+		systems.support.command(Vector3.ZERO,0.0)
+	_pad_release = maxf(0.0, _pad_release-delta)
+	if _hold_facility_pad(delta):
+		return
 	# Wormhole transit: motion held, view locked forward, streaks at full tilt.
 	if transiting:
 		velocity = Vector3.ZERO
@@ -1110,6 +1317,8 @@ func fly(delta: float) -> void:
 	var turn := 0.0   # this frame's mouse yaw (drives cosmetic banking below)
 	var lean := 0.0   # this frame's mouse pitch (drives the cosmetic nose-lean below)
 	var attitude_before := transform.basis
+	var pilot_active := _flight_controls_active(md) or _level_input_this_frame
+	_level_input_this_frame = false
 
 	if autopilot:
 		_autopilot_steer(delta)
@@ -1163,6 +1372,9 @@ func fly(delta: float) -> void:
 		# Carry normal forward flight; a gravity-driven backwards fall keeps its direction.
 		if newton:
 			velocity = TurnCarry.apply(velocity, attitude_before, transform.basis)
+	# Level after flight's steering/velocity carry so the idle visual turn does
+	# not redirect the ship's momentum or fight a pilot input.
+	_level_near_planet(delta,pilot_active)
 
 	# --- Thrust (local axes -> world via current basis) ---
 	# Shift = boost, draining the shared boost pool (owned by combat). It only ENGAGES
@@ -1205,6 +1417,9 @@ func fly(delta: float) -> void:
 		lift -= 1.0
 	if systems != null and systems.gear_target:
 		lift -= touch_pitch # mobile UP/DOWN translates vertically during landing
+
+	if _pad_release > 0.0 and lift >= 0.0 and not _in_brake():
+		lift = 1.0  # brief clearance lift; mouse, roll and main thrust remain manual
 
 	# FTL: every hull can spool warp by holding W. There's no gate — instead the
 	# force-slow safe-zones around stars/planets cap your speed when you're near them,
@@ -1251,6 +1466,13 @@ func fly(delta: float) -> void:
 	last_thrust_accel = (transform.basis * local_accel) * boost if g_thrusting else Vector3.ZERO
 	if local_accel.length_squared() > 0.0001:
 		velocity += (transform.basis * local_accel) * boost * delta
+	_apply_landing_support(delta,Vector3(strafe,lift,fwd),local_accel)
+	_rcs_command = _mesh_root.basis.inverse() * Vector3(_strafe, _lift, 0.0)
+	if braking:
+		var hull_velocity := (transform.basis * _mesh_root.basis).inverse() * velocity
+		var lateral_velocity := Vector3(hull_velocity.x, hull_velocity.y, 0.0)
+		_rcs_command = -lateral_velocity.normalized() * .55 if lateral_velocity.length() > .0001 else Vector3.ZERO
+	_rcs_braking = braking
 
 	# Gravitational tug toward nearby bodies. It draws you in and helps you settle to land,
 	# but must NEVER trap you. Two safeguards:
@@ -1427,6 +1649,12 @@ func fly(delta: float) -> void:
 
 
 func _update_authored_propulsion(throttle: float, delta: float) -> void:
+	if systems != null and systems.support != null:
+		systems.support.command((transform.basis*_mesh_root.basis).inverse()*_support_visual_accel,delta)
+	if not _rcs_puffs.is_empty():
+		ModularHull.drive_rcs(_rcs_puffs, _rcs_command, _rcs_braking, delta)
+	_rcs_command = Vector3.ZERO
+	_rcs_braking = false
 	var k := clampf(7.0 * delta, 0.0, 1.0)
 	var t := Time.get_ticks_msec() * 0.001
 	# Each ship's named booster surface keeps its authored shape. Speed only changes
@@ -1454,14 +1682,13 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 		_propulsion_surge * (1.0 - clampf(3.6 * delta, 0.0, 1.0)),
 		clampf((rise - 1.5) * 0.10, 0.0, 0.70))
 
-	# All four imported ships use their own named rear propulsion meshes. Keep a
-	# visible idle burn, then increase turbulence and flow with speed.
+	# Keep a visible idle burn, then increase turbulence and flow with speed.
 	var heat := clampf(_propulsion_power * 1.12 + _propulsion_surge * 0.25, 0.0, 1.0)
 	for propulsion in _authored_propulsion:
 		propulsion.set_shader_parameter("power", _propulsion_power * POWER_CEIL)
 		propulsion.set_shader_parameter("flow_speed", lerpf(0.8, 3.1, _propulsion_power))
 		# Exhaust runs orange when cold and blue-white when hot. Torch cones, the
-		# JazOone engine discs and the haze all read the same value, so no layer can
+		# nozzle bells and the haze all read the same value, so no layer can
 		# disagree with another about how hard the engine is working.
 		propulsion.set_shader_parameter("temperature", heat)
 
@@ -1581,7 +1808,7 @@ func _update_camera(delta: float) -> void:
 	# CAM_VIEW_PITCH orbits the rig (position + aim together) so the ship is seen from slightly below.
 	var basis := _cam_basis * Basis(Vector3.RIGHT, deg_to_rad(CAM_VIEW_PITCH_DEG)) \
 		* (Basis(Vector3.UP, _look_yaw_s) * Basis(Vector3.RIGHT, _look_pitch_s))
-	var cam_pos := basis * (CAM_OFFSET * _hull_km * _cam_zoom_smooth)
+	var cam_pos := basis * (CAM_OFFSET * _hull_km * maxf(_cam_zoom_smooth, _near_zoom_floor()))
 	# Wormhole transit: only a SLIGHT, slow buffet (gentle position drift + a touch of
 	# roll/pitch) and a restrained FOV lean → the dive feels tense and dark, not stormy.
 	if transiting:
@@ -1598,6 +1825,12 @@ func _update_camera(delta: float) -> void:
 	# Clamp the fraction so warp speeds don't blow the FOV out into a fisheye.
 	var speed_frac := clampf(velocity.length() / MAX_SPEED, 0.0, 1.0)
 	camera.fov = lerpf(camera.fov, FOV_BASE + speed_frac * FOV_KICK, clampf(4.0 * delta, 0.0, 1.0))
+
+
+# Closest zoom that keeps the hull's near end beyond the camera near plane: at
+# ZOOM_MIN a 60 m hull would put its tail ~41 m from the lens, inside the 50 m clip.
+func _near_zoom_floor() -> float:
+	return (CAM_NEAR_KM * 1.2 / maxf(_hull_km, 0.001) + 0.5) / CAM_OFFSET.length()
 
 
 func _set_capture(c: bool) -> void:
@@ -1729,6 +1962,8 @@ func _build_ship_model(idx: int) -> void:
 		c.queue_free()
 	_authored_propulsion.clear()
 	systems = null
+	_socket_xforms = {}
+	_rcs_puffs = []
 	_mesh_root.scale = Vector3.ONE
 	_torch_materials.clear()
 	_nozzle_lights.clear()
@@ -1767,34 +2002,11 @@ func _build_ship_model(idx: int) -> void:
 		push_warning("Ship: could not load %s — using primitive fallback." % info.path)
 		_build_primitive_ship()
 		return
-	# Install legacy OBJ surface overrides before the MeshInstance3D enters the live
-	# renderer. Growing the override array after scene attachment makes Godot 4.6
-	# briefly query its not-yet-filled material slots.
-	# Two ways a ship takes its hangar colour, and which one it uses is a property of
-	# how its surfaces were authored, not a preference:
-	#  - Class II / Snarkrans are painted AFTER styling, by color_authored_ship, which
-	#    rewrites albedo per surface and also owns the metallic/glassy finish.
-	#  - Base Basic / Vanguard / Selene carry supplied PBR maps or a procedural hull
-	#    shader. That same pass would flatten their albedo and kill their emission, so
-	#    they take the swatch as an argument to their OWN styler and keep every map.
-	# Either way the tint has to be resolved before the styler runs.
 	var picked_palette := _palette_for(_color_for(info.name, info))
 	var hull_tint: Color = picked_palette.swatch
-	if info.get("class_ii_cruiser", false):
-		_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)
-	elif info.get("snarkrans_starship", false):
-		_authored_propulsion = ShipMesh.style_snarkrans_starship(model)
-	elif info.get("base_basic_pbr", false):
-		_authored_propulsion = ShipMesh.style_base_basic_pbr(model, hull_tint)
-	elif info.get("jazoone_spaceship", false):
-		_authored_propulsion = ShipMesh.style_jazoone_spaceship(model)
-	elif info.get("wedge_fighter", false):
-		_authored_propulsion = WEDGE_DESIGN.style(model, hull_tint)
-	elif info.get("vanguard", false):
-		_authored_propulsion = ShipMesh.style_vanguard(model, hull_tint)
-	if not info.get("wedge_fighter", false) and not info.get("base_basic_pbr", false) \
-			and not info.get("vanguard", false):
-		ShipMesh.color_authored_ship(model, hull_tint, _finish_for(info.name))
+	var modular := bool(info.get("modular", false))
+	if modular:
+		_authored_propulsion = ModularHull.style(model, hull_tint, _finish_for(info.name))
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
@@ -1802,24 +2014,24 @@ func _build_ship_model(idx: int) -> void:
 	var box := ShipMesh.fit_model(_mesh_root, model, _hull_km)
 	_hull_box = box
 	_hull_probes = ShipSurfaceContact.hull_points(box)
-	systems = ShipSystems.new()
-	_mesh_root.add_child(systems)
-	systems.configure(box, idx, hull_tint, _mesh_root)
+	_hull_tint = hull_tint
+	if modular:
+		var found := ModularHull.sockets(model)
+		for kind in ["weapon", "pad", "landjet"]:
+			var xforms: Array[Transform3D] = []
+			for node in found[kind]:
+				xforms.append(ModularHull.relative(node, _mesh_root))
+			_socket_xforms[kind] = xforms
+	_rebuild_systems()
 	landed = false
-	# The Class II source only supplies six flat propulsion patches. Fit the hull
-	# first, then extend those exact sockets into visible two-layer torch plumes so
-	# exhaust volume cannot alter the intended ship scale.
+	landing_site = ""
+	landing_site_id = ""
+	_pad_release = 0.0
+	# Plumes go on after the fit so exhaust volume cannot alter the hull scale.
 	var plumes: Array[ShaderMaterial] = []
-	if info.get("class_ii_cruiser", false):
-		plumes = ShipMesh.add_class_ii_booster_plumes(model)
-	elif info.get("snarkrans_starship", false):
-		plumes = ShipMesh.add_snarkrans_booster_plumes(model)
-	elif info.get("base_basic_pbr", false):
-		plumes = ShipMesh.add_base_basic_booster_plumes(model)
-	elif info.get("jazoone_spaceship", false):
-		plumes = ShipMesh.add_jazoone_booster_plumes(model)
-	elif info.get("vanguard", false):
-		plumes = ShipMesh.add_vanguard_booster_plumes(model)
+	if modular:
+		_rcs_puffs = ModularHull.add_rcs_puffs(model)
+		plumes = ModularHull.add_plumes(model, info.get("light_accent", Color(0.35, 0.70, 1.0)))
 	# Torch cones are the only layer whose GEOMETRY reacts to throttle, so they are
 	# tracked separately from the flat authored propulsion surfaces and the haze.
 	for material in plumes:
@@ -1854,14 +2066,70 @@ func _build_ship_model(idx: int) -> void:
 	# ShipMesh.add_hull_lights still exists if this is ever reinstated.
 
 
+# Fresh ShipSystems for the current hull and module sets; gear/hardpoint state carries
+# over so a module swap never drops a landed ship.
+func _rebuild_systems() -> void:
+	var carried := {}
+	if systems != null:
+		carried = {"gear_target": systems.gear_target, "gear_fraction": systems.gear_fraction,
+			"weapons_target": systems.weapons_target, "weapons_fraction": systems.weapons_fraction}
+		_mesh_root.remove_child(systems)
+		systems.queue_free()
+	systems = ShipSystems.new()
+	_mesh_root.add_child(systems)
+	if _socket_xforms.is_empty():
+		systems.configure(_hull_box, _hull_tint, _mesh_root)
+	else:
+		systems.configure(_hull_box, _hull_tint, _mesh_root, _socket_xforms,
+			GameState.weapon_set, GameState.pad_set)
+	for key in carried:
+		systems.set(key, carried[key])
+	systems.pose()
+	ShipMesh.tag_fill_layer(systems)
+
+
 # --- Ship-swap API (called by main when docked) ---
-func swap_ship(idx: int) -> void:
+# Refuses locked tiers itself; the hangar UI only mirrors this.
+func swap_ship(idx: int, quiet := false) -> bool:
 	if idx < 0 or idx >= SHIP_MODELS.size() or idx == _current_model:
-		return
+		return false
+	if not dev_speed and not GameState.ship_unlocked(idx + 1):
+		if not quiet:
+			debug_toast = ship_lock_text(idx)
+		return false
 	_current_model = idx
 	_bank = 0.0
 	_mesh_root.rotation = Vector3.ZERO  # drop any banking carryover
 	_build_ship_model(idx)
+	return true
+
+func ship_lock_text(i: int) -> String:
+	if dev_speed or GameState.ship_unlocked(i + 1):
+		return ""
+	return "Locked: reach %d systems" % GameState.ship_unlock_need(i + 1)
+
+func current_is_modular() -> bool:
+	return bool(SHIP_MODELS[_current_model].get("modular", false))
+
+func current_weapon_set() -> String:
+	return GameState.weapon_set
+
+func current_pad_set() -> String:
+	return GameState.pad_set
+
+func set_weapon_set(key: String) -> void:
+	if not ShipSystems.WEAPON_SCENES.has(key):
+		return
+	GameState.weapon_set = key
+	if not _socket_xforms.is_empty():
+		_rebuild_systems()
+
+func set_pad_set(key: String) -> void:
+	if not ShipSystems.PAD_SCENES.has(key):
+		return
+	GameState.pad_set = key
+	if not _socket_xforms.is_empty():
+		_rebuild_systems()
 
 func ship_count() -> int:
 	return SHIP_MODELS.size()
@@ -1932,9 +2200,7 @@ func current_has_color_pick() -> bool:
 	return bool(SHIP_MODELS[_current_model].get("color_pick", false))
 
 
-# Metallic/glassy is color_authored_ship's doing, so only the ships that go through
-# that pass offer it. The three that paint inside their own styler would show a
-# GLASSY button that rebuilt the hull and changed nothing.
+# Metallic/glassy is applied to Hull_Paint by ModularHull.style.
 func current_has_finish_pick() -> bool:
 	return bool(SHIP_MODELS[_current_model].get("finish_pick", false))
 
@@ -2131,6 +2397,5 @@ func _build_primitive_ship() -> void:
 			part.transform = Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * (HULL_KM / 3.4))) * part.transform
 	_hull_box = ShipMesh.combined_aabb(_mesh_root)
 	_hull_probes = ShipSurfaceContact.hull_points(_hull_box)
-	systems = ShipSystems.new()
-	_mesh_root.add_child(systems)
-	systems.configure(_hull_box, 4, Color(.5, .6, .7))
+	_hull_tint = Color(.5, .6, .7)
+	_rebuild_systems()

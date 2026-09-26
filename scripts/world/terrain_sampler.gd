@@ -3,6 +3,7 @@ extends RefCounted
 const SurfaceRecipe := preload("res://scripts/world/surface_recipe.gd")
 var surface: Dictionary
 var settlements: Array = []
+var facilities: Array = []
 var _structure_contact_cache := {}
 # THE height function. One instance per body, and every consumer holds the same
 # instance: the ring mesh builder displaces vertices with it, and main's contact
@@ -205,6 +206,7 @@ func _init(recipe: Dictionary) -> void:
 	_ocean_color = recipe.get("color_ocean", PlanetGenerator.DEFAULT_COLOR_OCEAN)
 	_has_map = _h_w > 0
 	_bind_peaks(surface.get("peaks", []))
+	facilities = SurfaceFacility.resolve(recipe, self)
 
 
 # Metres above sea level at a point on the crust. `dir` is an outward unit vector
@@ -554,17 +556,19 @@ func normal_at(position: Vector3, radius: float) -> Vector3:
 func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		radius: float, clearance: float) -> Dictionary:
 	var terrain_result := _resolve_terrain_motion(from, to, velocity, radius, clearance)
-	if settlements.is_empty() or not bool(surface.get("solid", false)):
+	if not bool(surface.get("solid", false)):
 		return terrain_result
-	var structure_result := SurfaceSettlement.collide(self, from, terrain_result.position,
-		velocity, radius, clearance, _structure_contact_cache)
+	var structure_result := resolve_structure_hull(from, terrain_result.position,
+		velocity, radius, clearance, Basis.IDENTITY, Vector3.ZERO)
 	return structure_result if structure_result.hit or structure_result.budget_limited else terrain_result
 
 
 func resolve_structure_hull(from: Vector3, to: Vector3, velocity: Vector3,
 		radius: float, skin: float, basis: Basis, half: Vector3) -> Dictionary:
-	return SurfaceSettlement.collide(self, from, to, velocity, radius, skin,
+	var result := SurfaceSettlement.collide(self, from, to, velocity, radius, skin,
 		_structure_contact_cache, basis, half)
+	var facility := SurfaceFacility.collide(facilities, from, result.position, result.velocity, skin, basis, half)
+	return facility if facility.hit else result
 
 
 func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,

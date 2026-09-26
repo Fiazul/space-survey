@@ -23,6 +23,10 @@ var onboarding_done := {}      # set of completed beginner-quest step ids (event
 # Saved per-ship body colour and finish. Booster appearance is intentionally absent.
 var customization := {}
 
+# Swappable module set per kind (ShipSystems.WEAPON_SCENES / PAD_SCENES keys).
+var weapon_set := "mk1"
+var pad_set := "mk1"
+
 # Cloud coverage the player wants to fly through: 0 Off, 1 Light (default), 2 Full.
 # Read by PlanetSystem._cloud_recipe() to scale a COPY of the body recipe's
 # cloud_amount before it reaches the deck (CloudLayer) or the fly-through fog.
@@ -33,6 +37,17 @@ const ARRIVAL_REWARD := 150    # coins granted the FIRST time you reach a new sy
 const NAV_COST := 40           # coins to buy a navigator (map Navigate / Auto-pilot)
 const NAV_UNLOCK_BASE := 80    # base coin cost to unlock navigation to a LOCKED star…
 const NAV_UNLOCK_PER_LY := 9   # …plus this per light-year of real distance (far = pricey)
+# Ship tier t (1-based) unlocks once this many distinct systems beyond Sol are reached.
+const SHIP_UNLOCK := [0, 1, 2, 4, 6, 9, 12]
+
+func systems_reached() -> int:
+	return visited.size() - (1 if visited.has(SystemDB.SOL) else 0)
+
+func ship_unlock_need(tier: int) -> int:
+	return int(SHIP_UNLOCK[clampi(tier, 1, SHIP_UNLOCK.size()) - 1])
+
+func ship_unlocked(tier: int) -> bool:
+	return tier <= 1 or (tier <= SHIP_UNLOCK.size() and systems_reached() >= ship_unlock_need(tier))
 
 func add_coins(n: int) -> void:
 	coins += n
@@ -66,6 +81,8 @@ func load_from(cfg: ConfigFile) -> void:
 	onboarding_done = _key_set(cfg.get_value("player", "onboarding_done", []))
 	customization = cfg.get_value("player", "customization", {})
 	cloud_quality = int(cfg.get_value("player", "cloud_quality", 1))
+	weapon_set = String(cfg.get_value("player", "weapon_set", "mk1"))
+	pad_set = String(cfg.get_value("player", "pad_set", "mk1"))
 
 func save_into(cfg: ConfigFile) -> void:
 	cfg.set_value("player", "coins", coins)
@@ -77,6 +94,8 @@ func save_into(cfg: ConfigFile) -> void:
 	cfg.set_value("player", "onboarding_done", onboarding_done.keys())
 	cfg.set_value("player", "customization", customization)
 	cfg.set_value("player", "cloud_quality", cloud_quality)
+	cfg.set_value("player", "weapon_set", weapon_set)
+	cfg.set_value("player", "pad_set", pad_set)
 
 # Clear to a brand-new-game state. REQUIRED on the no-save / Reset Progress path because this
 # autoload SURVIVES reload_current_scene() — its memory would otherwise keep stale values.
@@ -90,6 +109,8 @@ func reset() -> void:
 	onboarding_done = {}
 	customization = {}
 	cloud_quality = 1
+	weapon_set = "mk1"
+	pad_set = "mk1"
 
 static func _key_set(keys) -> Dictionary:
 	var d := {}

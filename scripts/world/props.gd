@@ -267,7 +267,7 @@ func update(flyer: Ship, delta: float) -> void:
 
 
 # Scale model so its longest axis == target_len and recenter it on the holder.
-func _fit(holder: Node3D, model: Node3D, target_len: float) -> void:
+static func _fit(holder: Node3D, model: Node3D, target_len: float) -> void:
 	var box := _combined_aabb(holder)
 	var size := box.size
 	var longest := maxf(size.x, maxf(size.y, size.z))
@@ -279,7 +279,7 @@ func _fit(holder: Node3D, model: Node3D, target_len: float) -> void:
 	model.position -= center * factor
 
 
-func _combined_aabb(root: Node3D) -> AABB:
+static func _combined_aabb(root: Node3D) -> AABB:
 	var out := AABB()
 	var first := true
 	var inv := root.global_transform.affine_inverse()
@@ -295,7 +295,7 @@ func _combined_aabb(root: Node3D) -> AABB:
 	return out
 
 
-func _gather(node: Node) -> Array[MeshInstance3D]:
+static func _gather(node: Node) -> Array[MeshInstance3D]:
 	var out: Array[MeshInstance3D] = []
 	if node is MeshInstance3D:
 		out.append(node as MeshInstance3D)

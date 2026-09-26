@@ -6,17 +6,15 @@ Dev-only scripts: none of this ships in a build. See CLAUDE.md for exact invocat
 
 Most `extends SceneTree`, run via `godot --headless --script tools/test_X.gd`. Some are
 scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
-`godot --headless tools/test_X.tscn`): `test_anchor_frame`, `test_base_basic_pbr`,
-`test_chase_rig`, `test_ship_roster`, `test_surface_integration`, `test_surface_streaming`, `test_wedge_fighter`.
+`godot --headless tools/test_X.tscn`): `test_anchor_frame`,
+`test_chase_rig`, `test_ship_roster`, `test_ship_modules`, `test_surface_integration`, `test_surface_streaming`.
 
 | File | Covers |
 |---|---|
 | `test_anchor.gd` | Anchored ship frame (docs/adr/0002): the absolute frame still swallows a Venus-scale substep, the anchored one does not; reanchor continuity, save round-trip |
 | `test_anchor_frame.gd` (+ `.tscn`) | The Ephemeris-backed half of the anchor: `rel_km` antisymmetry, a real Newton run at Venus/Saturn, anchor hand-off, anchored-vs-legacy parity |
-| `test_base_basic_pbr.gd` (+ `.tscn`) | Base PBR material/shading contract for a ship hull |
-| `test_booster_brightness.gd` | `ShipMesh.booster_brightness` + nozzle shaping |
+| `test_booster_brightness.gd` | `ShipMesh.booster_brightness` scales every modular hull booster layer + nozzle shaping sockets |
 | `test_chase_rig.gd` (+ `.tscn`) | Third-person chase camera rig + ship-only fill light |
-| `test_class_ii_cruiser.gd` | Class II cruiser default asset + dedicated surfaces |
 | `test_cloud_layer.gd` | `CloudLayer` shell radius, visible-gate mirrors the ring's `should_show`, airless bodies get no layer |
 | `test_earth_terrain.gd` | Earth flyover: height function, nested rings, band ceiling, speed cap, contact kill |
 | `test_flight_mode.gd` | `FlightMode` zone/exclusion math |
@@ -24,10 +22,10 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_look_at_pole.gd` | Look-at math doesn't flip the nose when overhead is world-up |
 | `test_newton.gd` | Sol Newton gravity numbers + a parked GEO fall |
 | `test_planet_generator.gd` | The cook: named Sol recipes + invented look for strangers |
-| `test_ship_customization.gd` | Saved ship coloring survives while propulsion materials stay intact |
-| `test_ship_roster.gd` (+ `.tscn`) | Every playable hull builds cleanly |
+| `test_ship_customization.gd` | `ModularHull.style`: Hull_Paint takes tint/finish, Nozzle_Emit keeps its propulsion pass; module-set persistence |
+| `test_ship_roster.gd` (+ `.tscn`) | Seven modular hulls: socket counts drive cones/pads/guns/jets/RCS, fleet scale, stat escalation, tier unlock gate + hangar lock rows |
+| `test_ship_modules.gd` (+ `.tscn`) | Weapon/pad set swaps rebuild modules in place, MUZZLE/FOOT move, gear state carries, sets persist |
 | `test_skin_kill.gd` | Contact margin + post-death park |
-| `test_snarkrans_starship.gd` | Snarkrans hull: 4 authored booster roles |
 | `test_sol_cook.gd` | Sol cook live: Moon a real ball from GEO, worlds have maps |
 | `test_sol_facing.gd` | Roll/yaw nose-facing regressions |
 | `test_sol_occlude.gd` | Celestial-body opacity (no see-through) |
@@ -42,7 +40,6 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_surface_recipes.gd` | Recipe routing, crater/caldera geometry, height bounds, contact, repeatability |
 | `test_terrain_light.gd` | Ground lighting/haze matches the globe's rule |
 | `test_turn_carry.gd` | A turn carries Sol velocity with the hull |
-| `test_wedge_fighter.gd` (+ `.tscn`) | Wedge-fighter hull build |
 
 ## render_* — visual review captures (offscreen screenshots, human/agent judged)
 
@@ -52,8 +49,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `render_plasma.gd` (+ `.tscn`) | 90 chase-camera firing frames; `PLASMA_CRUISE_KMS`, `PLASMA_ROTATING=1` and `PLASMA_SHOTS` select fast drift, turning with planetary rotation and output directory |
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
 | `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |
-| `render_thruster.gd` (+ `.tscn`) | Contact sheet of every ship's boosters, matching the live WorldEnvironment |
-| `render_wedge_fighter.gd` (+ `.tscn`) | Wedge-fighter hull render |
+| `render_thruster.gd` (+ `.tscn`) | Modular hulls with plumes, gear and weapons deployed, matching the live WorldEnvironment (`SHIP=<slug>`, `WEAPON`/`PAD`=mk1\|mk2, `FRAME_SCALE`) |
 | `render_touch_hud.gd` (+ `.tscn`) | Boots the real `Main` scene offscreen at a given resolution (`--resolution WxH ... -- --touch`) so the touch-controls overlay + HUD can be looked at, for diagnosing "buttons/joystick missing" reports without a physical device |
 
 ## gen_*/build_*/draw_*/fetch_*/ingest_*/export_*/parse_* — asset & data generators
@@ -87,11 +83,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 |---|---|---|
 | `_bigtri.gd` | probe | Finds the source of a stray giant triangle artifact |
 | `inspect_galaxy.gd` | probe | Inspects `assets/galaxy.glb` structure |
-| `probe_booster_shape.gd` | probe | Booster-socket falloff shape investigation |
 | `probe_earth_dem.gd` | probe | One-shot measurement of `earth_height.jpg`'s encoding (feeds constants into `test_earth_terrain.gd`) |
-| `probe_jazoone_sockets.gd` | probe | Derives JazOone's booster sockets in model space |
 | `probe_live_scene.gd` (+ `.tscn`) | probe | Live-scene screenshot capture harness |
-| `probe_propulsion_area.gd` | probe | Which surfaces get the additive propulsion shader |
 | `probe_ring_cost.gd` | probe | Ring-rebuild timing/sampler-call cost measurement |
-| `probe_vanguard.gd` | probe | Reports actual per-surface material state of the Vanguard hull build |
 | `repro_overhead_w.gd` | repro | Headless repro: pitch Earth overhead, F10, then W — writes a flight footprint JSONL |

@@ -303,7 +303,7 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 		energy -= bolt_cost
 		ship.systems.discharge(_next_mount)
 		plasma.emit(ship.muzzle_off(_next_mount), ship.velocity, ship.barrel_direction(_next_mount), int(ship.bolt_damage), sp, ship.systems.muzzle_node(_next_mount))
-		_next_mount = (_next_mount + 1) % ship.systems.mounts.size()
+		_next_mount = (_next_mount + 1) % maxi(1, ship.systems.mounts.size())
 		if _any_alien_alive():
 			_combat_t = COMBAT_HOLD            # attacking while enemies are present = in combat
 		if audio != null:

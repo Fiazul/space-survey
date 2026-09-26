@@ -84,7 +84,7 @@ const RECIPES := {
 		"evidence": "Solar System Scope / NASA Blue Marble",
 		"cloud_amount": 1.0,
 		"city_amount": 0.0,
-		"surface": {"settlement_preset": "earth_graveyard"},
+		"surface": {"settlement_preset": "earth_graveyard", "facility_preset": "earth_spaceports"},
 		"water_shine": 0.85,
 		"ice_amount": 0.1,
 		"air_amount": 1.0,

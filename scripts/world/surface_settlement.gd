@@ -82,6 +82,8 @@ static func cell(sampler, region: Dictionary, x: int, z: int, radius: float) -> 
 		return {} # wider avenues and empty plots
 	var rb: Basis = region.basis
 	var dir: Vector3 = (region.dir * radius + rb.x * p.x + rb.z * p.y).normalized()
+	if SurfaceFacility.occupied(sampler.facilities,dir,radius):
+		return {}
 	if sampler.is_water(dir) or sampler.ice01(dir) > 0.5:
 		return {}
 	var gr: float = sampler.ground_radius_km(dir, radius)

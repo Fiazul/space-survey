@@ -63,11 +63,17 @@ local, recipe-driven ground patch: mapped or procedural height, water where the 
 calls for it, and kit props (rock/ice/tree) seated on the surface. The patch works in the
 body's own rotating frame, so the Moon isn't anchored to Earth's centre. Above that
 ceiling you fly the cooked mesh (bird's-eye globe); farther out, bodies are sky points
-until you arrive. Contact with the ground starts hull-loss and a respawn at the nearest
-safe park; there is no landing.
+until you arrive. Terrain contact is solid and non-lethal. A landing lock requires a slow, level
+touchdown with deployed gear on a designated facility pad.
 
 See [`PLANET_GENERATOR.md`](PLANET_GENERATOR.md) for the cook, LOD contract, and how
 height/contact/props all read from the same sampler.
+
+After five seconds without flight input, the ship assistant slowly levels planetary flight.
+Any control input stops the adjustment; terrain avoidance remains automatic. Gear-supported landings can lock
+onto the Kennedy and Wenchang pads. Ctrl+P also provides ISS and Tiangong rendezvous using
+dated 2026 orbital data; their physical docking berths remain future work. See the
+[assistant and facility notes](docs/plans/2026-09-24-ship-assistant.md) for sources and limits.
 
 ## Controls
 

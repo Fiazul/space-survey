@@ -42,6 +42,8 @@ func _ready() -> void:
 	# lat, lon, altitude km, pitch down degrees, label
 	# lat, lon, altitude km, LOOK-AHEAD km, label
 	_shots = [
+		[28.608402, -80.604201, .3, 0.0, "kennedy_overview", "Earth", {"facility_view": Vector3(.48,.34,.54)}],
+		[28.608402, -80.604201, .1, 0.0, "kennedy_landing", "Earth", {"facility_view": Vector3(.075,.045,.105)}],
 		[51.51, -0.12, 0.4, 1.4, "london_ruins", "Earth"],
 		[23.81, 90.41, 0.4, 1.4, "dhaka_ruins", "Earth"],
 		[10.0, 20.0, 0.08, 0.25, "moon_rocks", "Moon"],
@@ -321,5 +323,24 @@ func _setup(shot: Array) -> void:
 		_cam.rotate_object_local(Vector3.RIGHT, deg_to_rad(pitch_deg))
 	if yaw_deg != 0.0:
 		_cam.rotate_object_local(Vector3.UP, deg_to_rad(yaw_deg))
+	if opts.has("facility_view") and not s.facilities.is_empty():
+		var xf: Transform3D = s.facilities[0].transform
+		_cam.near = .0005
+		_cam.far = 100.0
+		_cam.look_at_from_position(xf*opts.facility_view-ship, xf*Vector3(0,.025,0)-ship, xf.basis.y)
+		var parked := Ship.new()
+		add_child(parked)
+		parked._set_capture(false)
+		parked.transform.basis = xf.basis
+		parked.reset_mesh_pose()
+		parked.systems.gear_target = true
+		parked.systems.step(2)
+		var contact := parked.resolve_surface_motion(s,xf*Vector3(0,.25,0),xf*Vector3(0,-.1,0),Vector3.ZERO,radius,Basis.IDENTITY)
+		parked.position = contact.position-ship
+		_cam.current = true
+		for light in get_children():
+			if light is DirectionalLight3D:
+				light.basis = Basis.looking_at(-to_sun,xf.basis.z)
+				light.light_energy = 1.5
 	print("render_terrain:   aiming %.0f km ahead, target %.1f km away, ground below %.0f m"
 		% [look_km, target.length(), s.height_m(dir)])

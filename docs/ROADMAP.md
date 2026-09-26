@@ -80,3 +80,18 @@ The old “no landing, ever” constraint is superseded. Choose the probe deploy
 when implementing the relay loop; free, unlimited probes remain required.
 
 Gas skimming (§2) maps onto atmospheric flight and is a candidate gathering loop.
+
+## September 24 direction: facilities and caretaker jobs
+
+Ships retain the existing seamless flight and banking. Small underside support jets
+now counter gravity and drift only with gear deployed, upright, below 500 m AGL and
+60 m/s. They provide departure lift without replacing normal controls. Safe landing
+locks are restricted to designated pads while terrain stays solid. The first physical
+Earth port is Kennedy LC-39A, with a procedural apron, collision, persisted pad lock
+and departure support for all five hulls. The remaining Earth sites, orbital berths,
+station services and NPC jobs are still pending. Earth needs both surface spaceports at verified
+real launch sites and orbital station references. Planets and safe stellar locations
+get interactive caretaker bots and jobs. This replaces the original prohibition on all
+pre-existing infrastructure; Earth remains an abandoned, scrap-only destination.
+
+Implementation sequence and current gaps: [spaceports and caretakers](plans/2026-09-24-spaceports-and-caretakers.md).

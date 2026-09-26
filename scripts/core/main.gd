@@ -25,6 +25,7 @@ var _sun_light: DirectionalLight3D
 var _fill_light: DirectionalLight3D
 var planets: PlanetSystem
 var props: Props
+var orbital_stations: OrbitalStations
 var hud: HUD
 @onready var eph := Ephemeris   # autoload (alias so main.eph accessors still work)
 var wormhole: Wormhole
@@ -107,6 +108,7 @@ var _saved_anchor := ""           # anchored save (docs/adr/0002); "" = a pre-an
 var _saved_off := Vector3.ZERO
 var _saved_surface_off: Variant = null
 var _saved_surface_basis: Variant = null
+var _saved_landing_site := ""
 var _saved_ship_index := -1
 var _autosave_t := 5.0            # periodic position autosave (also guards against the crash)
 var _scan := 0.0             # scan progress 0..1 of the nearest body
@@ -239,6 +241,8 @@ func _ready() -> void:
 	# Hand-placed GLB landmarks (station, planet, astronaut) near Earth.
 	props = Props.new()
 	add_child(props)
+	orbital_stations = OrbitalStations.new()
+	add_child(orbital_stations)
 
 	# Wormhole portal + tunnel transit (interstellar travel between systems).
 	wormhole = Wormhole.new()
@@ -269,6 +273,7 @@ func _ready() -> void:
 	hud.ship_selected.connect(_on_hangar_pick)   # click a hangar row to swap ship
 	hud.ship_color_selected.connect(_on_ship_color_pick)
 	hud.ship_finish_selected.connect(_on_ship_finish_pick)
+	hud.ship_module_selected.connect(_on_ship_module_pick)
 	hud.open_teleport_map.connect(_on_open_teleport_map)    # dock → open the teleport-network map
 
 	# Discovery progress (persisted) + real planet facts + the Details panel.
@@ -398,10 +403,12 @@ func _restore_location() -> void:
 			ship.face_toward(-ship.anchor_off)
 	if _saved_ship_index >= 0 and _saved_ship_index < ship.ship_count() \
 			and _saved_ship_index != ship.current_index():
-		ship.swap_ship(_saved_ship_index)
+		ship.swap_ship(_saved_ship_index, true)
 	combat.player_hp = ship.max_hp
 	ship.transiting = false
 	_tp_active = false
+	if not _saved_landing_site.is_empty() and _saved_surface_off is Vector3:
+		ship.restore_facility_attachment(_saved_landing_site,planets.terrain_sampler_for(ship.anchor_name),eph.surface_basis(ship.anchor_name))
 	_save_profile()       # capture the exact restored position
 
 
@@ -423,7 +430,7 @@ func _reanchor_to_nearest() -> void:
 func _anchor_ship(who: String) -> void:
 	if who == "" or who == ship.anchor_name or not Ephemeris.is_anchorable(who):
 		return   # craft (Voyager 1/2) drift — anchoring there would clamp the ship at a
-		         # moving point while the render drifts away (docs/adr/0002 finding 3)
+				 # moving point while the render drifts away (docs/adr/0002 finding 3)
 	combat.shift_frame(ship.set_anchor(who))
 
 
@@ -497,6 +504,7 @@ func _process(delta: float) -> void:
 		_update_core_hazard(galaxy.remaining(), delta)
 	_pt = _perf_t0()
 	props.update(ship, delta)
+	orbital_stations.update_for(ship,ship.simulation_delta)
 	_perf_mark("props_update", _pt)
 	# Harbour speed-cap: ease down near stations/probes AND near wormholes (so you can line
 	# up and dive in instead of rocketing past) — whichever zone is slowing you most wins.
@@ -808,6 +816,7 @@ func _load_profile() -> void:
 		_saved_off = cfg.get_value("player", "off", Vector3.ZERO)
 		_saved_surface_off = cfg.get_value("player", "surface_off", null)
 		_saved_surface_basis = cfg.get_value("player", "surface_basis", null)
+		_saved_landing_site = str(cfg.get_value("player", "landing_site", ""))
 		_saved_ship_index = int(cfg.get_value("player", "ship_index", -1))
 	else:
 		eph.rotation_clock.load_from(ConfigFile.new(), Time.get_unix_time_from_system())
@@ -833,9 +842,12 @@ func _save_profile() -> void:
 			cfg.set_value("player", "anchor", ship.anchor_name)
 			cfg.set_value("player", "off", ship.anchor_off)
 			cfg.set_value("player", "ship_index", ship.current_index())
+			cfg.set_value("player", "landing_site",ship.landing_site_id if not ship.landing_site.is_empty() else "")
 			# Surface saves follow the same longitude while the world turns offline.
-			cfg.erase_section_key("player", "surface_off")
-			cfg.erase_section_key("player", "surface_basis")
+			if cfg.has_section_key("player", "surface_off"):
+				cfg.erase_section_key("player", "surface_off")
+			if cfg.has_section_key("player", "surface_basis"):
+				cfg.erase_section_key("player", "surface_basis")
 			if ship.newton and (ship.landed or ship.anchor_distance_km()-ship.anchor_radius_km() < eph.atmo_top_km(ship.anchor_name)):
 				var inv := eph.surface_basis(ship.anchor_name).inverse()
 				cfg.set_value("player", "surface_off", inv*ship.anchor_off)
@@ -1858,8 +1870,7 @@ func _input(event: InputEvent) -> void:
 		hud.toast = "AUTO-CRUISE  OFF"
 		hud.toast_t = 2.0
 	elif docked and key >= KEY_1 and key < KEY_1 + ship.ship_count():
-		ship.swap_ship(key - KEY_1)
-		combat.player_hp = ship.max_hp   # new hull -> its full defence
+		_swap_ship_or_explain(key - KEY_1)
 
 
 func _set_docked(d: bool) -> void:
@@ -1965,8 +1976,25 @@ func _ship_names() -> PackedStringArray:
 # Clicking a hangar row swaps to that ship — only meaningful while docked.
 func _on_hangar_pick(index: int) -> void:
 	if docked and index >= 0 and index < ship.ship_count():
-		ship.swap_ship(index)
+		_swap_ship_or_explain(index)
+
+
+func _swap_ship_or_explain(index: int) -> void:
+	if ship.swap_ship(index):
 		combat.player_hp = ship.max_hp   # new hull -> its full defence
+	elif ship.ship_lock_text(index) != "":
+		hud.toast = ship.ship_lock_text(index)
+		hud.toast_t = 2.5
+
+
+func _on_ship_module_pick(kind: String, key: String) -> void:
+	if not docked:
+		return
+	if kind == "weapon":
+		ship.set_weapon_set(key)
+	elif kind == "pad":
+		ship.set_pad_set(key)
+	_save_profile()
 
 
 func _on_ship_color_pick(part: String, key: String) -> void:

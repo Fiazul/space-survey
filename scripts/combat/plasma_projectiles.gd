@@ -2,15 +2,18 @@ class_name PlasmaProjectiles
 extends Node3D
 ## Kilometres throughout. Each pulse is one dense additive ray with no outer shell.
 ## Its swept collision remains narrow and independent of the visual length.
-const RADIUS := .00015
-const LENGTH := .080
+const RADIUS := .009
+const LENGTH := .180
 const LAUNCH_LENGTH := LENGTH
-const MAX_STREAK_LENGTH := .64
-const EXPOSURE_TIME := 1.0/60.0
-const TRACE_TIME := .045
+# Visual pulse size is independent of muzzle speed and the 3 km damage range.
+# Long exposures turned fast shots into kilometre-long rods during turns.
+const MAX_STREAK_LENGTH := .240
+const EXPOSURE_TIME := 1.0/120.0
+# Retain a collision-clipped pulse for one 60 Hz frame, not a frozen trail fan.
+const TRACE_TIME := 1.0/60.0
 const CORE_DIAMETER := .0008
 const BASE_SPEED := 1.2 # km/s at 1x
-const DEFAULT_SPEED_MULTIPLIER := 32.0
+const DEFAULT_SPEED_MULTIPLIER := 132.0
 const DEFAULT_DAMAGE_MULTIPLIER := 32.0
 var damage_multiplier := DEFAULT_DAMAGE_MULTIPLIER
 var speed_multiplier := DEFAULT_SPEED_MULTIPLIER

@@ -144,6 +144,7 @@ var _prop_nodes: Array[MultiMeshInstance3D] = []
 # is the only reason mesh and lethality cannot drift apart.
 var _district_index := -2
 var _structures: SurfaceStructures
+var _facilities: SurfaceFacilities
 var _sampler: TerrainSampler
 var _tris := 0
 # ONE material per surface kind, built on bind and reused by every ring. The old
@@ -520,6 +521,10 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		_structures = SurfaceStructures.new()
 		add_child(_structures)
 	_structures.update_for(sampler, hit, radius, alt)
+	if _facilities == null:
+		_facilities = SurfaceFacilities.new()
+		add_child(_facilities)
+	_facilities.update_for(sampler, ship_pos)
 	_bind_district(hit, radius)
 	# Pick up a finished batch (if any) before deciding whether a new one is
 	# needed, so a rebuild that completed between frames is never held an
@@ -1016,7 +1021,7 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 			if ring <= 1:
 				var seedn := _seat_hash(p00.p, 1.7)
 				if _prop_here(wet, float(p00.h), seedn, kit):
-					if SurfaceSettlement.occupied(_sampler.settlements, (p00.p as Vector3).normalized(), radius):
+					if SurfaceSettlement.occupied(_sampler.settlements, (p00.p as Vector3).normalized(), radius) or SurfaceFacility.occupied(_sampler.facilities, (p00.p as Vector3).normalized(), radius):
 						continue
 					if kit == "tree" and _sampler.ice01((p00.p as Vector3).normalized()) > 0.5:
 						continue  # permanent ice is not a forest or boulder field

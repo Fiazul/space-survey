@@ -11,6 +11,7 @@ class FlatLand extends TerrainSampler:
 		return 0.0
 
 func _ready() -> void:
+	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
 	var ship := Ship.new()
 	add_child(ship)
 	ship.newton = true
@@ -134,7 +135,7 @@ func _ready() -> void:
 	pulses.emit(Vector3.ZERO,inherited,Vector3.FORWARD,1,Vector3.ZERO)
 	pulses.advance(1.0/60.0,inherited/60.0,[],null,Vector3.ZERO,Basis.IDENTITY,0,inherited)
 	check("fast cruise does not skew the visible launch", pulses.shots[0].visual_direction.distance_to(Vector3.FORWARD) < .00001)
-	check("fast shot exposure remains substantial", pulses.shots[0].visual_length > .5)
+	check("fast shot stays a compact visible pulse", pulses.shots[0].visual_length >= PlasmaProjectiles.LENGTH and pulses.shots[0].visual_length <= .240)
 	check("visual changes preserve actual projectile velocity", pulses.shots[0].vel.is_equal_approx(inherited+Vector3.FORWARD*pulses.muzzle_speed()))
 	pulses.advance(.5,inherited*.5,[],null,Vector3.ZERO,Basis.IDENTITY,0,inherited)
 	var trace_position: Vector3 = pulses.traces[0].pos
@@ -150,8 +151,27 @@ func _ready() -> void:
 	pulses.speed_multiplier = 256
 	pulses.emit(Vector3.ZERO,Vector3.ZERO,Vector3.FORWARD,1,Vector3.ZERO)
 	pulses.advance(1.0/30.0,Vector3.ZERO,[])
-	check("sub-frame flight at high multiplier still leaves visible exposure", pulses.shots.is_empty() and pulses.traces.size() == 1 and pulses.traces[0].visual_length > .5)
+	check("sub-frame flight at high multiplier still leaves a compact exposure", pulses.shots.is_empty() and pulses.traces.size() == 1 and pulses.traces[0].visual_length >= PlasmaProjectiles.LENGTH and pulses.traces[0].visual_length <= .240)
 	check("high-speed exposure stops at maximum range", absf(pulses.traces[0].pos.length()-PlasmaProjectiles.RANGE) < .00001)
+	pulses.advance(1.0/60.0, Vector3.ZERO, [])
+	check("expired pulse cannot linger as a frozen rod", pulses.traces.is_empty())
+	# Screenshot regression: sustained fire while turning must not leave a fan
+	# of long, stationary beams. Exercise the user's tuning at several frame rates.
+	for multiplier in [32.0,132.0,256.0]:
+		for fps in [30.0,60.0,120.0]:
+			pulses.clear()
+			pulses.speed_multiplier = multiplier
+			var motion := Vector3(1.33,0,0)
+			for frame in 60:
+				var eye: Vector3 = motion*float(frame)/float(fps)
+				pulses.advance(1.0/fps,eye,[],null,Vector3.ZERO,Basis.IDENTITY,0,motion)
+				if frame % int(fps/10.0) == 0:
+					var aim := Vector3.FORWARD.rotated(Vector3.UP,float(frame)/fps)
+					pulses.emit(eye,motion,aim,1,eye)
+					check("visual fix preserves speed and inheritance", (pulses.shots.back().vel-motion).length() >= pulses.muzzle_speed()-.0001)
+				check("old firing headings do not accumulate frozen trails", pulses.traces.size() <= 1)
+				for pulse in pulses.shots + pulses.traces:
+					check("turning never stretches a pulse into a long rod", pulse.visual_length <= .240)
 	pulses.clear()
 	muzzle.queue_free()
 	ship.queue_free()

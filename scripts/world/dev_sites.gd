@@ -29,6 +29,16 @@ const PARK_BODIES := [
 # there; a few (Dead Sea, Mare Imbrium, Tharsis line, Valles Marineris, Venus/
 # Titan/Saturn parking altitudes) are new, taken from this brief.
 const LANDMARKS := [
+	{"name":"ISS / Earth orbit","body":"Earth","mode":"station","station_id":"iss",
+		"note":"rendezvous at dated NASA orbital state; matching orbital velocity"},
+	{"name":"Tiangong / China Earth orbit","body":"Earth","mode":"station","station_id":"tiangong",
+		"note":"rendezvous at dated CMSA orbital state; matching orbital velocity"},
+	{"name":"Wenchang / China landing pad","body":"Earth","mode":"surface",
+		"lat_deg":19.6144917,"lon_deg":110.9511333,"alt_km":.18,"heading_deg":0.0,
+		"note":"published spaceport coordinate; fictional ship apron. B gear, Ctrl descend, Space lift"},
+	{"name": "Kennedy / NASA SpaceX LC-39A landing pad", "body": "Earth", "mode": "surface",
+		"lat_deg": 28.608402, "lon_deg": -80.604201, "alt_km": .18, "heading_deg": 0.0,
+		"note": "real launch-site location; fictional ship apron. B gear, Ctrl descend, Space lift"},
 	# --- Earth ---
 	{"name": "London ruins 400 m", "body": "Earth", "mode": "surface",
 		"lat_deg": 51.51, "lon_deg": -0.12, "alt_km": 0.4, "heading_deg": 0.0,

@@ -1,125 +1,68 @@
 extends SceneTree
-# Headless contract for saved ship coloring. Every non-booster surface must accept
-# the chosen tint while the exact authored propulsion ShaderMaterials remain intact.
+# Headless contract for saved ship colouring on the modular hulls. Hull_Paint takes the
+# chosen tint and finish; Hull_Dark / Hull_Steel stay authored; Nozzle_Emit keeps its
+# white, gain-scaled propulsion pass with one shaping socket per booster.
 
-const MeshStyler := preload("res://scripts/flight/ship_mesh.gd")
 const TEST_TINT := Color(0.10, 0.66, 0.66)
-const SHIPS := [
-	{"key": "class", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "surfaces": 5, "boosters": 1, "base": MeshStyler.CLASS_II_BOOSTER_GAIN},
-	{"key": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj", "surfaces": 77, "boosters": 4, "base": MeshStyler.SNARKRANS_BOOSTER_GAIN},
-	{"key": "dingo57", "path": "res://assets/dingo57_starship/3d-model.obj", "surfaces": 9, "boosters": 8, "base": MeshStyler.DINGO57_BOOSTER_GAIN},
-]
+const HULLS := {"wren": 1, "kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
 
 
 func _initialize() -> void:
 	var failed := 0
-	for spec in SHIPS:
-		var mesh := load(spec.path) as Mesh
-		failed += _check("%s_imported" % spec.key, mesh != null)
-		if mesh == null:
+	for slug in HULLS:
+		var scene := load("res://assets/ships/%s/%s.glb" % [slug, slug]) as PackedScene
+		failed += _check("%s_imported" % slug, scene != null)
+		if scene == null:
 			continue
-		var model := MeshInstance3D.new()
-		model.mesh = mesh
-		var propulsion: Array[ShaderMaterial]
-		match String(spec.key):
-			"class":
-				propulsion = MeshStyler.style_class_ii_cruiser(model)
-			"snarkrans":
-				propulsion = MeshStyler.style_snarkrans_starship(model)
-			"dingo57":
-				propulsion = MeshStyler.style_dingo57_starship(model)
-
-		var colored := MeshStyler.color_authored_ship(model, TEST_TINT, "metallic")
-		failed += _check("%s_every_non_booster_colored" % spec.key,
-			colored == int(spec.surfaces) - int(spec.boosters))
-		failed += _check("%s_booster_count" % spec.key,
-			propulsion.size() == int(spec.boosters))
-		var propulsion_ids := {}
-		for drive in propulsion:
-			propulsion_ids[drive.get_instance_id()] = true
-
-		var seen_boosters := 0
-		var seen_leds := 0
-		for si in model.mesh.get_surface_count():
-			var material := model.get_surface_override_material(si)
-			if material is BaseMaterial3D and material.next_pass is ShaderMaterial:
-				failed += _check("engine_housing_painted", _rgb_equal(material.albedo_color, TEST_TINT))
-				material = material.next_pass
-			if material != null and propulsion_ids.has(material.get_instance_id()):
-				seen_boosters += 1
-				var drive := material as ShaderMaterial
-				# This test's job is that the hull PAINT pass never repaints a booster
-				# surface, so it checks plasma_color is still white and the HDR gain is
-				# still set. Assert the ship's OWN base gain rather than a range: a
-				# range ceiling scaled by the knob (the previous version) would pass a
-				# paint bug that wrote any value under it, and a fixed 4.0 ceiling broke
-				# the moment the gains were re-derived from effective area (dingo57 is
-				# 4.68 now). Dividing the material value back out by the knob is exact -
-				# booster_gain is a single multiply.
-				var gain := float(drive.get_shader_parameter("brightness")) if drive != null else -1.0
-				var base := gain / maxf(MeshStyler.booster_brightness, 0.0001)
-				failed += _check("%s_booster_%d_still_white" % [spec.key, si],
-					drive != null \
-					and drive.get_shader_parameter("plasma_color") == Color.WHITE \
-					and gain > 0.0 and is_equal_approx(base, float(spec.base)))
-			elif material is ShaderMaterial:
-				seen_leds += 1
-				failed += _check("%s_led_%d_tinted_not_replaced" % [spec.key, si],
-					(material as ShaderMaterial).get_shader_parameter("color_tint") == TEST_TINT)
-			else:
-				failed += _check("%s_hull_%d_colored" % [spec.key, si],
-					material is BaseMaterial3D \
-					and (material as BaseMaterial3D).resource_name == "customized_hull" \
-					and _rgb_equal((material as BaseMaterial3D).albedo_color, TEST_TINT))
-		failed += _check("%s_all_boosters_preserved" % spec.key,
-			seen_boosters == int(spec.boosters))
-		failed += _check("%s_led_count" % spec.key,
-			seen_leds == (1 if String(spec.key) == "class" else 0))
-
-		MeshStyler.color_authored_ship(model, TEST_TINT, "glassy")
-		for si in model.mesh.get_surface_count():
-			var material := model.get_surface_override_material(si)
-			if material is BaseMaterial3D and material.next_pass is ShaderMaterial:
-				failed += _check("engine_housing_stays_opaque", material.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
-				material = material.next_pass
-			if (material != null and propulsion_ids.has(material.get_instance_id())) \
-				or material is ShaderMaterial:
-				continue
-			var surface_name: String = model.mesh.surface_get_name(si).to_lower()
-			# Dingo57 is a thin-shell SketchUp hull. Glassy finish may polish it,
-			# but it must stay fully opaque and double-sided or panels vanish.
-			if String(spec.key) == "dingo57" or surface_name.begins_with("outer_chassis_group_") \
-				or surface_name == "hull_body" or surface_name.begins_with("hull_"):
-				failed += _check("%s_repaired_hull_%d_stays_opaque" % [spec.key, si],
-					material is BaseMaterial3D \
-					and (material as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED \
-					and is_equal_approx((material as BaseMaterial3D).albedo_color.a, 1.0) \
-					and (material as BaseMaterial3D).cull_mode == BaseMaterial3D.CULL_DISABLED)
-				continue
-			failed += _check("%s_hull_%d_glassy" % [spec.key, si],
-				material is BaseMaterial3D \
-				and (material as BaseMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_ALPHA \
-				and is_equal_approx((material as BaseMaterial3D).albedo_color.a, 0.38))
-
-		propulsion.clear()
-		for si in model.mesh.get_surface_count():
-			model.set_surface_override_material(si, null)
-		model.mesh = null
+		var model := scene.instantiate() as Node3D
+		var drives := ModularHull.style(model, TEST_TINT, "metallic")
+		failed += _check("%s_one_drive_per_nozzle_surface" % slug, drives.size() >= 1)
+		var painted := 0
+		for mi in ShipMesh.gather_mesh_instances(model):
+			for si in mi.mesh.get_surface_count():
+				var source := mi.mesh.surface_get_material(si)
+				var active := mi.get_surface_override_material(si)
+				match source.resource_name:
+					"Hull_Paint":
+						painted += 1
+						failed += _check("%s_paint_tinted" % slug, active is StandardMaterial3D \
+							and _rgb_equal((active as StandardMaterial3D).albedo_color, TEST_TINT) \
+							and not (active as StandardMaterial3D).clearcoat_enabled)
+					"Hull_Dark", "Hull_Steel":
+						failed += _check("%s_%s_authored" % [slug, source.resource_name], active == null)
+					"Nozzle_Emit":
+						var drive := active.next_pass as ShaderMaterial if active != null else null
+						var gain := float(drive.get_shader_parameter("brightness")) if drive != null else -1.0
+						failed += _check("%s_nozzle_still_white" % slug, drive != null and drives.has(drive) \
+							and drive.get_shader_parameter("plasma_color") == Color.WHITE \
+							and is_equal_approx(gain, ShipMesh.booster_gain(ModularHull.BOOSTER_GAIN)) \
+							and int(drive.get_shader_parameter("socket_count")) == int(HULLS[slug]))
+					"Accent_Emit":
+						failed += _check("%s_accent_emits" % slug, active is StandardMaterial3D \
+							and (active as StandardMaterial3D).emission_enabled)
+		failed += _check("%s_has_paint" % slug, painted > 0)
+		var sockets := ModularHull.booster_sockets(model)
+		failed += _check("%s_booster_radii_measured" % slug, sockets.size() == int(HULLS[slug]) \
+			and sockets.all(func(s): return float(s.radius) > 0.1 and float(s.radius) < 15.0))
+		ModularHull.style(model, TEST_TINT, "glassy")
+		for mi in ShipMesh.gather_mesh_instances(model):
+			for si in mi.mesh.get_surface_count():
+				var active := mi.get_surface_override_material(si)
+				if active != null and active.resource_name == "Hull_Paint":
+					failed += _check("%s_glassy_lacquer_opaque" % slug,
+						(active as StandardMaterial3D).clearcoat_enabled \
+						and (active as StandardMaterial3D).transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
 		model.free()
 
 	var ship_source := FileAccess.get_file_as_string("res://scripts/flight/ship.gd")
 	var main_source := FileAccess.get_file_as_string("res://scripts/core/main.gd")
 	var hud_source := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	var state_source := FileAccess.get_file_as_string("res://scripts/core/game_state.gd")
-	# Every hull in the roster takes a hangar colour. The three texture/procedural ships
-	# paint inside their own styler (see Ship._build_ship_model), so they do NOT offer
-	# metallic/glassy - that finish belongs to color_authored_ship, and only the two
-	# ships that go through it advertise it.
 	failed += _check("whole_roster_is_colorable",
-		ship_source.count("\"color_pick\": true") == 5 \
+		ship_source.count("\"color_pick\": true") == 7 \
 		and ship_source.count("\"color_pick\": false") == 0)
-	failed += _check("two_ships_offer_finish",
-		ship_source.count("\"finish_pick\": true") == 2 \
+	failed += _check("whole_roster_offers_finish",
+		ship_source.count("\"finish_pick\": true") == 7 \
 		and ship_source.contains("func current_has_finish_pick()") \
 		and hud_source.contains("var has_finish: bool"))
 	failed += _check("saved_customization_api", ship_source.contains("func customization_state()") \
@@ -127,7 +70,7 @@ func _initialize() -> void:
 	failed += _check("profile_persistence_restored", state_source.contains("var customization := {}") \
 		and main_source.contains("GameState.customization = ship.customization_state()"))
 	failed += _check("hangar_controls_restored", hud_source.contains("signal ship_color_selected") \
-		and hud_source.contains("signal ship_finish_selected"))
+		and hud_source.contains("signal ship_finish_selected") and hud_source.contains("signal ship_module_selected"))
 	failed += _check("procedural_boosters_still_absent", not ship_source.contains("_build_boosters") \
 		and not ship_source.contains("BOOSTER_LAYOUTS") and not hud_source.contains("ship_bell_toggled"))
 	failed += _check("customization_scripts_compile",
@@ -139,18 +82,22 @@ func _initialize() -> void:
 	var state_script := load("res://scripts/core/game_state.gd") as Script
 	var state = state_script.new()
 	var cfg := ConfigFile.new()
-	state.customization = {"Class II Galactic Cruiser": {"color": "teal", "finish": "glassy"}}
+	state.customization = {"color": {"Wren": "teal"}, "finish": {"Wren": "glassy"}}
+	state.weapon_set = "mk2"
+	state.pad_set = "mk2"
 	state.save_into(cfg)
-	state.customization = {}
+	state.reset()
+	failed += _check("reset_restores_mk1", state.weapon_set == "mk1" and state.pad_set == "mk1")
 	state.load_from(cfg)
 	failed += _check("customization_round_trip",
-		state.customization == {"Class II Galactic Cruiser": {"color": "teal", "finish": "glassy"}})
-	state.customization = {"Base Basic PBR": {"color": "#c0331f"}}
+		state.customization == {"color": {"Wren": "teal"}, "finish": {"Wren": "glassy"}} \
+		and state.weapon_set == "mk2" and state.pad_set == "mk2")
+	state.customization = {"color": {"Kestrel": "#c0331f"}}
 	state.save_into(cfg)
 	state.customization = {}
 	state.load_from(cfg)
 	failed += _check("manual_hex_round_trip",
-		state.customization == {"Base Basic PBR": {"color": "#c0331f"}})
+		state.customization == {"color": {"Kestrel": "#c0331f"}})
 	state.free()
 
 	failed += _check("hangar_offers_manual_picker",
@@ -158,28 +105,6 @@ func _initialize() -> void:
 		and hud_source.contains("_picker_popup_open"))
 	failed += _check("manual_hex_keys_parsed",
 		ship_source.contains("func color_from_key") and ship_source.contains("html_is_valid"))
-
-	var custom := Color(0.752941, 0.2, 0.117647)
-	var basic_scene := load("res://assets/base_basic_pbr.glb") as PackedScene
-	failed += _check("base_basic_glb", basic_scene != null)
-	if basic_scene != null:
-		var basic: Node3D = basic_scene.instantiate()
-		MeshStyler.style_base_basic_pbr(basic, custom)
-		var basic_tints := _glass_tints(basic)
-		failed += _check("base_basic_glass_takes_manual_tint",
-			basic_tints.size() >= 4 and _all_tints_match(basic_tints, custom))
-		basic.free()
-
-	var van_mesh := load("res://assets/vanguard/vanguard.obj") as Mesh
-	failed += _check("vanguard_obj", van_mesh != null)
-	if van_mesh != null:
-		var van := MeshInstance3D.new()
-		van.mesh = van_mesh
-		MeshStyler.style_vanguard(van, custom)
-		var van_tints := _glass_tints(van)
-		failed += _check("vanguard_glass_takes_manual_tint",
-			van_tints.size() >= 1 and _all_tints_match(van_tints, custom))
-		van.free()
 
 	if failed == 0:
 		print("ship_customization: OK")
@@ -189,46 +114,12 @@ func _initialize() -> void:
 		quit(1)
 
 
-func _glass_tints(root: Node) -> Array:
-	var out := []
-	for mi in MeshStyler.gather_mesh_instances(root):
-		var mats: Array = []
-		if mi.material_override is ShaderMaterial:
-			mats.append(mi.material_override)
-		if mi.mesh != null:
-			for si in mi.mesh.get_surface_count():
-				mats.append(mi.get_surface_override_material(si))
-		for material in mats:
-			if material is ShaderMaterial \
-					and (material as ShaderMaterial).shader == MeshStyler.BASE_BASIC_WING_GLASS_SHADER:
-				out.append((material as ShaderMaterial).get_shader_parameter("hull_tint"))
-	return out
-
-
-func _all_tints_match(tints: Array, expected: Color) -> bool:
-	if tints.is_empty():
-		return false
-	for tint in tints:
-		if tint == null:
-			return false
-		var c: Color
-		if tint is Color:
-			c = tint
-		elif tint is Vector3:
-			c = Color(tint.x, tint.y, tint.z)
-		else:
-			return false
-		if not _rgb_equal(c, expected):
-			return false
-	return true
-
-
 func _rgb_equal(a: Color, b: Color) -> bool:
 	return is_equal_approx(a.r, b.r) and is_equal_approx(a.g, b.g) and is_equal_approx(a.b, b.b)
 
 
-func _check(name: String, ok: bool) -> int:
-	if not ok:
-		print("ship_customization: FAIL %s" % name)
-		return 1
-	return 0
+func _check(label: String, condition: bool) -> int:
+	if condition:
+		return 0
+	push_error("ship_customization: " + label)
+	return 1

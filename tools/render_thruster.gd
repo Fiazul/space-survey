@@ -1,40 +1,23 @@
 extends Node3D
-# Offscreen contact sheet for the booster work. Builds each authored ship exactly the
-# way Ship._build_ship_model does (style -> fit -> plumes -> nozzle rig), mirrors
-# main.gd's WorldEnvironment so glow/tonemap match the real game, then photographs
-# every ship at three throttle settings.
+# Offscreen contact sheet for the modular hulls. Builds each hull the way
+# Ship._build_ship_model does (ModularHull style -> fit -> plumes -> ShipSystems modules),
+# mirrors main.gd's WorldEnvironment so glow/tonemap match the real game, then
+# photographs every ship at three throttle settings with gear and weapons deployed.
 #
 # Must run as a real SCENE under a GL-capable display, not with --script: a SceneTree
 # script never pumps render frames, so the capture comes back blank.
 #   SHOT_DIR=/tmp/shots xvfb-run -a <godot> --path <copy> res://tools/render_thruster.tscn
-# SHIP=class_ii filters the roster; VIEW=rear gives a centred Class II nozzle comparison.
+# SHIP=<slug>[,<slug>] filters the roster; WEAPON=mk2 / PAD=mk2 pick the module sets.
 
-const ShipMesh := preload("res://scripts/flight/ship_mesh.gd")
-const WedgeDesign := preload("res://scripts/flight/wedge_fighter.gd")
-
-# `accent` / `light_energy` are copied from Ship.SHIP_MODELS, and `swatch` from the
-# palette each ship defaults to, so add_hull_lights and color_authored_ship get what the
-# real ship gets. A generic grey hull under a generic cool key light is NOT the game.
+# `swatch` is each hull's default palette swatch (Ship.SHIP_MODELS default_color).
 const SHIPS := [
-	{ "label": "class_ii", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj",
-		"yaw": 180.0, "kind": "class_ii",
-		"accent": Color(0.72, 0.85, 1.00), "swatch": Color(0.42, 0.60, 0.95),
-		"light_energy": 0.42, "finish": "metal" },
-	{ "label": "snarkrans", "path": "res://assets/snarkrans_starship/spaceship.obj",
-		"yaw": 180.0, "kind": "snarkrans",
-		"accent": Color(0.85, 0.90, 1.00), "swatch": Color(0.30, 0.31, 0.34),
-		"light_energy": 0.38, "finish": "metal" },
-	{ "label": "base_basic", "path": "res://assets/base_basic_pbr.glb",
-		"yaw": 180.0, "kind": "base_basic",
-		"accent": Color(0.92, 0.95, 1.00), "swatch": Color(0.42, 0.60, 0.95),
-		"light_energy": 0.34, "finish": "metal" },
-	{ "label": "vanguard", "path": "res://assets/vanguard/vanguard.obj",
-		"yaw": 0.0, "kind": "vanguard",
-		"accent": Color(0.35, 0.68, 1.00), "swatch": Color(0.42, 0.60, 0.95),
-		"light_energy": 0.36, "finish": "metal" },
-	{ "label": "wedge", "path": "res://assets/wedge_fighter/wedge_fighter.glb",
-		"yaw": 180.0, "kind": "wedge", "accent": Color(0.16, 0.70, 1.0),
-		"swatch": Color(0.82, 0.84, 0.88), "light_energy": 0.35, "finish": "metal" },
+	{ "label": "wren", "swatch": Color(0.10, 0.66, 0.66) },
+	{ "label": "kestrel", "swatch": Color(0.16, 0.26, 0.62) },
+	{ "label": "swift", "swatch": Color(0.52, 0.09, 0.19) },
+	{ "label": "harrier", "swatch": Color(0.30, 0.31, 0.34) },
+	{ "label": "osprey", "swatch": Color(0.42, 0.60, 0.95) },
+	{ "label": "condor", "swatch": Color(0.06, 0.52, 0.26) },
+	{ "label": "albatross", "swatch": Color(0.83, 0.69, 0.42) },
 ]
 
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
@@ -49,6 +32,8 @@ const SHOTS := [
 ]
 
 var _camera: Camera3D
+var _weapon_set := "mk1"
+var _pad_set := "mk1"
 var _out_dir := "/tmp/thruster_shots"
 # DETAIL=1 renders a tight, heavily under-exposed close-up on one nozzle instead of the
 # whole-ship sheet. At game exposure the plume core clips to flat white, so the shock
@@ -98,6 +83,10 @@ func _ready() -> void:
 	# can be attributed to the layer that actually draws it.
 	_isolate = OS.get_environment("ISOLATE")
 	_view = OS.get_environment("VIEW")
+	if OS.get_environment("WEAPON") != "":
+		_weapon_set = OS.get_environment("WEAPON")
+	if OS.get_environment("PAD") != "":
+		_pad_set = OS.get_environment("PAD")
 	_cam_back = _envf("CAM_BACK", _cam_back)
 	_cam_up = _envf("CAM_UP", _cam_up)
 	_cam_pitch = _envf("CAM_PITCH", _cam_pitch)
@@ -253,64 +242,37 @@ func _run() -> void:
 
 
 func _build_ship(ship: Dictionary):
-	var res := load(ship.path)
-	var model: Node3D
-	if res is PackedScene:
-		model = (res as PackedScene).instantiate() as Node3D
-	elif res is Mesh:
-		var mi := MeshInstance3D.new()
-		mi.mesh = res
-		model = mi
-	if model == null:
+	var scene := load("res://assets/ships/%s/%s.glb" % [ship.label, ship.label]) as PackedScene
+	if scene == null:
 		return null
-
+	var model := scene.instantiate() as Node3D
 	var holder := Node3D.new()
 	add_child(holder)
 	var torches: Array[ShaderMaterial] = []
-	var driven: Array[ShaderMaterial] = []
-	match ship.kind:
-		"class_ii": driven.append_array(ShipMesh.style_class_ii_cruiser(model))
-		"snarkrans": driven.append_array(ShipMesh.style_snarkrans_starship(model))
-		"dingo57": driven.append_array(ShipMesh.style_dingo57_starship(model))
-		# These three take the hangar swatch inside their own styler rather than
-		# through color_authored_ship below, so hand it over here or the sheet shows
-		# a colour the game never renders.
-		"base_basic": driven.append_array(ShipMesh.style_base_basic_pbr(model, ship.swatch))
-		"jazoone": driven.append_array(ShipMesh.style_jazoone_spaceship(model))
-		"vanguard": driven.append_array(ShipMesh.style_vanguard(model, ship.swatch))
-		"wedge": driven.append_array(WedgeDesign.style(model, ship.swatch))
+	var driven: Array[ShaderMaterial] = ModularHull.style(model, ship.swatch)
 	holder.add_child(model)
-	model.rotation = Vector3(0.0, deg_to_rad(float(ship.yaw)), 0.0)
-	# Ship._build_ship_model lights the hull off the AABB fit_model RETURNS - the hull
-	# alone. This harness used to call combined_aabb AFTER building the plumes, so the
-	# key/fill/core reach was computed from a box several times too big.
 	var hull_box := ShipMesh.fit_model(holder, model, 4.0)
-
-	var plumes: Array[ShaderMaterial] = []
-	match ship.kind:
-		"class_ii": plumes = ShipMesh.add_class_ii_booster_plumes(model)
-		"snarkrans": plumes = ShipMesh.add_snarkrans_booster_plumes(model)
-		"dingo57": plumes = ShipMesh.add_dingo57_booster_plumes(model)
-		"base_basic": plumes = ShipMesh.add_base_basic_booster_plumes(model)
-		"jazoone": plumes = ShipMesh.add_jazoone_booster_plumes(model)
-		"vanguard": plumes = ShipMesh.add_vanguard_booster_plumes(model)
+	ModularHull.add_rcs_puffs(model)
+	var plumes := ModularHull.add_plumes(model, Color(0.35, 0.70, 1.0))
 	for m in plumes:
 		if m.shader == ShipMesh.CRUISER_TORCH_SHADER:
 			torches.append(m)
 	driven.append_array(plumes)
 	driven.append_array(ShipMesh.collect_haze_materials(model))
 	var lights := ShipMesh.collect_nozzle_lights(model)
-	# The game recolours every non-propulsion surface before lighting it; without this
-	# the raw imported materials render nothing like the shipped ship.
-	# wedge, vanguard and base_basic are absent because they are already painted, above:
-	# they carry authored PBR maps or a procedural hull shader, and this pass would
-	# overwrite the albedo/normal/metallic set the ship was built around.
-	if ship.kind not in ["wedge", "vanguard", "base_basic"]:
-		ShipMesh.color_authored_ship(model, ship.swatch, String(ship.finish))
-	# Ship._build_ship_model no longer adds ANY ship-attached lights - the scene sun +
-	# fill light the hull. Adding them here would put this harness back out of step
-	# with the game, which is the mistake that made its earlier output worthless.
-	var _unused_box := hull_box
+	var sockets := {}
+	var found := ModularHull.sockets(model)
+	for kind in ["weapon", "pad", "landjet"]:
+		var xforms: Array[Transform3D] = []
+		for node in found[kind]:
+			xforms.append(ModularHull.relative(node, holder))
+		sockets[kind] = xforms
+	var systems := ShipSystems.new()
+	holder.add_child(systems)
+	systems.configure(hull_box, ship.swatch, holder, sockets, _weapon_set, _pad_set)
+	systems.gear_fraction = 1.0
+	systems.weapons_fraction = 1.0
+	systems.pose()
 
 	# Finer-grained: hide one rig layer at a time.
 	var rig := model.get_node_or_null("BoosterNozzleRig")
@@ -337,7 +299,7 @@ func _build_ship(ship: Dictionary):
 			(rig_node as Node3D).visible = false
 	if _isolate == "no_plumes" or _isolate == "hull_only" or _isolate == "embers_only":
 		for child in model.get_children():
-			if String(child.name).ends_with("AuthoredBoosterPlumes") and child is Node3D:
+			if String(child.name).ends_with("BoosterPlumes") and child is Node3D:
 				(child as Node3D).visible = false
 	if _isolate != "":
 		print("render: ISOLATE=%s applied" % _isolate)
@@ -363,17 +325,6 @@ func _build_ship(ship: Dictionary):
 			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len))
 		print("render: VIEW=chase fov=%.1f back=%.2f up=%.2f pitch=%.1f"
 			% [_cam_fov, _cam_back, _cam_up, _cam_pitch])
-	elif _view == "rear" and ship.kind == "class_ii":
-		# Orthographic engine-centred comparison removes perspective as a variable.
-		var sockets: Array = ShipMesh.CLASS_II_BOOSTER_SOCKETS
-		var engine_centre := Vector3.ZERO
-		for socket in sockets:
-			engine_centre += model.to_global(socket.center)
-		engine_centre /= float(sockets.size())
-		_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
-		_camera.size = 2.4
-		_camera.position = engine_centre + Vector3(0.0, 0.0, 6.0)
-		_camera.look_at(engine_centre, Vector3.UP)
 	elif _detail:
 		# Frame the exhaust column itself, not the ship: push aft of the hull and
 		# close in, so one plume spans the frame.

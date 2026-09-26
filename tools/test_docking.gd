@@ -19,8 +19,15 @@ func _ready() -> void:
 	event.keycode = KEY_F
 	main._input(event)
 	check("F docks at orbital hangar", main.docked)
+	var saved_visited: Dictionary = GameState.visited.duplicate()
+	GameState.visited = {SystemDB.SOL: true}
+	var before_index: int = main.ship.current_index()
 	event.keycode = KEY_2
 	main._input(event)
+	check("locked tier refuses number key", main.ship.current_index() == before_index)
+	GameState.visited["test_system"] = true
+	main._input(event)
+	GameState.visited = saved_visited
 	check("number key changes ship", main.ship.current_index() == 1)
 	event.keycode = KEY_F
 	main._input(event)

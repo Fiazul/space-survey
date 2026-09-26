@@ -80,14 +80,17 @@ Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 godot --headless --script tools/test_surface_recipes.gd
 # → "surface_recipes: OK"
 ```
-Run all SceneTree-based tests in a loop (skips the 8 scene-based ones below, `timeout 120`
+Run all SceneTree-based tests in a loop (skips the scene-based ones below, `timeout 120`
 per file so a hang doesn't stall the whole loop):
 ```
 for f in tools/test_*.gd; do
   case "$f" in
-    tools/test_anchor_frame.gd|tools/test_base_basic_pbr.gd|tools/test_chase_rig.gd|\
-    tools/test_dem_calibration.gd|tools/test_dev_sites_scene.gd|tools/test_music_director_scene.gd|\
-    tools/test_ship_roster.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|tools/test_wedge_fighter.gd) continue ;;
+    tools/test_anchor_frame.gd|tools/test_chase_rig.gd|tools/test_dem_calibration.gd|\
+    tools/test_dev_sites_scene.gd|tools/test_docking.gd|tools/test_landing_support.gd|\
+    tools/test_music_director_scene.gd|tools/test_plasma.gd|tools/test_plasma_frame.gd|\
+    tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
+    tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\
+    tools/test_weapon_aim.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -108,9 +111,10 @@ Scene-based tests (`extends Node3D` / `extends Node`, need a live scene tree) �
 godot --headless tools/test_surface_integration.tscn
 # → "surface_integration: OK"
 ```
-Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_wedge_fighter.tscn`,
-`test_chase_rig.tscn`, `test_base_basic_pbr.tscn`, `test_dem_calibration.tscn`,
-`test_music_director_scene.tscn`.
+Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_chase_rig.tscn`,
+`test_dem_calibration.tscn`, `test_music_director_scene.tscn`, `test_ship_modules.tscn`,
+`test_landing_support.tscn`, `test_surface_facility.tscn`, `test_ship_systems.tscn`,
+`test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`.
 
 Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail).
 **Plain `--headless` captures nothing** — no GL context, so `get_viewport().get_texture()`
@@ -119,14 +123,14 @@ frame that's never delivered). Run as a real windowed scene under a virtual disp
 ```
 TERRAIN_SHOTS=earth_mountains,earth_water xvfb-run -a godot --path . res://tools/render_terrain.tscn
 SHOT_DIR=/tmp/shots xvfb-run -a godot --path . res://tools/render_thruster.tscn
-SHOT_DIR=/tmp/shots xvfb-run -a godot --path . res://tools/render_wedge_fighter.tscn
+SHOT_DIR=/tmp/shots SHIP=osprey WEAPON=mk2 PAD=mk2 xvfb-run -a godot --path . res://tools/render_thruster.tscn
 ```
 Env vars actually read (grep each `render_*.gd` before assuming one applies to another):
 - `render_terrain.gd`: `TERRAIN_SHOTS` only. Output is fixed at `user://terrain_%s.png` →
   `~/.local/share/godot/app_userdata/Cold Light/terrain_<name>.png` (project's registered
   name is "Cold Light", see project.godot; `SHOT_DIR` is NOT read by this script).
-- `render_thruster.gd`: `SHOT_DIR`, `DETAIL`, `ISOLATE`, `VIEW`, `SHAPE`, `GLOW_ON`, `SHIP`.
-- `render_wedge_fighter.gd`: `RAW`, `SHOT_DIR`.
+- `render_thruster.gd`: `SHOT_DIR`, `DETAIL`, `ISOLATE`, `VIEW`, `SHAPE`, `GLOW_ON`, `SHIP`
+  (`wren|kestrel|swift|harrier|osprey|condor|albatross`), `WEAPON`/`PAD` (`mk1|mk2`).
 
 `TERRAIN_SHOTS` values (all 19, `tools/render_terrain.gd:32-53`): `moon_rocks, moon_crater,
 io_volcano, mars_volcano, europa_ice, earth_mountains, earth_water, sun_plasma,
@@ -167,8 +171,7 @@ runs it.
   `class_name` — drop `class_name` on autoload scripts per ADR-0001 (Godot forbids the
   clash).
 - Always name files `snake_case(class_name)` (e.g. `class_name PlanetSystem` →
-  `planet_system.gd`). Existing exception: `wedge_fighter.gd` holds `class_name
-  WedgeFighterDesign` — don't "fix" that mismatch as a drive-by.
+  `planet_system.gd`).
 - Before any planet/terrain change: run `tools/test_surface_recipes.gd`,
   `tools/test_earth_terrain.gd`, `tools/test_surface_band.gd`, `tools/test_skin_kill.gd`,
   `tools/test_terrain_light.gd`.
@@ -213,6 +216,7 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 | `assets/ui_click.wav` | `tools/gen_ui_click.py` |
 | `tools/data/` | `tools/parse_tycho.py` (raw Tycho-2 catalogue, ~340MB, gitignored) |
 | `builds/` | `build.sh` export output, gitignored |
+| `assets/ships/*/*.glb`, `assets/modules/*.glb` | `tools/blender/build_ships.py` / `build_modules.py` (`blender -b --python <script>`) |
 
 ## Documentation & comments
 
@@ -241,6 +245,7 @@ expected; per-line/per-function narration is not.
 | `WORMHOLE_NETWORK.md` | The wormhole graph's structure and routing rules |
 | `lore.md` | In-universe codex — fleet, factions, setting |
 | `docs/adr/` | Accepted architecture decisions (the "why" behind structural choices) |
+| `docs/specs/2026-09-26-ship-roster-and-modules.md` | The seven-hull roster + swappable weapon/pad module GLBs, generated via `tools/blender/` |
 | `docs/specs/`, `docs/superpowers/specs/` | Dated design specs for individual features (older/newer split — both are point-in-time design docs, not living contracts) |
 | `docs/superpowers/plans/` | Worker execution plans for specific slices of work |
 | `docs/plans/`, `docs/research/` | Misc planning/research notes |

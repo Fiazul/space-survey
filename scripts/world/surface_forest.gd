@@ -64,7 +64,7 @@ static func scatter(sampler: TerrainSampler, hit: Vector3, radius: float, budget
 			# Never duplicate cells belonging to an adjacent cube face.
 			if dir.abs().max_axis_index() != axis:
 				continue
-			if SurfaceSettlement.occupied(sampler.settlements, dir, radius):
+			if SurfaceSettlement.occupied(sampler.settlements, dir, radius) or SurfaceFacility.occupied(sampler.facilities, dir, radius):
 				continue
 			if sampler.is_water(dir) or sampler.ice01(dir) > 0.5:
 				continue

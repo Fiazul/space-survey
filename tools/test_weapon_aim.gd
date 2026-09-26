@@ -20,6 +20,7 @@ func _ready() -> void:
 		check("intercept exists", not aim.is_empty())
 		check("lead accounts for both velocities", (origin+(inherited+aim.direction*speed)*aim.time).distance_to(target+velocity*aim.time) < .0001)
 	check("unreachable target has no false solution", WeaponAim.intercept(Vector3.ZERO, Vector3.ZERO, Vector3.FORWARD, Vector3.FORWARD*20, 9.6).is_empty())
+	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
 	var ship := Ship.new()
 	add_child(ship)
 	ship.newton = true

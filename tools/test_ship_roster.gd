@@ -1,82 +1,110 @@
 extends Node3D
+# Scene contract for the seven modular hulls: roster order, per-hull socket-driven
+# rigs (plumes, pads, weapons, belly jets, RCS), stat escalation, the tier unlock gate
+# and the hangar rows that mirror it.
 
 const ShipScript := preload("res://scripts/flight/ship.gd")
-const Styler := preload("res://scripts/flight/ship_mesh.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
-const WEDGE_HULL := preload("res://shaders/wedge_hull.gdshader")
+const ROSTER := [
+	{"name": "Wren", "metres": 60.0, "boosters": 1, "rcs": 4, "weapons": 2, "pads": 3, "landjets": 4},
+	{"name": "Kestrel", "metres": 70.0, "boosters": 2, "rcs": 4, "weapons": 2, "pads": 3, "landjets": 4},
+	{"name": "Swift", "metres": 80.0, "boosters": 2, "rcs": 6, "weapons": 2, "pads": 4, "landjets": 4},
+	{"name": "Harrier", "metres": 94.5, "boosters": 2, "rcs": 6, "weapons": 4, "pads": 4, "landjets": 6},
+	{"name": "Osprey", "metres": 120.0, "boosters": 3, "rcs": 8, "weapons": 4, "pads": 4, "landjets": 6},
+	{"name": "Condor", "metres": 150.0, "boosters": 4, "rcs": 8, "weapons": 6, "pads": 6, "landjets": 8},
+	{"name": "Albatross", "metres": 200.0, "boosters": 4, "rcs": 8, "weapons": 6, "pads": 6, "landjets": 8},
+]
 var failures := 0
 
 func _ready() -> void:
+	var saved_visited: Dictionary = GameState.visited.duplicate()
+	GameState.visited = {SystemDB.SOL: true}
 	var ship := ShipScript.new()
 	add_child(ship)
-	var names := ["Class II Galactic Cruiser", "Snarkrans Starship", "Base Basic PBR", "Vanguard", "Selene"]
-	_check("playable_roster", ship.ship_count() == names.size())
-	for i in names.size():
-		_check("slot_%d" % (i + 1), ship.ship_name_at(i) == names[i])
-		ship.swap_ship(i)
-		var model: Node3D = ship.get("_mesh_root").get_child(0)
-		_check("model_loaded_%d" % i, Styler.combined_aabb(model).size.length() > 0.0)
-		if i == 1:
-			for mi in Styler.gather_mesh_instances(model):
-				if mi.mesh is not ArrayMesh:
-					continue
-				for si in mi.mesh.get_surface_count():
-					var imported := mi.mesh.surface_get_material(si)
-					if imported == null or not imported.resource_name.begins_with("booster_"):
-						continue
-					var active := mi.get_active_material(si) as BaseMaterial3D
-					_check("engine_housing_remains_opaque", active != null and active.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
-					_check("engine_glow_is_rear_only", active != null and active.next_pass is ShaderMaterial and active.next_pass.get_shader_parameter("rear_only") == true)
-		if i == 3:
-			var hull := model as MeshInstance3D
-			_check("vanguard_eight_surfaces", hull != null and hull.mesh.get_surface_count() == 8)
-			for si in hull.mesh.get_surface_count():
-				var material := hull.get_active_material(si) as BaseMaterial3D
-				_check("authored_albedo_preserved", material != null and material.albedo_texture == Styler.VANGUARD_DIFFUSE)
-				_check("black_emissive_texels_stay_dark", material != null and material.emission_operator == BaseMaterial3D.EMISSION_OP_MULTIPLY)
-			_check("single_vanguard_outlet", Styler.VANGUARD_BOOSTER_SOCKETS.size() == 1 and ship.get("_torch_materials").size() == 2)
-	ship.swap_ship(2)
-	_check("third_ship_survives_swaps", ship.get("_torch_materials").size() == 4)
-	# Ships 3, 4 and 5 carry supplied PBR maps or a procedural hull shader, so they take
-	# the hangar swatch inside their own styler instead of through color_authored_ship.
-	# Two things have to hold for every one of them: the pick actually reaches the hull,
-	# and it reaches NOTHING the propulsion owns.
-	for idx in [2, 3, 4]:
-		var paints := []
-		var boosters := []
-		for key in ["burgundy", "emerald"]:
-			ship.swap_ship(idx)
-			ship.set_ship_color("body", key)
-			paints.append(_hull_paints(ship.get("_mesh_root").get_child(0)))
-			boosters.append(_propulsion_signature(ship.get("_authored_propulsion")))
-		_check("hull_takes_the_pick_%d" % (idx + 1),
-			paints[0].size() > 0 and paints[0] != paints[1])
-		_check("boosters_ignore_the_pick_%d" % (idx + 1),
-			boosters[0].size() > 0 and boosters[0] == boosters[1])
-	for idx in [2, 3]:
-		ship.swap_ship(idx)
-		ship.set_ship_color("body", "#c0331f")
-		_check("manual_hex_accepted_%d" % (idx + 1), ship.current_body_color() == "#c0331f")
-		var glasses := _hull_glasses(ship.get("_mesh_root").get_child(0))
-		_check("hull_glass_on_%d" % (idx + 1), glasses.size() >= 1)
-		_check("manual_hex_tints_glass_%d" % (idx + 1),
-			_glass_matches(glasses, Color.html("#c0331f")))
+	_check("playable_roster", ship.ship_count() == ROSTER.size())
 
-	# NEWTON_BALLISTIC (2026-09-12 rescale) is a static var whose initializer calls
-	# FlightMode.air_ballistic against the LIVE Ephemeris autoload - a plain SceneTree
-	# test can't exercise that (Ephemeris doesn't exist under --script), so this scene
-	# test is the one live-state check that the static init actually ran against real
-	# autoload values, not just that the pure math checks out in isolation.
+	_check("tier_1_always_unlocked", GameState.ship_unlocked(1) and ship.ship_lock_text(0) == "")
+	for tier in range(2, 8):
+		_check("tier_%d_locked_on_fresh_profile" % tier, not GameState.ship_unlocked(tier))
+	_check("sol_does_not_count", GameState.systems_reached() == 0)
+	_check("locked_swap_refused", not ship.swap_ship(1) and ship.current_index() == 0)
+	_check("lock_text_names_threshold", ship.ship_lock_text(1) == "Locked: reach 1 systems" \
+		and ship.ship_lock_text(6) == "Locked: reach 12 systems")
+	GameState.visited["alpha_centauri"] = true
+	_check("one_system_unlocks_tier_2", GameState.ship_unlocked(2) and not GameState.ship_unlocked(3))
+	_check("unlocked_swap_allowed", ship.swap_ship(1) and ship.current_index() == 1)
+	_check("higher_tier_still_refused", not ship.swap_ship(3) and ship.current_index() == 1)
+	ship.swap_ship(0)
+
+	for i in 12:
+		GameState.visited["test_system_%d" % i] = true
+	var previous := {}
+	for i in ROSTER.size():
+		var spec: Dictionary = ROSTER[i]
+		_check("slot_%d_name" % (i + 1), ship.ship_name_at(i) == spec.name)
+		if i > 0:
+			_check("swap_%d" % i, ship.swap_ship(i))
+		var info: Dictionary = ShipScript.SHIP_MODELS[i]
+		var model: Node3D = ship.get("_mesh_root").get_child(0)
+		_check("model_loaded_%d" % i, ShipMesh.combined_aabb(model).size.length() > 0.0)
+		_check("modular_%d" % i, info.get("modular", false) and ship.current_is_modular())
+		var hull_km: float = ship.get("_hull_km")
+		_check("fleet_scale_%d" % i, absf(hull_km * 1000.0 - float(spec.metres)) < float(spec.metres) * .02)
+		var found := ModularHull.sockets(model)
+		for kind in ["weapon", "booster", "rcs", "pad", "landjet"]:
+			var want: int = spec[kind + "s"] if spec.has(kind + "s") else spec[kind]
+			_check("socket_%s_%d" % [kind, i], (found[kind] as Array).size() == want)
+		_check("two_cones_per_booster_%d" % i, ship.get("_torch_materials").size() == 2 * int(spec.boosters))
+		_check("haze_per_booster_%d" % i, ShipMesh.collect_haze_materials(model).size() == int(spec.boosters))
+		_check("rcs_puffs_%d" % i, ship.get("_rcs_puffs").size() == int(spec.rcs))
+		var puffs: Array = ship.get("_rcs_puffs")
+		ModularHull.drive_rcs(puffs, Vector3.RIGHT, false, .016)
+		var lit := puffs.filter(func(p): return p.node.visible)
+		_check("strafe_fires_opposing_rcs_%d" % i, not lit.is_empty() and lit.size() < puffs.size() \
+			and lit.all(func(p): return p.axis.x < -.5))
+		ModularHull.drive_rcs(puffs, Vector3.ZERO, false, 1.0)
+		_check("rcs_puffs_are_short_lived_%d" % i, puffs.all(func(p): return not p.node.visible))
+		ModularHull.drive_rcs(puffs, Vector3.ZERO, true, .016)
+		_check("brake_at_rest_fires_nothing_%d" % i, puffs.all(func(p): return not p.node.visible))
+		var rig: ShipSystems = ship.systems
+		_check("pads_%d" % i, rig.legs.size() == int(spec.pads))
+		_check("weapons_%d" % i, rig.mounts.size() == int(spec.weapons))
+		_check("landjets_%d" % i, rig.support.jets.size() == int(spec.landjets))
+		_check("muzzle_node_%d" % i, rig.muzzle_node(0) != null)
+		_check("stowed_gear_has_no_feet_%d" % i, rig.foot_points().is_empty())
+		rig.gear_target = true
+		rig.step(2.0)
+		_check("foot_per_pad_%d" % i, rig.foot_points().size() == int(spec.pads))
+		_check("nozzles_throttle_driven_%d" % i, _nozzle_drives(model) == ship.get("_authored_propulsion").filter(
+			func(m): return m.shader == ShipMesh.CRUISER_PROPULSION_SHADER).size() and _nozzle_drives(model) > 0)
+		if not previous.is_empty():
+			_check("stats_escalate_%d" % i, int(info.hp) > int(previous.hp) and int(info.dmg) >= int(previous.dmg) \
+				and float(info.fire_cd) < float(previous.fire_cd) and float(info.energy_max) > float(previous.energy_max) \
+				and float(info.warp) > float(previous.warp))
+		previous = info
+		rig.gear_target = false
+		rig.step(2.0)
+
+	# Tint reaches Hull_Paint and nothing the propulsion owns.
+	var paints := []
+	var boosters := []
+	for key in ["burgundy", "emerald"]:
+		ship.set_ship_color("body", key)
+		var model: Node3D = ship.get("_mesh_root").get_child(0)
+		paints.append(_paint_colors(model))
+		boosters.append(_propulsion_signature(ship.get("_authored_propulsion")))
+	_check("hull_takes_the_pick", paints[0].size() > 0 and paints[0] != paints[1] \
+		and paints[1][0].is_equal_approx(Ship.color_from_key("emerald")))
+	_check("boosters_ignore_the_pick", boosters[0].size() > 0 and boosters[0] == boosters[1])
+	ship.set_ship_color("body", "#c0331f")
+	_check("manual_hex_accepted", ship.current_body_color() == "#c0331f")
+
 	var ballistic: float = ShipScript.NEWTON_BALLISTIC
 	_check("newton_ballistic_finite", is_finite(ballistic))
 	_check("newton_ballistic_positive", ballistic > 0.0)
 	_check("newton_ballistic_matches_live_derivation", is_equal_approx(ballistic,
 		FlightMode.air_ballistic(ShipScript.NEWTON_THRUST, ShipScript.BOOST_MULT, Ephemeris.RHO0)))
 
-	# Colour-picker popup is a child of the hangar button. A per-frame set_hangar
-	# rebuild (body_key in the layout sig) queue_frees it — that's the RGB tab
-	# vanishing mid-pick. Colour-only refreshes must keep the same button alive,
-	# even when the popup is not currently reporting visible.
 	var hud := HudScript.new()
 	add_child(hud)
 	hud.ship = ship
@@ -86,13 +114,11 @@ func _ready() -> void:
 		hangar_names.append(ship.ship_name_at(i))
 	ship.set_ship_color("body", "burgundy")
 	hud.set_hangar(true, hangar_names, 2, "Test Dock")
+	_check("hangar_offers_module_sets", _labels(hud).has("WEAPONS") and _labels(hud).has("LANDING PADS"))
 	var picker: ColorPickerButton = hud.get("_color_picker")
 	_check("hangar_has_picker", picker != null and is_instance_valid(picker))
 	if picker != null:
 		var picker_id := picker.get_instance_id()
-		# Popup not open: the race where color_changed already closed it,
-		# or Godot reports the picker window as hidden. Colour-only must
-		# still keep this button, not queue_free it.
 		ship.set_ship_color("body", "#1f4cc0")
 		hud.set_hangar(true, hangar_names, 2, "Test Dock")
 		var after: ColorPickerButton = hud.get("_color_picker")
@@ -109,66 +135,60 @@ func _ready() -> void:
 				still != null and still.get_instance_id() == picker_id)
 			_check("picker_popup_still_open",
 				still != null and still.get_popup() != null and still.get_popup().visible)
+	GameState.visited = {SystemDB.SOL: true, "alpha_centauri": true}
+	hud.set_hangar(true, hangar_names, 2, "Test Dock")
+	await get_tree().process_frame
+	var labels := _labels(hud)
+	_check("hangar_shows_lock", labels.has("Locked: reach 12 systems") and labels.has("Locked: reach 4 systems") \
+		and not labels.has("Locked: reach 1 systems"))
 	hud.queue_free()
 
+	GameState.visited = saved_visited
 	ship.queue_free()
 	await get_tree().process_frame
 	print("ship_roster: ", "OK" if failures == 0 else "FAIL %d" % failures)
 	get_tree().quit(0 if failures == 0 else 1)
 
-# Every hull colour the styler actually wrote: the albedo _apply_authored_hull_tint
-# modulated over the supplied maps, and Selene's procedural hull_tint.
-func _hull_paints(model: Node3D) -> Array:
-	var out := []
-	for mi in Styler.gather_mesh_instances(model):
-		if mi.mesh == null:
+
+func _labels(hud: Node) -> PackedStringArray:
+	var out := PackedStringArray()
+	var stack: Array[Node] = [hud.get("_hangar_rows")]
+	while not stack.is_empty():
+		var node: Node = stack.pop_back()
+		if node.is_queued_for_deletion():
 			continue
-		for si in mi.mesh.get_surface_count():
-			var material := mi.get_active_material(si)
-			if material is ShaderMaterial and material.shader == WEDGE_HULL:
-				out.append(material.get_shader_parameter("hull_tint"))
-			elif material is BaseMaterial3D:
-				out.append((material as BaseMaterial3D).albedo_color)
+		if node is Label:
+			out.append((node as Label).text)
+		stack.append_array(node.get_children())
 	return out
 
 
-func _hull_glasses(model: Node3D) -> Array:
+func _nozzle_drives(model: Node3D) -> int:
+	var count := 0
+	for mi in ShipMesh.gather_mesh_instances(model):
+		for si in mi.get_surface_override_material_count():
+			var material := mi.get_surface_override_material(si)
+			if material != null and material.resource_name == "Nozzle_Emit" and material.next_pass is ShaderMaterial \
+					and (material.next_pass as ShaderMaterial).shader == ShipMesh.CRUISER_PROPULSION_SHADER:
+				count += 1
+	return count
+
+
+func _paint_colors(model: Node3D) -> Array:
 	var out := []
-	for mi in Styler.gather_mesh_instances(model):
-		var mats: Array = []
-		if mi.material_override is ShaderMaterial:
-			mats.append(mi.material_override)
-		if mi.mesh != null:
-			for si in mi.mesh.get_surface_count():
-				mats.append(mi.get_surface_override_material(si))
-		for material in mats:
-			if material is ShaderMaterial \
-					and (material as ShaderMaterial).shader == Styler.BASE_BASIC_WING_GLASS_SHADER:
-				out.append(material)
+	for mi in ShipMesh.gather_mesh_instances(model):
+		for si in mi.get_surface_override_material_count():
+			var material := mi.get_surface_override_material(si)
+			if material is StandardMaterial3D and material.resource_name == "Hull_Paint":
+				out.append((material as StandardMaterial3D).albedo_color)
 	return out
 
 
-func _glass_matches(glasses: Array, expected: Color) -> bool:
-	if glasses.is_empty():
-		return false
-	for material in glasses:
-		var tint: Variant = (material as ShaderMaterial).get_shader_parameter("hull_tint")
-		if tint == null:
-			return false
-		var c: Color = tint if tint is Color else Color(tint.x, tint.y, tint.z)
-		if not (is_equal_approx(c.r, expected.r) and is_equal_approx(c.g, expected.g) \
-				and is_equal_approx(c.b, expected.b)):
-			return false
-	return true
-
-
-# Every uniform on every driven propulsion material, so a paint pass that touched one
-# by any route - plasma colour, gain, nozzle shape - shows up as a changed signature.
 func _propulsion_signature(driven: Array) -> Array:
 	var out := []
 	for material in driven:
 		var shader_material := material as ShaderMaterial
-		if shader_material == null or shader_material.shader == Styler.BASE_BASIC_WING_GLASS_SHADER:
+		if shader_material == null:
 			continue
 		var row := [shader_material.shader.resource_path]
 		for uniform in RenderingServer.get_shader_parameter_list(shader_material.shader.get_rid()):

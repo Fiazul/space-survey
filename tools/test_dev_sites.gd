@@ -39,7 +39,7 @@ func _check_table() -> void:
 		check(label + "_no_duplicate_name", not seen_names.has(str(site.name)))
 		seen_names[str(site.name)] = true
 		var mode := str(site.get("mode", "surface"))
-		check(label + "_mode_valid", mode in ["surface", "park", "geo"])
+		check(label + "_mode_valid", mode in ["surface", "park", "geo", "station"])
 		var lat: float = float(site.get("lat_deg", 0.0))
 		var lon: float = float(site.get("lon_deg", 0.0))
 		check(label + "_lat_in_range", lat >= -90.0 and lat <= 90.0)

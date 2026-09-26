@@ -38,7 +38,13 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 	# the old 90 m sphere. Queries share TerrainSampler's height and sweep logic.
 	for i in points.size():
 		var offset := basis * points[i]
-		var hit := sampler._resolve_terrain_motion(from + offset, result.position + offset,
+		var probe_from := from+offset
+		# An embedded starting probe must recover from the CURRENT corrected
+		# position. Replaying the old embedded start for every corner lets the
+		# final centre probe undo all prior hull clearance and sink the hull.
+		if sampler.alt_above_ground_km(probe_from,radius) <= SKIN:
+			probe_from = result.position+offset
+		var hit := sampler._resolve_terrain_motion(probe_from, result.position + offset,
 			result.velocity, radius, SKIN, SLOP)
 		if hit.hit or hit.budget_limited:
 			result.position = hit.position - offset

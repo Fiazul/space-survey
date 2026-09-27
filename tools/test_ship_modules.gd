@@ -13,7 +13,7 @@ func _ready() -> void:
 	GameState.pad_set = "mk1"
 	var ship := Ship.new()
 	add_child(ship)
-	for index in [0, 3, 6]:
+	for index in [1, 3, 6]:
 		ship.swap_ship(index)
 		ship.set_weapon_set("mk1")
 		ship.set_pad_set("mk1")

@@ -5,6 +5,7 @@ extends RefCounted
 # that operates only on its arguments (no ship state), so it's safe to call from
 # anywhere and easy to reason about.
 
+const CRUISER_LED_SHADER := preload("res://shaders/cruiser_led.gdshader")
 const CRUISER_PROPULSION_SHADER := preload("res://shaders/cruiser_propulsion.gdshader")
 const CRUISER_TORCH_SHADER := preload("res://shaders/cruiser_torch.gdshader")
 const EXHAUST_HAZE_SHADER := preload("res://shaders/exhaust_haze.gdshader")
@@ -41,6 +42,17 @@ static func booster_gain(base_gain: float) -> float:
 # the shaping block in that shader for the measured reason). Must match the array size
 # declared there.
 const SHAPE_SOCKET_MAX := 8
+
+const CLASS_II_BOOSTER_SOCKETS := [
+	{ "center": Vector3(60.12385, 81.96715, -107.8570), "radius": 8.59805 },
+	{ "center": Vector3(46.55385, 66.84465, -94.2746), "radius": 8.59805 },
+	{ "center": Vector3(40.99215, 83.45400, -100.9570), "radius": 5.16870 },
+	{ "center": Vector3(-21.43830, 81.96715, -107.8570), "radius": 8.59805 },
+	{ "center": Vector3(-7.86826, 66.84465, -94.2746), "radius": 8.59805 },
+	{ "center": Vector3(-2.30657, 83.45400, -100.9570), "radius": 5.16870 },
+]
+
+const CLASS_II_BOOSTER_GAIN := 3.8
 
 
 # Hand a propulsion material the sockets its surface contains, in the SURFACE's own
@@ -131,6 +143,169 @@ static func fit_model(mesh_root: Node3D, model: Node3D, target_len: float) -> AA
 	var center := box.position + size * 0.5
 	model.position -= center * factor
 	return AABB(-size * factor * 0.5, size * factor)
+
+
+static func style_class_ii_cruiser(model: Node3D) -> Array[ShaderMaterial]:
+	var propulsion_materials: Array[ShaderMaterial] = []
+	var ordinal := 0
+	for mi in gather_mesh_instances(model):
+		if mi.mesh == null:
+			continue
+		_prepare_legacy_obj(mi)
+		for si in mi.mesh.get_surface_count():
+			var orig := mi.get_active_material(si)
+			var tag: String = mi.mesh.surface_get_name(si).to_lower()
+			if orig != null:
+				tag += " " + orig.resource_name.to_lower()
+			var source_texture: Texture2D = null
+			if orig is BaseMaterial3D:
+				source_texture = (orig as BaseMaterial3D).albedo_texture
+			if tag.contains("a1window") or ordinal == 1:
+				var led := ShaderMaterial.new()
+				led.shader = CRUISER_LED_SHADER
+				if source_texture == null:
+					source_texture = load("res://assets/class_ii_galactic_cruiser/Maps/wns1c.jpg") as Texture2D
+				led.set_shader_parameter("led_mask", source_texture)
+				mi.set_surface_override_material(si, led)
+			elif tag.contains("propulsion") or ordinal == 2:
+				var propulsion := ShaderMaterial.new()
+				propulsion.shader = CRUISER_PROPULSION_SHADER
+				propulsion.set_shader_parameter("plasma_color", Color.WHITE)
+				propulsion.set_shader_parameter("brightness", booster_gain(CLASS_II_BOOSTER_GAIN))
+				propulsion.set_shader_parameter("mirror_flow", true)
+				propulsion.set_shader_parameter("symmetry_center_x", 19.342775)
+				_wire_nozzle_shape(propulsion, CLASS_II_BOOSTER_SOCKETS,
+					_model_to_surface_space(model, mi), Vector3(0.0, 0.0, 1.0))
+				mi.set_surface_override_material(si, propulsion)
+				propulsion_materials.append(propulsion)
+			elif tag.contains("eng_covers") or tag.contains("eng covers") or ordinal == 4:
+				var cover := StandardMaterial3D.new()
+				cover.cull_mode = BaseMaterial3D.CULL_DISABLED
+				cover.albedo_color = Color(0.10, 0.22, 0.34)
+				cover.metallic = 0.82
+				cover.metallic_specular = 0.88
+				cover.roughness = 0.20
+				cover.rim_enabled = true
+				cover.rim = 0.28
+				cover.rim_tint = 0.30
+				cover.emission_enabled = true
+				cover.emission = Color(0.025, 0.09, 0.16)
+				cover.emission_energy_multiplier = 0.35
+				mi.set_surface_override_material(si, cover)
+			elif tag.contains("ship_body") or tag.contains("ship body") or ordinal == 3:
+				var hull := StandardMaterial3D.new()
+				hull.cull_mode = BaseMaterial3D.CULL_DISABLED
+				hull.albedo_texture = source_texture
+				hull.albedo_color = Color(0.92, 0.95, 1.0)
+				hull.metallic = 0.42
+				hull.metallic_specular = 0.72
+				hull.roughness = 0.34
+				hull.rim_enabled = true
+				hull.rim = 0.16
+				hull.rim_tint = 0.42
+				mi.set_surface_override_material(si, hull)
+			else:
+				var glass := StandardMaterial3D.new()
+				glass.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				glass.cull_mode = BaseMaterial3D.CULL_DISABLED
+				glass.albedo_color = Color(0.12, 0.32, 0.48, 0.24)
+				glass.metallic = 0.0
+				glass.metallic_specular = 0.95
+				glass.roughness = 0.035
+				glass.rim_enabled = true
+				glass.rim = 0.52
+				glass.rim_tint = 0.18
+				mi.set_surface_override_material(si, glass)
+			ordinal += 1
+	return propulsion_materials
+
+
+static func add_class_ii_booster_plumes(model: Node3D,
+		accent := Color(0.38, 0.72, 1.0)) -> Array[ShaderMaterial]:
+	var propulsion_materials: Array[ShaderMaterial] = []
+	var plume_root := Node3D.new()
+	plume_root.name = "ClassIIAuthoredBoosterPlumes"
+	model.add_child(plume_root)
+	var world_scale: float = model.scale.x
+	for i in CLASS_II_BOOSTER_SOCKETS.size():
+		var socket: Dictionary = CLASS_II_BOOSTER_SOCKETS[i]
+		var center: Vector3 = socket.center
+		var radius: float = float(socket.radius)
+		propulsion_materials.append(_add_torch_layer(
+			plume_root, "BoosterFog%02d" % (i + 1), center, radius,
+			radius * 6.0, 0.666667, 0.10, 1.20, 0.55, 0.42, false, -1.0, world_scale))
+		propulsion_materials.append(_add_torch_layer(
+			plume_root, "BoosterCore%02d" % (i + 1), center, radius,
+			radius * 3.6, 0.58, 0.05, 3.20, 0.82, 0.995, true, -1.0, world_scale))
+	_attach_socket_extras(model, CLASS_II_BOOSTER_SOCKETS, -1.0, world_scale, accent)
+	return propulsion_materials
+
+
+static func color_authored_ship(model: Node3D, tint: Color, finish: String) -> int:
+	var colored := 0
+	for mi in gather_mesh_instances(model):
+		if mi.mesh == null:
+			continue
+		for si in mi.mesh.get_surface_count():
+			var active := mi.get_active_material(si)
+			if active is ShaderMaterial:
+				var shader_material := active as ShaderMaterial
+				if shader_material.shader == CRUISER_PROPULSION_SHADER:
+					continue
+				if shader_material.shader == CRUISER_LED_SHADER:
+					shader_material.set_shader_parameter("color_tint", tint)
+					colored += 1
+				continue
+			var material: BaseMaterial3D
+			if active is BaseMaterial3D:
+				material = (active as BaseMaterial3D).duplicate() as BaseMaterial3D
+			else:
+				material = StandardMaterial3D.new()
+			material.resource_name = "customized_hull"
+			var authored_alpha := material.albedo_color.a
+			var authored_glass := material.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED
+			material.albedo_color = Color(tint.r, tint.g, tint.b,
+				authored_alpha if authored_glass else 1.0)
+			material.emission_enabled = false
+			if finish == "glassy":
+				material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+				material.cull_mode = BaseMaterial3D.CULL_DISABLED
+				material.albedo_color.a = 0.38
+				material.metallic = 0.0
+				material.metallic_specular = 1.0
+				material.roughness = 0.03
+				material.clearcoat_enabled = true
+				material.clearcoat = 1.0
+				material.clearcoat_roughness = 0.02
+				material.rim_enabled = true
+				material.rim = 0.6
+				material.rim_tint = 0.2
+			elif authored_glass:
+				material.metallic = 0.0
+				material.metallic_specular = 1.0
+				material.roughness = 0.03
+				material.rim_enabled = true
+				material.rim = 0.52
+			else:
+				material.transparency = BaseMaterial3D.TRANSPARENCY_DISABLED
+				material.metallic = 0.58
+				material.metallic_specular = 0.9
+				material.roughness = 0.16
+				material.clearcoat_enabled = false
+				material.rim_enabled = true
+				material.rim = 0.24
+				material.rim_tint = 0.35
+			mi.set_surface_override_material(si, material)
+			colored += 1
+	return colored
+
+
+static func _prepare_legacy_obj(mi: MeshInstance3D) -> void:
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	if mi.mesh is ArrayMesh:
+		var visual_mesh := mi.mesh.duplicate() as ArrayMesh
+		visual_mesh.shadow_mesh = null
+		mi.mesh = visual_mesh
 
 
 # `facing` is the model-space axis the exhaust travels along (+1.0 for the modular

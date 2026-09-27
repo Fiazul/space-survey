@@ -1,17 +1,17 @@
 extends Node3D
-# Offscreen contact sheet for the modular hulls. Builds each hull the way
-# Ship._build_ship_model does (ModularHull style -> fit -> plumes -> ShipSystems modules),
+# Offscreen contact sheet for the roster. Builds each hull the way
+# Ship._build_ship_model does (authored or ModularHull style -> fit -> plumes),
 # mirrors main.gd's WorldEnvironment so glow/tonemap match the real game, then
 # photographs every ship at three throttle settings with gear and weapons deployed.
 #
 # Must run as a real SCENE under a GL-capable display, not with --script: a SceneTree
 # script never pumps render frames, so the capture comes back blank.
 #   SHOT_DIR=/tmp/shots xvfb-run -a <godot> --path <copy> res://tools/render_thruster.tscn
-# SHIP=<slug>[,<slug>] filters the roster; WEAPON=mk2 / PAD=mk2 pick the module sets.
+# SHIP=<label>[,<label>] filters the roster; WEAPON=mk2 / PAD=mk2 pick the modular sets.
 
 # `swatch` is each hull's default palette swatch (Ship.SHIP_MODELS default_color).
 const SHIPS := [
-	{ "label": "wren", "swatch": Color(0.10, 0.66, 0.66) },
+	{ "label": "class_ii_cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "swatch": Color(0.75, 0.75, 0.78), "class_ii_cruiser": true },
 	{ "label": "kestrel", "swatch": Color(0.16, 0.26, 0.62) },
 	{ "label": "swift", "swatch": Color(0.52, 0.09, 0.19) },
 	{ "label": "harrier", "swatch": Color(0.30, 0.31, 0.34) },
@@ -242,37 +242,52 @@ func _run() -> void:
 
 
 func _build_ship(ship: Dictionary):
-	var scene := load("res://assets/ships/%s/%s.glb" % [ship.label, ship.label]) as PackedScene
-	if scene == null:
+	var res := load(ship.get("path", "res://assets/ships/%s/%s.glb" % [ship.label, ship.label]))
+	var model: Node3D
+	if res is PackedScene:
+		model = (res as PackedScene).instantiate() as Node3D
+	elif res is Mesh:
+		var mi := MeshInstance3D.new()
+		mi.mesh = res
+		model = mi
+	if model == null:
 		return null
-	var model := scene.instantiate() as Node3D
 	var holder := Node3D.new()
 	add_child(holder)
 	var torches: Array[ShaderMaterial] = []
-	var driven: Array[ShaderMaterial] = ModularHull.style(model, ship.swatch)
+	var cruiser := bool(ship.get("class_ii_cruiser", false))
+	var driven: Array[ShaderMaterial] = []
+	if cruiser:
+		driven = ShipMesh.style_class_ii_cruiser(model)
+		ShipMesh.color_authored_ship(model, ship.swatch, "metallic")
+	else:
+		driven = ModularHull.style(model, ship.swatch)
 	holder.add_child(model)
+	if cruiser:
+		model.rotation.y = PI
 	var hull_box := ShipMesh.fit_model(holder, model, 4.0)
-	ModularHull.add_rcs_puffs(model)
-	var plumes := ModularHull.add_plumes(model, Color(0.35, 0.70, 1.0))
+	var plumes := ShipMesh.add_class_ii_booster_plumes(model) if cruiser else ModularHull.add_plumes(model, Color(0.35, 0.70, 1.0))
 	for m in plumes:
 		if m.shader == ShipMesh.CRUISER_TORCH_SHADER:
 			torches.append(m)
 	driven.append_array(plumes)
 	driven.append_array(ShipMesh.collect_haze_materials(model))
 	var lights := ShipMesh.collect_nozzle_lights(model)
-	var sockets := {}
-	var found := ModularHull.sockets(model)
-	for kind in ["weapon", "pad", "landjet"]:
-		var xforms: Array[Transform3D] = []
-		for node in found[kind]:
-			xforms.append(ModularHull.relative(node, holder))
-		sockets[kind] = xforms
-	var systems := ShipSystems.new()
-	holder.add_child(systems)
-	systems.configure(hull_box, ship.swatch, holder, sockets, _weapon_set, _pad_set)
-	systems.gear_fraction = 1.0
-	systems.weapons_fraction = 1.0
-	systems.pose()
+	if not cruiser:
+		ModularHull.add_rcs_puffs(model)
+		var sockets := {}
+		var found := ModularHull.sockets(model)
+		for kind in ["weapon", "pad", "landjet"]:
+			var xforms: Array[Transform3D] = []
+			for node in found[kind]:
+				xforms.append(ModularHull.relative(node, holder))
+			sockets[kind] = xforms
+		var systems := ShipSystems.new()
+		holder.add_child(systems)
+		systems.configure(hull_box, ship.swatch, holder, sockets, _weapon_set, _pad_set)
+		systems.gear_fraction = 1.0
+		systems.weapons_fraction = 1.0
+		systems.pose()
 
 	# Finer-grained: hide one rig layer at a time.
 	var rig := model.get_node_or_null("BoosterNozzleRig")

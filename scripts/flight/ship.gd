@@ -3,7 +3,7 @@ extends Node3D
 
 const _FM := preload("res://scripts/flight/flight_mode.gd")
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
-# Player ship: loads one of the tiered modular GLB hulls (see SHIP_MODELS), with
+# Player ship: loads the Class II cruiser or one of the tiered modular GLB hulls (see SHIP_MODELS), with
 # speed-reactive booster plumes, swappable weapon/pad modules, and arcade 6DOF
 # flight. If a .glb can't be loaded it falls back to a primitive fighter so the
 # game never breaks. swap_ship() rebuilds the hull at runtime (used when docked).
@@ -23,11 +23,11 @@ const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # ============================ TWEAK ME ============================
 # Ships you can fly, tier 1 -> 7 (docs/specs/2026-09-26-ship-roster-and-modules.md).
 # `length` keeps the old convention (HULL_KM at HULL_REF_LENGTH), so length = metres
-# * 0.0075: Wren 60 m ... Albatross 200 m. Every hull is modular: styling, plumes,
-# weapons, pads and belly jets all come from its named GLB sockets (ModularHull).
+# * 0.0075: Class II Galactic Cruiser 122.7 m; Kestrel 70 m ... Albatross 200 m.
+# The cruiser retains its authored OBJ propulsion; the remaining hulls use named GLB sockets.
 # A tier unlocks by GameState.SHIP_UNLOCK.
 const SHIP_MODELS := [
-	{ "name": "Wren", "path": "res://assets/ships/wren/wren.glb", "modular": true, "length": 0.45, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.10, "hp": 140, "bolt_scale": 0.90, "bolt_speed": 1250.0, "fire_cd": 0.120, "dmg": 2, "energy_max": 120.0, "energy_use": 0.60, "warp": 105.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "teal" },
+	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "bolt_speed": 1250.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 119.8, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "finish_pick": true, "default_color": "silver" },
 	{ "name": "Kestrel", "path": "res://assets/ships/kestrel/kestrel.glb", "modular": true, "length": 0.525, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.04, "hp": 165, "bolt_scale": 1.00, "bolt_speed": 1300.0, "fire_cd": 0.105, "dmg": 2, "energy_max": 130.0, "energy_use": 0.64, "warp": 110.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "navy" },
 	{ "name": "Swift", "path": "res://assets/ships/swift/swift.glb", "modular": true, "length": 0.6, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.00, "hp": 185, "bolt_scale": 1.05, "bolt_speed": 1350.0, "fire_cd": 0.095, "dmg": 3, "energy_max": 140.0, "energy_use": 0.68, "warp": 116.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "burgundy" },
 	{ "name": "Harrier", "path": "res://assets/ships/harrier/harrier.glb", "modular": true, "length": 0.70875, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.92, "hp": 215, "bolt_scale": 1.20, "bolt_speed": 1375.0, "fire_cd": 0.088, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 120.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
@@ -2007,6 +2007,9 @@ func _build_ship_model(idx: int) -> void:
 	var modular := bool(info.get("modular", false))
 	if modular:
 		_authored_propulsion = ModularHull.style(model, hull_tint, _finish_for(info.name))
+	elif info.get("class_ii_cruiser", false):
+		_authored_propulsion = ShipMesh.style_class_ii_cruiser(model)
+		ShipMesh.color_authored_ship(model, hull_tint, _finish_for(info.name))
 	_mesh_root.add_child(model)
 	model.rotation = Vector3(deg_to_rad(float(info.pitch)), deg_to_rad(float(info.yaw)), 0.0)
 	_hull_km = float(info.length) / HULL_REF_LENGTH * HULL_KM
@@ -2032,6 +2035,8 @@ func _build_ship_model(idx: int) -> void:
 	if modular:
 		_rcs_puffs = ModularHull.add_rcs_puffs(model)
 		plumes = ModularHull.add_plumes(model, info.get("light_accent", Color(0.35, 0.70, 1.0)))
+	elif info.get("class_ii_cruiser", false):
+		plumes = ShipMesh.add_class_ii_booster_plumes(model, info.get("light_accent", Color(0.38, 0.72, 1.0)))
 	# Torch cones are the only layer whose GEOMETRY reacts to throttle, so they are
 	# tracked separately from the flat authored propulsion surfaces and the haze.
 	for material in plumes:

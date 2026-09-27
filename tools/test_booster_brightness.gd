@@ -10,7 +10,7 @@ extends SceneTree
 
 const KNOB_LOW := 0.8
 const KNOB_HIGH := 4.0
-const HULLS := {"wren": 1, "kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
+const HULLS := {"kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
 
 
 func _initialize() -> void:

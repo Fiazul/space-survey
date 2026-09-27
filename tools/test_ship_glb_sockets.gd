@@ -1,9 +1,9 @@
 extends SceneTree
-# Checks the seven hull GLBs from tools/blender/build_ships.py against the socket/material/
+# Checks the six rostered modular hull GLBs from tools/blender/build_ships.py against the socket/material/
 # orientation contract in docs/specs/2026-09-26-ship-roster-and-modules.md.
 
 const ROSTER := [
-	["wren", 1, 4, 2, 3, 4], ["kestrel", 2, 4, 2, 3, 4], ["swift", 2, 6, 2, 4, 4],
+	["kestrel", 2, 4, 2, 3, 4], ["swift", 2, 6, 2, 4, 4],
 	["harrier", 2, 6, 4, 4, 6], ["osprey", 3, 8, 4, 4, 6], ["condor", 4, 8, 6, 6, 8],
 	["albatross", 4, 8, 6, 6, 8],
 ]

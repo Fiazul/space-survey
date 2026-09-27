@@ -4,7 +4,7 @@ extends SceneTree
 # white, gain-scaled propulsion pass with one shaping socket per booster.
 
 const TEST_TINT := Color(0.10, 0.66, 0.66)
-const HULLS := {"wren": 1, "kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
+const HULLS := {"kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
 
 
 func _initialize() -> void:
@@ -82,7 +82,7 @@ func _initialize() -> void:
 	var state_script := load("res://scripts/core/game_state.gd") as Script
 	var state = state_script.new()
 	var cfg := ConfigFile.new()
-	state.customization = {"color": {"Wren": "teal"}, "finish": {"Wren": "glassy"}}
+	state.customization = {"color": {"Class II Galactic Cruiser": "silver"}, "finish": {"Class II Galactic Cruiser": "glassy"}}
 	state.weapon_set = "mk2"
 	state.pad_set = "mk2"
 	state.save_into(cfg)
@@ -90,7 +90,7 @@ func _initialize() -> void:
 	failed += _check("reset_restores_mk1", state.weapon_set == "mk1" and state.pad_set == "mk1")
 	state.load_from(cfg)
 	failed += _check("customization_round_trip",
-		state.customization == {"color": {"Wren": "teal"}, "finish": {"Wren": "glassy"}} \
+		state.customization == {"color": {"Class II Galactic Cruiser": "silver"}, "finish": {"Class II Galactic Cruiser": "glassy"}} \
 		and state.weapon_set == "mk2" and state.pad_set == "mk2")
 	state.customization = {"color": {"Kestrel": "#c0331f"}}
 	state.save_into(cfg)

@@ -130,7 +130,7 @@ Env vars actually read (grep each `render_*.gd` before assuming one applies to a
   `~/.local/share/godot/app_userdata/Cold Light/terrain_<name>.png` (project's registered
   name is "Cold Light", see project.godot; `SHOT_DIR` is NOT read by this script).
 - `render_thruster.gd`: `SHOT_DIR`, `DETAIL`, `ISOLATE`, `VIEW`, `SHAPE`, `GLOW_ON`, `SHIP`
-  (`wren|kestrel|swift|harrier|osprey|condor|albatross`), `WEAPON`/`PAD` (`mk1|mk2`).
+  (`class_ii_cruiser|kestrel|swift|harrier|osprey|condor|albatross`), `WEAPON`/`PAD` (`mk1|mk2`).
 
 `TERRAIN_SHOTS` values (all 19, `tools/render_terrain.gd:32-53`): `moon_rocks, moon_crater,
 io_volcano, mars_volcano, europa_ice, earth_mountains, earth_water, sun_plasma,

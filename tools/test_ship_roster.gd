@@ -6,7 +6,7 @@ extends Node3D
 const ShipScript := preload("res://scripts/flight/ship.gd")
 const HudScript := preload("res://scripts/ui/hud.gd")
 const ROSTER := [
-	{"name": "Wren", "metres": 60.0, "boosters": 1, "rcs": 4, "weapons": 2, "pads": 3, "landjets": 4},
+	{"name": "Class II Galactic Cruiser", "metres": 122.6667, "boosters": 6},
 	{"name": "Kestrel", "metres": 70.0, "boosters": 2, "rcs": 4, "weapons": 2, "pads": 3, "landjets": 4},
 	{"name": "Swift", "metres": 80.0, "boosters": 2, "rcs": 6, "weapons": 2, "pads": 4, "landjets": 4},
 	{"name": "Harrier", "metres": 94.5, "boosters": 2, "rcs": 6, "weapons": 4, "pads": 4, "landjets": 6},
@@ -24,6 +24,12 @@ func _ready() -> void:
 	_check("playable_roster", ship.ship_count() == ROSTER.size())
 
 	_check("tier_1_always_unlocked", GameState.ship_unlocked(1) and ship.ship_lock_text(0) == "")
+	var cruiser_systems := ship.systems
+	ship.set_weapon_set("mk2")
+	ship.set_pad_set("mk2")
+	_check("cruiser_module_toggles_do_not_rebuild", ship.systems == cruiser_systems and not ship.systems.modular)
+	ship.set_weapon_set("mk1")
+	ship.set_pad_set("mk1")
 	for tier in range(2, 8):
 		_check("tier_%d_locked_on_fresh_profile" % tier, not GameState.ship_unlocked(tier))
 	_check("sol_does_not_count", GameState.systems_reached() == 0)
@@ -47,6 +53,12 @@ func _ready() -> void:
 		var info: Dictionary = ShipScript.SHIP_MODELS[i]
 		var model: Node3D = ship.get("_mesh_root").get_child(0)
 		_check("model_loaded_%d" % i, ShipMesh.combined_aabb(model).size.length() > 0.0)
+		if i == 0:
+			_check("cruiser_is_non_modular", not info.get("modular", false) and not ship.current_is_modular())
+			_check("cruiser_has_authored_torches", ship.get("_torch_materials").size() == 2 * int(spec.boosters))
+			_check("cruiser_has_no_rcs_puffs", ship.get("_rcs_puffs").is_empty())
+			_check("cruiser_has_no_module_glbs", not ship.systems.modular)
+			continue
 		_check("modular_%d" % i, info.get("modular", false) and ship.current_is_modular())
 		var hull_km: float = ship.get("_hull_km")
 		_check("fleet_scale_%d" % i, absf(hull_km * 1000.0 - float(spec.metres)) < float(spec.metres) * .02)
@@ -77,7 +89,7 @@ func _ready() -> void:
 		_check("foot_per_pad_%d" % i, rig.foot_points().size() == int(spec.pads))
 		_check("nozzles_throttle_driven_%d" % i, _nozzle_drives(model) == ship.get("_authored_propulsion").filter(
 			func(m): return m.shader == ShipMesh.CRUISER_PROPULSION_SHADER).size() and _nozzle_drives(model) > 0)
-		if not previous.is_empty():
+		if i > 1:
 			_check("stats_escalate_%d" % i, int(info.hp) > int(previous.hp) and int(info.dmg) >= int(previous.dmg) \
 				and float(info.fire_cd) < float(previous.fire_cd) and float(info.energy_max) > float(previous.energy_max) \
 				and float(info.warp) > float(previous.warp))

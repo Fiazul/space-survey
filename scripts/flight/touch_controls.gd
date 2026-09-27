@@ -1,198 +1,298 @@
 class_name TouchControls
 extends CanvasLayer
-# On-screen controls for touch / mobile — MULTI-TOUCH NATIVE, landscape, two-thumb.
-#
-# Why not plain Buttons: Godot's emulate_mouse_from_touch is SINGLE-pointer, so the GUI
-# can only track one finger — you can't hold THRUST + steer + FIRE at once (the whole
-# point of a flight game). So this overlay reads the RAW per-finger touch stream itself
-# (InputEventScreenTouch/Drag, keyed by event.index) and drives the game directly.
-#
-# Layout (PUBG/COD style, landscape, `window/handheld/orientation` forced landscape):
-#   LEFT thumb  — nothing but a fixed movement-joystick zone (left ~45% of the screen,
-#                 above hud.gd's bottom-left hazard). Forward + turn only — the ship has
-#                 no reverse thrust outside a brake, so there is no "backward" stick
-#                 direction; pushing the stick into the back cone brakes instead.
-#                 `stick_to_cmd()` is a pure static function (unit-tested in
-#                 tools/test_touch_controls.gd) mapping the stick vector to
-#                 {thrust, yaw, brake}, fed into Ship as analog `touch_thrust`/`touch_yaw`/
-#                 `touch_brake` fields (never synthesised W/A/D keys — those are digital,
-#                 the stick is analog).
-#   RIGHT thumb — FIRE (ship.touch_fire) and stacked UP/DOWN nose-pitch hold buttons
-#                 (ship.touch_pitch) where a shooter puts its fire buttons, plus the
-#                 smaller BOOST/CAP/THRUST/INTERACT/MAP/HOME/ZOOM buttons along the right
-#                 edge. A drag anywhere in the right zone that isn't on a button is the
-#                 aim-look drag (ship.add_touch_look), same as before — UNLESS a second
-#                 finger is also down in that same free-look zone, in which case the pair
-#                 pinches the chase-camera zoom instead of steering the look (see
-#                 pinch_zoom(), unit-tested in tools/test_touch_controls.gd).
-#   TOP-RIGHT   — a small DEV tap button (ship._debug_toggle_dev_speed); while dev mode
-#                 is on it reveals NODEATH/FASTAIR/TP (dev-sites teleport, = Ctrl+P) tap buttons next to it.
-# BOOST/CAP still hold a synthesised key (Shift/V) — keys aren't touch-emulated.
-# INTERACT/MAP/HOME still tap a one-shot key (F/M/H). THRUST still toggles
-# ship.auto_cruise. Mouse-emulation stays ON globally so menus/map/hangar work by touch —
-# only this flight overlay goes native. Buttons here are visual-only (mouse_filter =
-# IGNORE); button rects are computed from the CURRENT viewport size every resize
-# (anchored to true screen edges, clearing hud.gd's own bottom-left/bottom-right widgets
-# via LEFT_BOTTOM_MARGIN/RIGHT_BOTTOM_MARGIN, and its top-right radar via TOP_MARGIN) —
-# a fixed-pixel layout broke at other aspect ratios/stretch modes (see git history).
+# Native multi-touch flight controls leave flight clear: FIRE and THRUST stay in the
+# bottom-right and MENU opens the remaining actions.
 
 var ship: Node
 var main: Node
-
-const LOOK_SENS := 0.6        # touch-drag → look multiplier (tune on device)
-
-# On desktop we test with `--touch` using the mouse as a single finger. On a real phone
-# (OS "mobile") we IGNORE mouse events — emulate_mouse_from_touch would otherwise echo
-# every finger as a mouse event and double-count. Touch events drive the device.
-var _use_mouse := not OS.has_feature("mobile")
-const MOUSE_FINGER := -7      # synthetic finger index for the desktop test mouse
-
-# kinds
-enum { K_TOGGLE_CRUISE, K_HOLD_KEY, K_HOLD_FIRE, K_TAP_KEY, K_HOLD_PITCH, K_HOLD_ZOOM, K_TAP_DEV, K_TAP_DEBUG_SUB }
-
-var _buttons: Array = []      # [{node, kind, code, tint, side, x_margin, w, h, bottom_off}]
-var _finger := {}             # touch index -> button dict, or the string "joystick"/"look"
-var _dev_btn: Dictionary
-var _nodeath_btn: Dictionary
-var _fastair_btn: Dictionary
-var _tp_btn: Dictionary
-var _cruise_btn: Dictionary
-var _zoom_held := {}
-
-# Bottom clearance (true-bottom-edge to cluster-bottom, in canvas units — canvas units
-# track hud.gd's own fixed-pixel positions 1:1 regardless of resolution/stretch, so these
-# constants stay correct at canvas height 720 (16:9 and wider)):
-# hud.gd bottom-left hazard (combat "KILLS" panel / NAV·MAP·CODEX bar / cancel-nav
-# button, DEFAULT_LAYOUT "combat"=628.67 "buttons"=680 "cancel_nav"=602) starts ~602.
-const LEFT_BOTTOM_MARGIN := 135.0
-# hud.gd bottom-right hazard (details button / TELEPORT EARTH, DEFAULT_LAYOUT
-# "details"=636 "teleport"=674) starts ~636.
-const RIGHT_BOTTOM_MARGIN := 94.0
-# hud.gd's own widgets sit at FIXED canvas-unit positions from the reference 720-tall
-# canvas — they do NOT move down when the effective canvas is taller (16:10/4:3
-# tablets, see class comment re: canvas_items+expand). Our clusters anchor to the TRUE
-# bottom edge, though, so at a taller canvas they'd drift down past the hazard line
-# instead of stopping at it. Clamp so the cluster bottom never passes REFERENCE_HEIGHT
-# minus its margin (e.g. right: 720-94=626, left: 720-135=585) regardless of size.y.
-const REFERENCE_HEIGHT := 720.0
-# hud.gd top-right hazard (corner radar, DEFAULT_LAYOUT "radar"=(1129.33, 11.33), panel
-# MiniMap.PANEL=196x196 at scale 0.76 -> bottom edge 11.33 + 196*0.76 ≈ 160) — the DEV
-# cluster sits below it.
-const TOP_MARGIN := 165.0
-
-const JOY_ZONE_FRACTION := 0.45   # left screen fraction reserved for the movement joystick
-
-# Movement joystick visual: a ring at the finger's touch-down point + a dot that follows
-# the finger, clamped to RING_R.
+const LOOK_SENS := 0.6
+const MOUSE_FINGER := -7
+const EDGE := 16.0
+const GAP := 12.0
+const FONT := 19
+const JOY_ZONE_FRACTION := 0.45
 const RING_R := 64.0
-const RING_DOT_R := 22.0
-var _joy_ring: Control
+const ACTIONS := ["HOME", "MAP", "ARMS", "INTERACT", "GEAR", "CAP", "BOOST", "UP", "DOWN", "ZOOM−", "ZOOM+", "TELEPORT", "SYSTEMS", "DEV"]
+enum { CRUISE, HOLD_KEY, FIRE, TAP_KEY, PITCH, ZOOM, TELEPORT, SYSTEMS, DEV, MENU }
+var _use_mouse := not OS.has_feature("mobile")
+var _buttons: Array = []
+var _finger := {}
+var _menu_open := false
+var _scale := 1.0
+var _insets := {"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}
+var _cruise: Dictionary
+var _joy: Control
 var _joy_finger := -1
 var _joy_origin := Vector2.ZERO
 var _joy_now := Vector2.ZERO
-var _prev_brake := false
-
-var _pitch_held := {}   # b.code (-1/1) -> true, while its UP/DOWN button is held
-
-# Pinch-to-zoom: only the first two fingers simultaneously tagged "look" (right free
-# zone, not on a button, not the joystick) drive it. A 3rd+ look finger is ignored —
-# rare on a phone (joystick already claims one hand) and not worth the complexity.
-var _look_idx: Array = []      # finger indices currently tagged "look", in landing order
-var _finger_pos := {}          # finger index -> last known position, "look" fingers only
-var _pinch_active := false
+var _look_idx: Array = []
+var _finger_pos := {}
 var _pinch_start_zoom := 1.0
 var _pinch_start_dist := 0.0
-
-# UP/DOWN pitches during normal flight; Ship routes the same signed command to
-# vertical thrust with landing gear down. Drag-look still controls attitude.
-const UPDOWN_IS_PITCH := true
-
+var _pitch := {}
 
 func _ready() -> void:
-	layer = 90                                  # above the HUD
-	process_mode = Node.PROCESS_MODE_ALWAYS     # so MAP (M) still toggles while the map pauses
+	layer = 90
+	process_mode = Node.PROCESS_MODE_ALWAYS
 	_build()
 	get_viewport().size_changed.connect(_layout)
 
-
 func _build() -> void:
-	# Right cluster, PUBG/COD layout — FIRE + UP/DOWN big and thumb-reachable, everything
-	# else small along the right edge. Left side carries nothing but the joystick zone.
-	_add("FIRE", 20.0, 140, 140, Color(1.0, 0.5, 0.35), K_HOLD_FIRE, "R", 20.0)
-	_add("UP",   170.0, 110, 90, Color(0.55, 0.85, 1.0), K_HOLD_PITCH, "R", 110.0, -1)
-	_add("DOWN", 170.0, 110, 90, Color(0.55, 0.85, 1.0), K_HOLD_PITCH, "R", 10.0, 1)
-	# x_margin=340 keeps this column's right edge (940) clear of the TR dev cluster's
-	# leftmost button (FASTAIR, left edge 956) even at HOME's top (the tallest stack
-	# offset) — see CLAUDE.md-style layout note above; checked at reference 1280x720.
-	_cruise_btn = _add("THRUST", 340.0, 110, 64, Color(0.4, 0.9, 0.6), K_TOGGLE_CRUISE, "R", 10.0)
-	_add("BOOST",    340.0, 110, 64, Color(0.5, 0.8, 1.0), K_HOLD_KEY, "R", 84.0, KEY_SHIFT)
-	_add("CAP",      340.0, 110, 64, Color(0.6, 1.0, 0.7), K_HOLD_KEY, "R", 158.0, KEY_V)
-	_add("INTERACT", 340.0, 110, 64, Color(0.55, 0.85, 1.0), K_TAP_KEY, "R", 232.0, KEY_F)
-	_add("MAP",      340.0, 110, 64, Color(0.7, 0.8, 1.0), K_TAP_KEY, "R", 306.0, KEY_M)
-	_add("HOME",     340.0, 110, 64, Color(1.0, 0.7, 0.5), K_TAP_KEY, "R", 380.0, KEY_H)
-	_add("ZOOM+", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 10.0, -1)
-	_add("ZOOM−", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_HOLD_ZOOM, "R", 84.0, 1)
-	_add("GEAR", 460.0, 110, 64, Color(0.55, 0.85, 1.0), K_TAP_KEY, "R", 158.0, KEY_B)
-	_add("ARMS", 460.0, 110, 64, Color(1.0, 0.65, 0.35), K_TAP_KEY, "R", 232.0, KEY_R)
-
-	_dev_btn = _add("DEV", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEV, "TR", 0.0)
-	_nodeath_btn = _add("NODEATH", 114.0, 100, 40, Color(1.0, 0.4, 0.4), K_TAP_DEBUG_SUB, "TR", 0.0, 0)
-	_fastair_btn = _add("FASTAIR", 224.0, 100, 40, Color(0.4, 1.0, 0.9), K_TAP_DEBUG_SUB, "TR", 0.0, 1)
-	_tp_btn = _add("TP", 14.0, 90, 40, Color(1.0, 0.85, 0.3), K_TAP_DEBUG_SUB, "TR", 46.0, 2)
-
-	_joy_ring = Control.new()
-	_joy_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_joy_ring.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_joy_ring.visible = false
-	_joy_ring.draw.connect(_draw_joy_ring)
-	add_child(_joy_ring)
-
+	_add("FIRE", FIRE)
+	_cruise = _add("THRUST", CRUISE)
+	_add("MENU", MENU)
+	_add("HOME", TAP_KEY, KEY_H, true)
+	_add("MAP", TAP_KEY, KEY_M, true)
+	_add("ARMS", TAP_KEY, KEY_R, true)
+	_add("INTERACT", TAP_KEY, KEY_F, true)
+	_add("GEAR", TAP_KEY, KEY_B, true)
+	_add("CAP", HOLD_KEY, KEY_V, true)
+	_add("BOOST", HOLD_KEY, KEY_SHIFT, true)
+	_add("UP", PITCH, -1, true)
+	_add("DOWN", PITCH, 1, true)
+	_add("ZOOM−", ZOOM, -1, true)
+	_add("ZOOM+", ZOOM, 1, true)
+	_add("TELEPORT", TELEPORT, 0, true)
+	_add("SYSTEMS", SYSTEMS, 0, true)
+	_add("DEV", DEV, 0, true)
+	var close := _add("×", MENU, 0, true)
+	close.node.set_meta("close", true)
+	_joy = Control.new()
+	_joy.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_joy.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_joy.visible = false
+	_joy.draw.connect(_draw_joy)
+	add_child(_joy)
 	_layout()
 
+func _add(text: String, kind: int, code: int = 0, menu := false) -> Dictionary:
+	var node := Button.new()
+	node.text = text
+	node.focus_mode = Control.FOCUS_NONE
+	node.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	node.add_theme_font_size_override("font_size", FONT)
+	node.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
+	for state in ["normal", "hover", "pressed"]:
+		node.add_theme_stylebox_override(state, _box(_tint(text), 0.45 if state != "pressed" else 0.9))
+	add_child(node)
+	var button := {"node": node, "kind": kind, "code": code, "menu": menu, "tint": _tint(text)}
+	_buttons.append(button)
+	return button
 
-# Recompute every button's rect from the CURRENT viewport size — called once at boot
-# and again on every resize/orientation change (get_viewport().size_changed).
+func _tint(text: String) -> Color:
+	if text == "FIRE":
+		return Color(1.0, 0.5, 0.35)
+	if text == "THRUST":
+		return Color(0.4, 0.9, 0.6)
+	if text == "DEV":
+		return Color(1.0, 0.85, 0.3)
+	return Color(0.55, 0.85, 1.0)
+
 func _layout() -> void:
 	var size := get_viewport().get_visible_rect().size
+	_insets = HudScale.safe_insets(size)
+	_scale = overlay_scale(size, HudScale.touch_scale(), _insets)
+	var rects := button_rects(size, _scale, _insets)
+	rects.merge(menu_rects(size, _scale, _insets), true)
+	for button in _buttons:
+		var rect: Rect2 = rects.get(button.node.text, Rect2())
+		button.node.position = rect.position
+		button.node.size = rect.size
+		button.node.add_theme_font_size_override("font_size", roundi(FONT * _scale))
+
+static func overlay_scale(size: Vector2, desired: float, insets: Dictionary) -> float:
+	return minf(HudScale.fit_scale(desired, 270.0, size.x * 0.30 - float(insets.right)), HudScale.fit_scale(desired, 160.0, size.y - float(insets.top) - float(insets.bottom)))
+
+static func button_rects(size: Vector2, scale: float, insets: Dictionary) -> Dictionary:
+	var right := size.x - float(insets.right) - EDGE * scale
+	var bottom := size.y - float(insets.bottom) - EDGE * scale
+	var large := Vector2(120, 120) * scale
+	var fire := Rect2(Vector2(right - large.x, bottom - large.y), large)
+	return {"FIRE": fire, "THRUST": Rect2(Vector2(fire.position.x - GAP * scale - large.x, fire.position.y), large), "MENU": Rect2(Vector2(right - 76.0 * scale, float(insets.top) + EDGE * scale), Vector2(76, 34) * scale)}
+
+static func menu_rects(size: Vector2, scale: float, insets: Dictionary) -> Dictionary:
+	var cell := Vector2(118, 46) * scale
+	var gap := 8.0 * scale
+	var rows := ceili(float(ACTIONS.size()) / 3.0)
+	var panel := Vector2(cell.x * 3.0 + gap * 2.0, cell.y * rows + gap * (rows - 1))
+	var origin := (size - panel) * 0.5
+	origin.x = clampf(origin.x, float(insets.left) + EDGE, size.x - float(insets.right) - panel.x - EDGE)
+	origin.y = clampf(origin.y, float(insets.top) + EDGE + 38.0 * scale, size.y - float(insets.bottom) - panel.y - EDGE)
+	var out := {"×": Rect2(Vector2(origin.x + panel.x - 30.0 * scale, origin.y - 36.0 * scale), Vector2(30, 30) * scale)}
+	for i in ACTIONS.size():
+		out[ACTIONS[i]] = Rect2(origin + Vector2((i % 3) * (cell.x + gap), (i / 3) * (cell.y + gap)), cell)
+	return out
+
+static func visible_flight_buttons() -> PackedStringArray:
+	return PackedStringArray(["FIRE", "THRUST", "MENU"])
+
+
+static func menu_action_names() -> PackedStringArray:
+	return PackedStringArray(ACTIONS)
+
+
+static func toggled_menu(open: bool) -> bool:
+	return not open
+
+
+func is_menu_open() -> bool:
+	return _menu_open
+
+
+func set_menu_open(open: bool) -> void:
+	_menu_open = open
+	_reset()
+
+func _process(_delta: float) -> void:
+	if ship == null:
+		return
+	var blocked: bool = main != null and main.hud != null and main.hud.is_systems_open()
+	var docked: bool = main != null and main.docked
 	for b in _buttons:
-		if b.side == "TR":
-			b.node.position = Vector2(size.x - b.x_margin - b.w, TOP_MARGIN + b.bottom_off)
+		b.node.visible = not docked and ((_menu_open and b.menu and (b.node.text != "DEV" or ship.dev_speed)) or (not _menu_open and not blocked and not b.menu))
+	if _menu_open or blocked:
+		_reset()
+		return
+	_highlight(_cruise, ship.auto_cruise)
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventScreenTouch:
+		_touch(event.index, _canvas_position(event.position), event.pressed)
+	elif event is InputEventScreenDrag:
+		_drag(event.index, _canvas_position(event.position), _canvas_relative(event.position, event.relative))
+	elif _use_mouse and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		var _m = null
+		for b in _buttons:
+			if b.node.text == "MENU": _m = b.node.get_global_rect()
+		print("TOUCHDBG raw=", event.position, " conv=", _canvas_position(event.position), " vis=", get_viewport().get_visible_rect(), " ft=", get_viewport().get_final_transform(), " menu=", _m, " layer=", get_parent().get_class(), " win=", get_window().size)
+		_touch(MOUSE_FINGER, _canvas_position(event.position), event.pressed)
+	elif _use_mouse and event is InputEventMouseMotion and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
+		_drag(MOUSE_FINGER, _canvas_position(event.position), _canvas_relative(event.position, event.relative))
+	if ship != null:
+		ship.touch_held = not _finger.is_empty()
+
+
+func _canvas_position(position: Vector2) -> Vector2:
+	return event_to_canvas(position, get_viewport().get_final_transform())
+
+
+func _canvas_relative(position: Vector2, relative: Vector2) -> Vector2:
+	return _canvas_position(position + relative) - _canvas_position(position)
+
+
+static func event_to_canvas(position: Vector2, final_transform: Transform2D) -> Vector2:
+	return final_transform.affine_inverse() * position
+
+func _touch(index: int, pos: Vector2, pressed: bool) -> void:
+	if pressed:
+		var hit = _button_at(pos)
+		if hit != null:
+			_finger[index] = hit
+			_press(hit)
+			return
+		if _menu_open:
+			_menu_open = false
+			_reset()
+			_finger[index] = "dead"
+			return
+		if main != null and main.hud != null and main.hud.blocks_flight_touch(pos):
+			_finger[index] = "dead"
+			return
+		if pos.x <= get_viewport().get_visible_rect().size.x * JOY_ZONE_FRACTION and _joy_finger == -1:
+			_finger[index] = "joy"
+			_joy_finger = index
+			_joy_origin = pos
+			_joy_now = pos
+			_joy.visible = true
+			_joy.queue_redraw()
 		else:
-			var x: float = b.x_margin if b.side == "L" else size.x - b.x_margin - b.w
-			var base_margin: float = LEFT_BOTTOM_MARGIN if b.side == "L" else RIGHT_BOTTOM_MARGIN
-			var cluster_bottom: float = size.y - _clamped_bottom_margin(size.y, base_margin)
-			b.node.position = Vector2(x, cluster_bottom - b.bottom_off - b.h)
+			_finger[index] = "look"
+			_look_idx.append(index)
+			_finger_pos[index] = pos
+			_pinch_base()
+	else:
+		var was = _finger.get(index)
+		if was is Dictionary:
+			_release(was)
+		elif was == "joy":
+			_joy_finger = -1
+			_joy.visible = false
+			ship.touch_thrust = 0.0
+			ship.touch_yaw = 0.0
+			ship.touch_brake = false
+		elif was == "look":
+			_look_idx.erase(index)
+			_finger_pos.erase(index)
+			_pinch_base()
+		_finger.erase(index)
+
+func _button_at(pos: Vector2):
+	for b in _buttons:
+		if b.node.visible and b.node.get_global_rect().has_point(pos):
+			return b
+	return null
+
+func _press(b: Dictionary) -> void:
+	match b.kind:
+		MENU:
+			_menu_open = not _menu_open
+			_reset()
+		CRUISE:
+			ship.auto_cruise = not ship.auto_cruise
+		FIRE:
+			ship.touch_fire = true
+			_highlight(b, true)
+		HOLD_KEY:
+			_send(b.code, true)
+			_highlight(b, true)
+		TAP_KEY:
+			_send(b.code, true)
+			_send(b.code, false)
+			_flash(b)
+		PITCH:
+			_pitch[b.code] = true
+			_pitch_apply()
+			_highlight(b, true)
+		ZOOM:
+			ship._cam_zoom = zoom_step(ship._cam_zoom, b.code, 0.12, ship.ZOOM_MIN, ship.ZOOM_MAX)
+		TELEPORT:
+			_menu_open = false
+			main.hud.teleport_sites_button.pressed.emit()
+		SYSTEMS:
+			_menu_open = false
+			main.hud.toggle_systems()
+		DEV:
+			ship._debug_toggle_dev_speed()
+
+func _release(b: Dictionary) -> void:
+	if b.kind == FIRE:
+		ship.touch_fire = false
+		_highlight(b, false)
+	elif b.kind == HOLD_KEY:
+		_send(b.code, false)
+		_highlight(b, false)
+	elif b.kind == PITCH:
+		_pitch.erase(b.code)
+		_pitch_apply()
+		_highlight(b, false)
 
 
-# hud.gd's hazard line sits at a fixed REFERENCE_HEIGHT - base_margin from the top; past
-# REFERENCE_HEIGHT tall, growing size.y would otherwise push the true-bottom-anchored
-# margin (and so the cluster) down past that fixed line instead of stopping at it.
-func _clamped_bottom_margin(size_y: float, base_margin: float) -> float:
-	return maxf(base_margin, size_y - (REFERENCE_HEIGHT - base_margin))
+func _pitch_apply() -> void:
+	var sum := 0.0
+	for key in _pitch:
+		sum += key
+	ship.touch_pitch = clampf(sum, -1.0, 1.0)
 
-
-# Android backgrounding (call, notification shade, task-switch) can drop touch-up events
-# entirely — the OS never delivers them once the app loses focus. Without this, a lifted
-# finger's index leaks forever in _finger/_look_idx (phantom pinch pair, or a joystick/look
-# that never lets go), and any held button keeps a synthesized key down.
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
-		_reset_all_input()
-
-
-func _reset_all_input() -> void:
-	for f in _finger.values():
-		if f is Dictionary:
-			_release(f)   # un-highlights + _send(code,false) for BOOST/CAP, clears touch_fire/pitch
+func _reset() -> void:
+	for value in _finger.values():
+		if value is Dictionary:
+			_release(value)
 	_finger.clear()
 	_look_idx.clear()
 	_finger_pos.clear()
-	_pinch_active = false
-	_pitch_held.clear()
-	_zoom_held.clear()
+	_pitch.clear()
 	_joy_finger = -1
-	_joy_ring.visible = false
-	_prev_brake = false
+	_joy.visible = false
 	if ship != null:
 		ship.touch_thrust = 0.0
 		ship.touch_yaw = 0.0
@@ -201,153 +301,31 @@ func _reset_all_input() -> void:
 		ship.touch_fire = false
 		ship.touch_held = false
 
-
-func _process(delta: float) -> void:
-	if ship == null:
-		return
-	var menu_open: bool = main != null and main.hud != null and main.hud.is_systems_open()
-	for button in _buttons:
-		button.node.visible = not menu_open
-	if menu_open:
-		_reset_all_input()
-		return
-	# Log-space so a held button covers the whole range in ~1.5 s at a uniform perceived rate.
-	var zoom_amount: float = log(ship.ZOOM_MAX / ship.ZOOM_MIN) / 1.5 * delta
-	for dir in _zoom_held:
-		ship._cam_zoom = zoom_step(ship._cam_zoom, dir, zoom_amount,
-			ship.ZOOM_MIN, ship.ZOOM_MAX)
-	# auto_cruise can also be dropped by the touch-brake rising edge, main.gd's Num Lock
-	# toggle, or its S-tap handler — none of which go through _press, so the THRUST
-	# button's highlight has to be polled here rather than set only on press.
-	_highlight(_cruise_btn, ship.auto_cruise)
-	_highlight(_dev_btn, ship.dev_speed)
-	_nodeath_btn.node.visible = ship.dev_speed
-	_fastair_btn.node.visible = ship.dev_speed
-	_tp_btn.node.visible = ship.dev_speed
-	if ship.dev_speed:
-		_highlight(_nodeath_btn, ship._FM.dev_no_death)
-		_highlight(_fastair_btn, ship._FM.dev_fast_air)
-
-
-# --- raw multi-touch input -------------------------------------------------
-func _input(event: InputEvent) -> void:
-	if event is InputEventScreenTouch:
-		_touch_at(event.index, event.position, event.pressed)
-		if ship != null: ship.touch_held = not _finger.is_empty()
-	elif event is InputEventScreenDrag:
-		_drag(event.index, event.position, event.relative)
-	elif _use_mouse and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		_touch_at(MOUSE_FINGER, event.position, event.pressed)
-		if ship != null: ship.touch_held = not _finger.is_empty()
-	elif _use_mouse and event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
-		_drag(MOUSE_FINGER, event.position, event.relative)
-
-
-# A finger went down / up at pos.
-func _touch_at(index: int, pos: Vector2, pressed: bool) -> void:
-	if pressed:
-		if main != null and main.hud != null and main.hud.blocks_flight_touch(pos):
-			_finger[index] = "dead"
-			return
-		var hit: Variant = _button_at(pos)
-		if hit != null:
-			_finger[index] = hit
-			_press(hit)
-			return
-		match _zone_at(pos):
-			"joystick":
-				if _joy_finger != -1:
-					_finger[index] = "dead"   # a joystick finger is already down — only one at a time
-				else:
-					_finger[index] = "joystick"
-					_joy_finger = index
-					_joy_origin = pos
-					_joy_now = pos
-					_joy_ring.visible = true
-					_joy_ring.queue_redraw()
-			"look":
-				_finger[index] = "look"
-				_finger_pos[index] = pos
-				if not _look_idx.has(index):
-					_look_idx.append(index)
-				_pinch_rebaseline()
-			_:
-				pass   # bottom-margin hazard strip — leave it to hud.gd's own mouse-emulated widgets
-	else:
-		var was: Variant = _finger.get(index)
-		if was is Dictionary:
-			_release(was)
-		elif was == "joystick":
-			_joy_finger = -1
-			_joy_ring.visible = false
-			if ship != null:
-				ship.touch_thrust = 0.0
-				ship.touch_yaw = 0.0
-				ship.touch_brake = false
-			_prev_brake = false
-		elif was == "look":
-			_look_idx.erase(index)
-			_finger_pos.erase(index)
-			_pinch_rebaseline()
-		_finger.erase(index)
-
-
-# (Re)start the pinch baseline whenever exactly two fingers are tagged "look" — called
-# after any look finger lands or lifts. Anything other than exactly two disables pinch
-# (a lone finger goes back to normal look; a 3rd+ finger is simply not pinch-tracked).
-func _pinch_rebaseline() -> void:
-	if _look_idx.size() == 2 and ship != null:
-		_pinch_active = true
-		_pinch_start_zoom = ship._cam_zoom
-		_pinch_start_dist = _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]])
-	else:
-		_pinch_active = false
-
-
-# A finger moved; joystick fingers drive the stick, look fingers orbit the camera.
 func _drag(index: int, pos: Vector2, rel: Vector2) -> void:
-	var kind: Variant = _finger.get(index)
-	if kind == "joystick":
+	var kind = _finger.get(index)
+	if kind == "joy":
 		_joy_now = pos
-		_joy_ring.queue_redraw()
-		if ship != null:
-			var v: Vector2 = (_joy_now - _joy_origin) / RING_R
-			if v.length() > 1.0:
-				v = v.normalized()
-			var cmd := stick_to_cmd(v)
-			ship.touch_thrust = cmd.thrust
-			ship.touch_yaw = cmd.yaw
-			ship.touch_brake = cmd.brake
-			if cmd.brake and not _prev_brake and ship.auto_cruise:
-				ship.auto_cruise = false
-				if main != null and main.hud != null:
-					main.hud.toast = "AUTO-CRUISE  OFF"
-					main.hud.toast_t = 2.0
-			_prev_brake = cmd.brake
+		_joy.queue_redraw()
+		var v := (_joy_now - _joy_origin) / RING_R
+		if v.length() > 1.0:
+			v = v.normalized()
+		var cmd := stick_to_cmd(v)
+		ship.touch_thrust = cmd.thrust
+		ship.touch_yaw = cmd.yaw
+		ship.touch_brake = cmd.brake
 	elif kind == "look":
 		_finger_pos[index] = pos
-		if _pinch_active:
-			var cur_dist: float = _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]])
-			if ship != null:
-				# ship.ZOOM_MIN/MAX read dynamically (ship is typed Node here, not Ship) — a
-				# static `Ship.ZOOM_MIN` class-name reference still loads fine, but forces this
-				# script to fully compile ship.gd as a dependency, which spews
-				# "Identifier not found: Ephemeris" compile errors to stderr under
-				# `godot --headless --script` (ship.gd touches the Ephemeris autoload — see
-				# CLAUDE.md). Reading it off the instance avoids that noise.
-				ship._cam_zoom = pinch_zoom(_pinch_start_zoom, _pinch_start_dist, cur_dist,
-					ship.ZOOM_MIN, ship.ZOOM_MAX)
-		elif not _pinch_active and _look_idx.size() == 1 and ship != null:
+		if _look_idx.size() == 2:
+			ship._cam_zoom = pinch_zoom(_pinch_start_zoom, _pinch_start_dist, _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]]), ship.ZOOM_MIN, ship.ZOOM_MAX)
+		elif _look_idx.size() == 1:
 			ship.add_touch_look(rel * LOOK_SENS)
 
 
-const BRAKE_EPS := 0.001   # acos/float rounding can land a true 150° a hair under — brake anyway
+func _pinch_base() -> void:
+	if _look_idx.size() == 2:
+		_pinch_start_zoom = ship._cam_zoom
+		_pinch_start_dist = _finger_pos[_look_idx[0]].distance_to(_finger_pos[_look_idx[1]])
 
-# Pure — no ship/autoload access — so tools/test_touch_controls.gd can unit-test the
-# mapping headless. Screen y is down: forward = v.y < 0. Dead zone < 0.15. Angle from
-# straight-ahead: <=15° pure forward, 15°-150° blends a forward component (0 at 90°+)
-# with a yaw ramp (0 at 15° -> 1.0 at 90°, held at 90°-150°), >=150° (behind the ship) is
-# a hard brake instead of a reverse thrust — the ship has none.
 static func stick_to_cmd(v: Vector2) -> Dictionary:
 	var mag := v.length()
 	if mag < 0.15:
@@ -355,136 +333,27 @@ static func stick_to_cmd(v: Vector2) -> Dictionary:
 	if mag > 1.0:
 		v /= mag
 		mag = 1.0
-	var fwd_dot := clampf(v.dot(Vector2(0.0, -1.0)) / mag, -1.0, 1.0)
-	var theta_deg := rad_to_deg(acos(fwd_dot))
-	var side := signf(v.x)
-	if theta_deg <= 15.0:
-		return {"thrust": mag, "yaw": 0.0, "brake": false}
-	if theta_deg >= 150.0 - BRAKE_EPS:
+	var angle := rad_to_deg(acos(clampf(v.dot(Vector2.UP) / mag, -1.0, 1.0)))
+	if angle >= 149.999:
 		return {"thrust": 0.0, "yaw": 0.0, "brake": true}
-	var thrust := mag * maxf(0.0, cos(deg_to_rad(theta_deg)))
-	var ramp := smoothstep(0.0, 1.0, clampf((theta_deg - 15.0) / 75.0, 0.0, 1.0))
-	return {"thrust": thrust, "yaw": side * ramp, "brake": false}
+	if angle <= 15.0:
+		return {"thrust": mag, "yaw": 0.0, "brake": false}
+	return {"thrust": mag * maxf(0.0, cos(deg_to_rad(angle))), "yaw": signf(v.x) * smoothstep(0.0, 1.0, clampf((angle - 15.0) / 75.0, 0.0, 1.0)), "brake": false}
 
 
-# Pure — no ship/autoload access — so tools/test_touch_controls.gd can unit-test it
-# headless. Fingers moving apart (cur_dist > start_dist) zoom IN (camera closer, smaller
-# zoom value); together zooms out. Guards a near-zero distance (finger-down frame before
-# any separation, or a degenerate same-point pinch) instead of dividing by it.
-static func pinch_zoom(start_zoom: float, start_dist: float, cur_dist: float,
-		zmin: float, zmax: float) -> float:
-	if cur_dist < 0.001 or start_dist < 0.001:
-		return clampf(start_zoom, zmin, zmax)
-	return clampf(start_zoom * (start_dist / cur_dist), zmin, zmax)
+static func pinch_zoom(start_zoom: float, start_dist: float, cur_dist: float, zmin: float, zmax: float) -> float:
+	return clampf(start_zoom if cur_dist < 0.001 or start_dist < 0.001 else start_zoom * start_dist / cur_dist, zmin, zmax)
 
 
 static func zoom_step(cur: float, dir: int, amount: float, zmin: float, zmax: float) -> float:
 	return clampf(cur * exp(dir * amount), zmin, zmax)
 
 
-func _zone_at(pos: Vector2) -> String:
-	var size := get_viewport().get_visible_rect().size
-	if pos.x <= size.x * JOY_ZONE_FRACTION:
-		var cut: float = size.y - _clamped_bottom_margin(size.y, LEFT_BOTTOM_MARGIN)
-		return "joystick" if pos.y <= cut else "dead"
-	var cut: float = size.y - _clamped_bottom_margin(size.y, RIGHT_BOTTOM_MARGIN)
-	return "look" if pos.y <= cut else "dead"
-
-
-func _button_at(pos: Vector2):
-	for b in _buttons:
-		if b.node.visible and b.node.get_global_rect().has_point(pos):
-			return b
-	return null
-
-
-func _press(b: Dictionary) -> void:
-	match b.kind:
-		K_TOGGLE_CRUISE:
-			if ship != null:
-				ship.auto_cruise = not ship.auto_cruise
-				# _process polls ship.auto_cruise every frame — no highlight call needed here.
-		K_HOLD_KEY:
-			_send(b.code, true); _highlight(b, true)
-		K_HOLD_FIRE:
-			if ship != null: ship.touch_fire = true
-			_highlight(b, true)
-		K_TAP_KEY:
-			_send(b.code, true); _send(b.code, false); _flash(b)
-		K_HOLD_PITCH:
-			_pitch_held[b.code] = true
-			_recompute_pitch()
-			_highlight(b, true)
-		K_HOLD_ZOOM:
-			_zoom_held[b.code] = true
-			_highlight(b, true)
-		K_TAP_DEV:
-			# No _flash — _process polls ship.dev_speed every frame; a flash would fight it.
-			if ship != null: ship._debug_toggle_dev_speed()
-		K_TAP_DEBUG_SUB:
-			if ship != null:
-				if b.code == 0: ship._debug_toggle_dev_no_death()
-				elif b.code == 1: ship._debug_toggle_dev_fast_air()
-				elif main != null and main.dev_sites != null: main.dev_sites.toggle()
-
-
-func _release(b: Dictionary) -> void:
-	match b.kind:
-		K_HOLD_KEY:
-			_send(b.code, false); _highlight(b, false)
-		K_HOLD_FIRE:
-			if ship != null: ship.touch_fire = false
-			_highlight(b, false)
-		K_HOLD_PITCH:
-			_pitch_held.erase(b.code)
-			_recompute_pitch()
-			_highlight(b, false)
-		K_HOLD_ZOOM:
-			_zoom_held.erase(b.code)
-			_highlight(b, false)
-		# toggle/tap/dev buttons keep or already flashed their state.
-
-
-func _recompute_pitch() -> void:
-	if ship == null:
-		return
-	var total := 0.0
-	for code in _pitch_held:
-		total += code
-	ship.touch_pitch = clampf(total, -1.0, 1.0)
-
-
-# --- visuals ---------------------------------------------------------------
-# x_margin/w/h/bottom_off are canvas units measured from the edge named by `side`
-# ("L" = left edge + true bottom, "R" = right edge + true bottom, "TR" = right edge +
-# TOP_MARGIN, `bottom_off` reused as a top offset there) — `_layout` turns these into an
-# actual Rect2 against the current viewport size.
-func _add(text: String, x_margin: float, w: float, h: float, tint: Color, kind: int,
-		side: String, bottom_off: float, code: int = 0) -> Dictionary:
-	var b := Button.new()
-	b.text = text
-	b.size = Vector2(w, h)
-	b.focus_mode = Control.FOCUS_NONE
-	b.mouse_filter = Control.MOUSE_FILTER_IGNORE   # visual only — we read raw touches ourselves
-	b.add_theme_font_size_override("font_size", 19)
-	b.add_theme_color_override("font_color", Color(0.95, 0.98, 1.0))
-	b.add_theme_stylebox_override("normal", _box(tint, 0.16))
-	b.add_theme_stylebox_override("hover", _box(tint, 0.16))
-	b.add_theme_stylebox_override("pressed", _box(tint, 0.16))
-	b.add_theme_stylebox_override("disabled", _box(tint, 0.16))
-	add_child(b)
-	var d := {"node": b, "kind": kind, "code": code, "tint": tint,
-		"side": side, "x_margin": x_margin, "w": w, "h": h, "bottom_off": bottom_off}
-	_buttons.append(d)
-	return d
-
-
 func _highlight(b: Dictionary, on: bool) -> void:
-	if b.get("hl_on", null) == on:
-		return   # already in this state — don't rebuild the StyleBoxFlat every frame
-	b.hl_on = on
-	var fill := 0.5 if on else 0.16
-	b.node.add_theme_stylebox_override("normal", _box(b.tint, fill))
+	if b.get("lit", null) == on:
+		return
+	b.lit = on
+	b.node.add_theme_stylebox_override("normal", _box(b.tint, 0.9 if on else 0.45))
 
 
 func _flash(b: Dictionary) -> void:
@@ -493,28 +362,26 @@ func _flash(b: Dictionary) -> void:
 
 
 func _box(tint: Color, fill: float) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(tint.r, tint.g, tint.b, fill)
-	sb.border_color = Color(tint.r, tint.g, tint.b, 0.85)
-	sb.set_border_width_all(2)
-	sb.set_corner_radius_all(14)
-	return sb
+	var box := StyleBoxFlat.new()
+	box.bg_color = Color(tint.r, tint.g, tint.b, fill)
+	box.border_color = Color(tint.r, tint.g, tint.b, 0.85)
+	box.set_border_width_all(2)
+	box.set_corner_radius_all(999)
+	return box
 
 
-func _draw_joy_ring() -> void:
-	var d: Vector2 = _joy_now - _joy_origin
-	if d.length() > RING_R:
-		d = d.normalized() * RING_R
-	_joy_ring.draw_circle(_joy_origin, RING_R, Color(0.8, 0.9, 1.0, 0.12))
-	_joy_ring.draw_arc(_joy_origin, RING_R, 0.0, TAU, 48, Color(0.8, 0.9, 1.0, 0.55), 2.0)
-	_joy_ring.draw_circle(_joy_origin + d, RING_DOT_R, Color(0.8, 0.9, 1.0, 0.45))
+func _draw_joy() -> void:
+	var delta := _joy_now - _joy_origin
+	if delta.length() > RING_R:
+		delta = delta.normalized() * RING_R
+	_joy.draw_circle(_joy_origin, RING_R, Color(0.8, 0.9, 1.0, 0.12))
+	_joy.draw_arc(_joy_origin, RING_R, 0.0, TAU, 48, Color(0.8, 0.9, 1.0, 0.55), 2.0)
+	_joy.draw_circle(_joy_origin + delta, 22.0, Color(0.8, 0.9, 1.0, 0.45))
 
 
-# Synthesise a key the game already polls (both keycode and physical_keycode, for
-# is_physical_key_pressed). Keys are NOT touch-emulated, so this is safe and multi-touch.
 func _send(code: int, pressed: bool) -> void:
-	var ev := InputEventKey.new()
-	ev.keycode = code
-	ev.physical_keycode = code
-	ev.pressed = pressed
-	Input.parse_input_event(ev)
+	var event := InputEventKey.new()
+	event.keycode = code
+	event.physical_keycode = code
+	event.pressed = pressed
+	Input.parse_input_event(event)

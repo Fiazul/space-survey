@@ -145,11 +145,21 @@ var _systems_recapture := false
 var _btn_bar: Control              # container wrapping the MAP/CODEX/?/⚙ buttons
 var _edit_ui: Control              # dim scrim + banner + Save/Reset/Done toolbar
 var _edit_toolbar: Control         # the toolbar rect (clicks here aren't drags)
+var _edit_banner: Label
+# Touch layout (phone/tablet or desktop `--touch`): widgets re-dock to the real canvas edges
+# every resize (_touch_layout) and hangar targets grow by _hs. Desktop never takes this path.
+var _touch := HudScale.is_touch()
+var _hs := 1.0
+var _hangar_scroll: ScrollContainer
+var _hangar_opts: VBoxContainer
+const HANGAR_TOUCH_MAX := 1.35
 
 
 func _ready() -> void:
 	# ALWAYS so the layout editor still receives input while the game is paused.
 	process_mode = Node.PROCESS_MODE_ALWAYS
+	if _touch:
+		_hs = minf(HudScale.touch_scale(), HANGAR_TOUCH_MAX)
 	_canvas = CanvasLayer.new()
 	add_child(_canvas)
 	_load_layout()
@@ -183,21 +193,23 @@ func _ready() -> void:
 	# Scan prompt/progress (center, below the crosshair) + discovery toast (center).
 	# Declutter: feedback moves OFF the centre to the free right side (x ≈ 980), left-aligned,
 	# so the play area around the crosshair stays clean. (A proper right-side rail/box is next.)
-	var touch_layout := OS.has_feature("mobile") or "--touch" in OS.get_cmdline_user_args()
-	var rx := 28.0 if touch_layout else 1000.0
-	_scan_label = _make_label(Vector2(rx, 510), 14, C_GREEN)
+	# Touch moves the column to a top-centre band (_touch_layout) — x=28 sat in the joystick zone.
+	var rx := 1000.0
+	var feed_font := 16 if _touch else 14
+	var feed_align := HORIZONTAL_ALIGNMENT_CENTER if _touch else HORIZONTAL_ALIGNMENT_LEFT
+	_scan_label = _make_label(Vector2(rx, 510), feed_font, C_GREEN)
 	_scan_label.size = Vector2(288, 22)
-	_scan_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_toast_label = _make_label(Vector2(rx, 450), 14, C_GREEN)
+	_scan_label.horizontal_alignment = feed_align
+	_toast_label = _make_label(Vector2(rx, 450), feed_font, C_GREEN)
 	_toast_label.size = Vector2(288, 60)
-	_toast_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_toast_label.horizontal_alignment = feed_align
 	_toast_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_toast_label.modulate.a = 0.0
 
 	# Contextual prompt ("Press F to …") — right side, under the toast, left-aligned.
-	_prompt = _make_label(Vector2(rx, 535), 14, C_TEXT)
+	_prompt = _make_label(Vector2(rx, 535), feed_font, C_TEXT)
 	_prompt.size = Vector2(288, 44)
-	_prompt.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_prompt.horizontal_alignment = feed_align
 	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
 	# Centered overlay text — used for the wormhole-transit countdown.
@@ -357,6 +369,112 @@ func _ready() -> void:
 	_track("details", details_button)
 
 	_build_edit_ui(_canvas)
+	if _touch:
+		get_viewport().size_changed.connect(_touch_layout)
+		_touch_layout()
+
+
+# Touch only: every widget authored against the 1280x720 base re-docks onto the CURRENT
+# canvas (wider phones, taller tablets) inset by the display cutout — edge widgets keep
+# their edge gap, centre-band text re-centres, the feed column moves to the top-centre band
+# clear of TouchControls' DEV strip. Base positions are cached on first call (meta
+# "base_pos") so repeated resizes don't accumulate.
+func _touch_layout() -> void:
+	var size := get_viewport().get_visible_rect().size
+	var ins := HudScale.safe_insets(size)
+	var cx := size.x * 0.5
+	var dy := (size.y - SCREEN.y) * 0.5
+	for item in _movable:
+		_dock_movable(item, size, ins)
+	_dist_label.position = _base_pos(_dist_label) + Vector2(ins.left, ins.top)
+	for l in [_tip, _quest_label, _debug_label, _boss_label, _guardian_label]:
+		l.position = Vector2(0.0, _base_pos(l).y + ins.top)
+		l.size.x = size.x
+	for l in [_menu, _capture_label, _hitmarker]:
+		l.position = Vector2(0.0, _base_pos(l).y + dy)
+		l.size.x = size.x
+	_boss_bar.position = Vector2(cx - _boss_bar.size.x * 0.5, _base_pos(_boss_bar).y + ins.top)
+	_lore.position = Vector2(cx - _lore.size.x * 0.5, _base_pos(_lore).y + ins.top)
+	tp_cancel_button.position = Vector2(cx - tp_cancel_button.size.x * 0.5, _base_pos(tp_cancel_button).y + dy)
+	_edit_banner.size.x = size.x
+	_edit_toolbar.position = Vector2(cx - 170.0, size.y - ins.bottom - 60.0)
+
+	var feed_w: float = clampf(size.x * 0.42, 280.0, 560.0)
+	var feed_x := cx - feed_w * 0.5
+	_toast_label.position = Vector2(feed_x, 132.0 + ins.top)
+	_toast_label.size = Vector2(feed_w, 60)
+	_scan_label.position = Vector2(feed_x, 196.0 + ins.top)
+	_scan_label.size = Vector2(feed_w, 22)
+	_prompt.position = Vector2(feed_x, 222.0 + ins.top)
+	_prompt.size = Vector2(feed_w, 44)
+
+	teleport_sites_button.offset_left = -256.0 - ins.right
+	teleport_sites_button.offset_right = -180.0 - ins.right
+	teleport_sites_button.offset_top = 12.0 + ins.top
+	teleport_sites_button.offset_bottom = 42.0 + ins.top
+	_systems_button.offset_left = -172.0 - ins.right
+	_systems_button.offset_right = -84.0 - ins.right
+	_systems_button.offset_top = 12.0 + ins.top
+	_systems_button.offset_bottom = 42.0 + ins.top
+	teleport_sites_button.visible = false
+	_systems_button.visible = false
+
+	_tp_net_button.size = Vector2(268.0, 44.0) * _hs
+	_tp_net_button.position = Vector2(cx - _tp_net_button.size.x * 0.5,
+		size.y - ins.bottom - 16.0 - _tp_net_button.size.y)
+	_fit_hangar()
+
+
+func _base_pos(node: Control) -> Vector2:
+	if not node.has_meta("base_pos"):
+		node.set_meta("base_pos", node.position)
+	return node.get_meta("base_pos")
+
+
+func _dock_movable(item: Dictionary, size: Vector2, ins: Dictionary) -> void:
+	if _saved.has(item.id):
+		return
+	var node: Control = item.node
+	node.position = HudScale.dock_pos(item.def, node.size * item.defs, size, ins)
+
+
+# Touch hangar: right-docked under the top buttons down to the bottom edge; the scroll box
+# takes the content's height until that runs out. TELEPORT NETWORK then centres in the free
+# bottom strip between the bottom-left speed/hull stack and the hangar, or — when that
+# strip is too narrow (16:9 at 1.35x) — stacks just above the bottom-left widgets.
+func _fit_hangar() -> void:
+	if not _touch or _hangar == null:
+		return
+	var size := get_viewport().get_visible_rect().size
+	var ins := HudScale.safe_insets(size)
+	var top: float = 72.0 + ins.top
+	var bottom: float = size.y - ins.bottom - 12.0
+	var content: Vector2 = _hangar_scroll.get_child(0).get_combined_minimum_size()
+	var chrome := _hangar.get_combined_minimum_size().y - _hangar_scroll.custom_minimum_size.y
+	_hangar_scroll.custom_minimum_size = Vector2(content.x, minf(content.y, maxf(80.0, bottom - top - chrome)))
+	_hangar.size = Vector2.ZERO
+	_hangar.position = Vector2(size.x - ins.right - 16.0 - _hangar.get_combined_minimum_size().x, top)
+	var stack := Rect2()
+	for item in _movable:
+		if item.id in ["nav", "hull"]:
+			var r := Rect2(item.node.position, item.node.size * item.node.scale)
+			stack = stack.merge(r) if stack.has_area() else r
+	var w: float = _tp_net_button.size.x
+	var free_l: float = stack.end.x + 12.0
+	var free_r: float = _hangar.position.x - 12.0
+	if free_r - free_l >= w:
+		_tp_net_button.position = Vector2((free_l + free_r - w) * 0.5, size.y - ins.bottom - 16.0 - _tp_net_button.size.y)
+	else:
+		_tp_net_button.position = Vector2(stack.position.x, stack.position.y - 12.0 - _tp_net_button.size.y)
+
+
+func _tap_key(code: int) -> void:
+	for pressed in [true, false]:
+		var ev := InputEventKey.new()
+		ev.keycode = code
+		ev.physical_keycode = code
+		ev.pressed = pressed
+		Input.parse_input_event(ev)
 
 
 # Squared, brushed-metal, cyan-glow sci-fi button: "⌖ TELEPORT EARTH".
@@ -383,7 +501,7 @@ func _build_teleport_net_button(canvas: CanvasLayer) -> void:
 	_tp_net_button.size = Vector2(268, 36)
 	_tp_net_button.position = Vector2(640 - 134, 660)   # design-space bottom-centre
 	_tp_net_button.focus_mode = Control.FOCUS_NONE
-	_tp_net_button.add_theme_font_size_override("font_size", 13)
+	_tp_net_button.add_theme_font_size_override("font_size", roundi(13 * _hs))
 	_tp_net_button.add_theme_color_override("font_color", C_TEXT)
 	_tp_net_button.add_theme_color_override("font_hover_color", Color(1, 1, 1))
 	_tp_net_button.add_theme_stylebox_override("normal", _metal_box(Color(0.40, 1.0, 0.85), 0.5))
@@ -567,9 +685,15 @@ func is_systems_open() -> bool:
 func toggle_systems() -> void:
 	_set_systems_open(not is_systems_open())
 
+# Every tappable hud widget the raw-touch overlay would otherwise also act on underneath.
 func blocks_flight_touch(pos: Vector2) -> bool:
-	return is_systems_open() or _systems_button.get_global_rect().has_point(pos) \
-		or teleport_sites_button.get_global_rect().has_point(pos)
+	if is_systems_open():
+		return true
+	for c in [_systems_button, teleport_sites_button, _hangar, _tp_net_button, details_button,
+			cancel_nav_button, tp_cancel_button]:
+		if c != null and c.is_visible_in_tree() and c.get_global_rect().has_point(pos):
+			return true
+	return false
 
 func _set_systems_open(open: bool) -> void:
 	if open and not is_systems_open():
@@ -621,6 +745,9 @@ func _track(id: String, node: Control) -> void:
 	node.position = def_pos
 	node.scale = def_scl
 	_movable.append({ "id": id, "node": node, "def": def_pos, "defs": def_scl })
+	if touch and is_inside_tree():
+		var canvas := get_viewport().get_visible_rect().size
+		_dock_movable(_movable[-1], canvas, HudScale.safe_insets(canvas))
 	# A saved user layout still wins over the default.
 	if _saved.has(id):
 		node.position = _saved[id]
@@ -664,6 +791,8 @@ func _reset_layout() -> void:
 	_saved_scale.clear()
 	var cfg := ConfigFile.new()   # write an empty file so the reset persists
 	cfg.save(LAYOUT_PATH)
+	if _touch:
+		_touch_layout()
 
 
 # Dim scrim + banner + Save/Reset/Done toolbar. Hidden until enter_edit().
@@ -680,6 +809,7 @@ func _build_edit_ui(canvas: CanvasLayer) -> void:
 	_edit_ui.add_child(scrim)
 
 	var banner := _new_label(15, C_ACCENT)
+	_edit_banner = banner
 	banner.text = "◇  HUD LAYOUT  —  drag to move  ·  scroll to resize"
 	banner.position = Vector2(0, 24)
 	banner.size = Vector2(SCREEN.x, 24)
@@ -768,9 +898,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 	elif event is InputEventMouseMotion and _drag != null:
 		var sz := _drag.get_global_rect().size
+		var bounds := get_viewport().get_visible_rect().size if _touch else SCREEN
 		_drag.position = Vector2(
-			clampf(mpos.x - _drag_grab.x, 0.0, SCREEN.x - sz.x),
-			clampf(mpos.y - _drag_grab.y, 0.0, SCREEN.y - sz.y))
+			clampf(mpos.x - _drag_grab.x, 0.0, bounds.x - sz.x),
+			clampf(mpos.y - _drag_grab.y, 0.0, bounds.y - sz.y))
 		get_viewport().set_input_as_handled()
 	# Scroll the wheel over a widget to resize it (HUD scale, persisted with position).
 	elif event is InputEventMouseButton and event.pressed \
@@ -1077,6 +1208,11 @@ func _build_hangar(canvas: CanvasLayer) -> void:
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 7)
 	margin.add_child(col)
+	if _touch:
+		_build_hangar_touch(col)
+		_hangar.visible = false
+		canvas.add_child(_hangar)
+		return
 
 	_hangar_title = _new_label(13, Color(0.7, 0.95, 1.0))
 	col.add_child(_hangar_title)
@@ -1095,6 +1231,44 @@ func _build_hangar(canvas: CanvasLayer) -> void:
 
 	_hangar.visible = false
 	canvas.add_child(_hangar)
+
+
+# Touch hangar: title + UNDOCK button (no F key on a phone) over a scroll box holding two
+# columns — ship rows left, colour/finish/module pickers right — so 7 ships plus pickers fit
+# a 720-tall canvas at finger size.
+func _build_hangar_touch(col: VBoxContainer) -> void:
+	var head := HBoxContainer.new()
+	head.add_theme_constant_override("separation", roundi(10 * _hs))
+	col.add_child(head)
+	_hangar_title = _new_label(roundi(13 * _hs), Color(0.7, 0.95, 1.0))
+	_hangar_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_hangar_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	head.add_child(_hangar_title)
+	var undock := Button.new()
+	undock.text = "UNDOCK"
+	undock.custom_minimum_size = Vector2(120, 48) * _hs
+	undock.focus_mode = Control.FOCUS_NONE
+	undock.add_theme_font_size_override("font_size", roundi(13 * _hs))
+	undock.add_theme_color_override("font_color", C_TEXT)
+	undock.add_theme_stylebox_override("normal", _metal_box(C_ACCENT, 0.5))
+	undock.add_theme_stylebox_override("hover", _metal_box(C_ACCENT, 0.5))
+	undock.add_theme_stylebox_override("pressed", _metal_box(C_ACCENT.lightened(0.3), 1.0))
+	undock.pressed.connect(_tap_key.bind(KEY_F))
+	head.add_child(undock)
+
+	_hangar_scroll = ScrollContainer.new()
+	_hangar_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(_hangar_scroll)
+	var cols := HBoxContainer.new()
+	cols.add_theme_constant_override("separation", roundi(14 * _hs))
+	_hangar_scroll.add_child(cols)
+	_hangar_rows = VBoxContainer.new()
+	_hangar_rows.add_theme_constant_override("separation", roundi(4 * _hs))
+	_hangar_rows.custom_minimum_size.x = 240 * _hs
+	cols.add_child(_hangar_rows)
+	_hangar_opts = VBoxContainer.new()
+	_hangar_opts.add_theme_constant_override("separation", roundi(6 * _hs))
+	cols.add_child(_hangar_opts)
 
 
 # Outer frame stylebox: transparent fill (so a gradient TextureRect shows through),
@@ -1194,6 +1368,10 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 	_hangar_sig = sig
 	_hangar_color_key = body_key
 	_hangar.visible = open
+	if _touch:
+		for item in _movable:
+			if item.id == "radar":
+				item.node.visible = not open
 	# Bottom-centre network button rides with the dock state.
 	_tp_net_button.visible = open
 	if open:
@@ -1206,22 +1384,30 @@ func set_hangar(open: bool, names: PackedStringArray, current: int, station: Str
 	_hangar_title.text = "HANGAR · %s" % station
 	_color_swatch_buttons.clear()
 	_color_picker = null
+	var opts: VBoxContainer = _hangar_opts if _touch else _hangar_rows
+	if _touch:
+		for c in _hangar_rows.get_children() + _hangar_opts.get_children():
+			c.get_parent().remove_child(c)
+			c.queue_free()
 	for c in _hangar_rows.get_children():
 		c.queue_free()
 	for i in names.size():
-		_hangar_rows.add_child(_make_hangar_row(names[i], i, i == current))
+		_hangar_rows.add_child(_make_hangar_row_touch(names[i], i, i == current) if _touch \
+			else _make_hangar_row(names[i], i, i == current))
 	if has_color:
-		_hangar_rows.add_child(_make_color_swatches("SHIP COLOUR", body_key))
+		opts.add_child(_make_color_swatches("SHIP COLOUR", body_key))
 	if has_finish:
-		_hangar_rows.add_child(_make_choice_row("FINISH",
+		opts.add_child(_make_choice_row("FINISH",
 			[{"key": "metallic", "label": "METALLIC"}, {"key": "glassy", "label": "GLASSY"}],
 			finish, _on_finish_choice))
 	if modules:
 		var sets := [{"key": "mk1", "label": "MK1"}, {"key": "mk2", "label": "MK2"}]
-		_hangar_rows.add_child(_make_choice_row("WEAPONS", sets, ship.current_weapon_set(),
+		opts.add_child(_make_choice_row("WEAPONS", sets, ship.current_weapon_set(),
 			func(key: String) -> void: ship_module_selected.emit("weapon", key)))
-		_hangar_rows.add_child(_make_choice_row("LANDING PADS", sets, ship.current_pad_set(),
+		opts.add_child(_make_choice_row("LANDING PADS", sets, ship.current_pad_set(),
 			func(key: String) -> void: ship_module_selected.emit("pad", key)))
+	if _touch:
+		_fit_hangar.call_deferred()
 	# (Teleport-network button now lives bottom-centre — see _build_teleport_net_button.)
 
 
@@ -1265,6 +1451,58 @@ func _make_hangar_row(ship_name: String, idx: int, is_current: bool) -> PanelCon
 	return row
 
 
+# Touch row: >=48 canvas px tall at scale 1, lock reason on its own readable line, locked
+# rows visibly dimmed (dark fill, dim name, amber lock line).
+func _make_hangar_row_touch(ship_name: String, idx: int, is_current: bool) -> PanelContainer:
+	var lock: String = ship.ship_lock_text(idx) if ship != null else ""
+	var row := PanelContainer.new()
+	row.custom_minimum_size.y = 48 * _hs
+	var box := StyleBoxFlat.new()
+	box.set_border_width_all(2 if is_current else 1)
+	box.set_corner_radius_all(roundi(4 * _hs))
+	box.content_margin_left = 10 * _hs
+	box.content_margin_right = 10 * _hs
+	box.content_margin_top = 4 * _hs
+	box.content_margin_bottom = 4 * _hs
+	if is_current:
+		box.bg_color = Color(0.18, 0.45, 0.70, 0.55)
+		box.border_color = Color(0.6, 0.95, 1.0, 0.95)
+	elif lock != "":
+		box.bg_color = Color(0.04, 0.05, 0.07, 0.70)
+		box.border_color = Color(0.30, 0.34, 0.40, 0.45)
+	else:
+		box.bg_color = Color(0.10, 0.16, 0.24, 0.45)
+		box.border_color = Color(0.35, 0.60, 0.80, 0.60)
+	row.add_theme_stylebox_override("panel", box)
+	row.mouse_filter = Control.MOUSE_FILTER_STOP
+	row.gui_input.connect(_on_hangar_row_input.bind(idx))
+
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", roundi(8 * _hs))
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(h)
+	var text := VBoxContainer.new()
+	text.add_theme_constant_override("separation", 0)
+	text.alignment = BoxContainer.ALIGNMENT_CENTER
+	text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(text)
+	var nm := _new_label(roundi(14 * _hs), Color(1, 1, 1) if is_current else (Color(0.55, 0.58, 0.62) if lock != "" else C_TEXT))
+	nm.text = ship_name
+	text.add_child(nm)
+	if lock != "":
+		var lk := _new_label(roundi(11 * _hs), Color(1.0, 0.74, 0.40))
+		lk.text = "LOCKED · " + lock.trim_prefix("Locked: ")
+		text.add_child(lk)
+	if is_current:
+		var tag := _new_label(roundi(11 * _hs), Color(0.7, 1.0, 1.0))
+		tag.text = "ACTIVE"
+		tag.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		tag.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		h.add_child(tag)
+	return row
+
+
 func _on_hangar_row_input(event: InputEvent, idx: int) -> void:
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
@@ -1277,19 +1515,21 @@ func _make_color_swatches(title: String, current_key: String) -> Control:
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", 4)
 	pad.add_child(wrap)
-	var label := _new_label(10, Color(0.7, 0.95, 1.0))
+	var label := _new_label(roundi(11 * _hs) if _touch else 10, Color(0.7, 0.95, 1.0))
 	label.text = title
 	wrap.add_child(label)
 	var grid := GridContainer.new()
-	grid.columns = 7
-	grid.add_theme_constant_override("h_separation", 5)
-	grid.add_theme_constant_override("v_separation", 5)
+	grid.columns = 5 if _touch else 7
+	var gap := roundi(8 * _hs) if _touch else 5
+	var swatch := Vector2(40, 40) * _hs if _touch else Vector2(24, 24)
+	grid.add_theme_constant_override("h_separation", gap)
+	grid.add_theme_constant_override("v_separation", gap)
 	wrap.add_child(grid)
 	_color_swatch_buttons.clear()
 	for palette in Ship.SHIP_PALETTES:
 		var selected: bool = String(palette.key) == current_key
 		var button := Button.new()
-		button.custom_minimum_size = Vector2(24, 24)
+		button.custom_minimum_size = swatch
 		button.tooltip_text = String(palette.name)
 		button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 		var style := StyleBoxFlat.new()
@@ -1305,7 +1545,7 @@ func _make_color_swatches(title: String, current_key: String) -> Control:
 		_color_swatch_buttons.append(button)
 		grid.add_child(button)
 	var picker := ColorPickerButton.new()
-	picker.custom_minimum_size = Vector2(24, 24)
+	picker.custom_minimum_size = swatch
 	picker.tooltip_text = "Custom colour"
 	picker.edit_alpha = false
 	picker.color = Ship.color_from_key(current_key)
@@ -1376,6 +1616,8 @@ func _on_swatch_pressed(key: String) -> void:
 
 
 func _make_choice_row(title: String, options: Array, current_key: String, callback: Callable) -> Control:
+	if _touch:
+		return _make_segmented_row(title, options, current_key, callback)
 	var pad := MarginContainer.new()
 	pad.add_theme_constant_override("margin_top", 6)
 	var wrap := VBoxContainer.new()
@@ -1403,6 +1645,47 @@ func _make_choice_row(title: String, options: Array, current_key: String, callba
 		button.pressed.connect(callback.bind(String(option.key)))
 		row.add_child(button)
 	return pad
+
+
+# Touch: a segmented toggle — joined >=44-tall buttons, the active one filled bright with a
+# check mark, the other dark with dim text.
+func _make_segmented_row(title: String, options: Array, current_key: String, callback: Callable) -> Control:
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", roundi(3 * _hs))
+	var label := _new_label(roundi(11 * _hs), Color(0.7, 0.95, 1.0))
+	label.text = title
+	wrap.add_child(label)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 0)
+	wrap.add_child(row)
+	var r := roundi(6 * _hs)
+	for i in options.size():
+		var option: Dictionary = options[i]
+		var selected: bool = String(option.key) == current_key
+		var button := Button.new()
+		button.text = ("✓ " if selected else "") + String(option.label)
+		button.custom_minimum_size = Vector2(92, 44) * _hs
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.focus_mode = Control.FOCUS_NONE
+		button.add_theme_font_size_override("font_size", roundi(13 * _hs))
+		button.add_theme_color_override("font_color", Color(1, 1, 1) if selected else C_DIM)
+		button.add_theme_color_override("font_pressed_color", Color(1, 1, 1))
+		button.add_theme_color_override("font_hover_color", Color(1, 1, 1) if selected else C_DIM)
+		var style := StyleBoxFlat.new()
+		style.bg_color = Color(0.22, 0.60, 0.92, 0.90) if selected else Color(0.05, 0.08, 0.12, 0.70)
+		style.border_color = Color(0.7, 0.97, 1.0, 1.0) if selected else Color(0.35, 0.5, 0.65, 0.7)
+		style.set_border_width_all(2 if selected else 1)
+		if i == 0:
+			style.corner_radius_top_left = r
+			style.corner_radius_bottom_left = r
+		if i == options.size() - 1:
+			style.corner_radius_top_right = r
+			style.corner_radius_bottom_right = r
+		for state in ["normal", "hover", "pressed", "focus"]:
+			button.add_theme_stylebox_override(state, style)
+		button.pressed.connect(callback.bind(String(option.key)))
+		row.add_child(button)
+	return wrap
 
 
 func _on_finish_choice(key: String) -> void:
@@ -1437,7 +1720,7 @@ func _draw_lock_ring() -> void:
 func _draw_capture_ring() -> void:
 	if scan_progress <= 0.0 or scan_name == "":
 		return
-	var c := Vector2(640.0, 360.0)
+	var c := get_viewport().get_visible_rect().size * 0.5 if _touch else Vector2(640.0, 360.0)
 	var f := clampf(scan_progress, 0.0, 1.0)
 	var r := 84.0
 	var t := Time.get_ticks_msec() * 0.001

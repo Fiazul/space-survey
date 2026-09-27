@@ -241,6 +241,26 @@ is now reached in ordinary controlled flight, not just a designed dive. See
 
 ---
 
+## 7. Touch UI 2026-09-27 — needs a phone check
+
+Layout was judged only from llvmpipe screenshots with a forced `TOUCH_SCALE`; the real
+dpi-derived scale and cutout insets have never run on a device. On a phone, look at:
+- Button size under the thumb (overlay ~1.25× on a 20:9 phone): FIRE and THRUST rest in
+  the bottom-right corner and MENU remains a small, dim top-right pill.
+- Centre view: flight is empty except for the joystick ring while touching; pinch still
+  zooms from the empty right-side look area. Open MENU and check its action grid closes on
+  outside tap or ×, and TELEPORT/SYSTEMS/DEV are reachable there.
+- Notch side: nothing clipped by the cutout in either landscape orientation (safe area is
+  read once per resize — rotate the phone 180° and check both).
+- Top-right utilities: the MENU pill does not collide with the radar or cutout. DEV appears
+  only after dev mode has been enabled.
+- Hangar while docked: all 7 ships + colours + MK1/MK2 fit without scrolling; locked rows
+  obviously dimmed with the amber lock line readable; UNDOCK works; tapping a row never
+  fires an overlay action underneath.
+- A 16:10 tablet: the bottom-left speed panel and hull bars sit on the true bottom edge.
+
+---
+
 ## Known-not-fixed, so don't report these
 
 - **Ground is still one flat colour.** The albedo spans under two texels across a

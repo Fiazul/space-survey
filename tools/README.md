@@ -49,8 +49,8 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `render_plasma.gd` (+ `.tscn`) | 90 chase-camera firing frames; `PLASMA_CRUISE_KMS`, `PLASMA_ROTATING=1` and `PLASMA_SHOTS` select fast drift, turning with planetary rotation and output directory |
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
 | `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |
-| `render_thruster.gd` (+ `.tscn`) | Modular hulls with plumes, gear and weapons deployed, matching the live WorldEnvironment (`SHIP=<slug>`, `WEAPON`/`PAD`=mk1\|mk2, `FRAME_SCALE`) |
-| `render_touch_hud.gd` (+ `.tscn`) | Boots the real `Main` scene offscreen at a given resolution (`--resolution WxH ... -- --touch`) so the touch-controls overlay + HUD can be looked at, for diagnosing "buttons/joystick missing" reports without a physical device |
+| `render_thruster.gd` (+ `.tscn`) | Modular hulls with plumes, gear and weapons deployed, matching the live WorldEnvironment (`SHIP=<slug>`, `WEAPON`/`PAD`=mk1\|mk2, `FRAME_SCALE`, `VIEW=rear\|chase`; glow on as in main.gd, `GLOW_ON=0` disables) |
+| `render_touch_hud.gd` (+ `.tscn`) | Boots the real `Main` scene offscreen at a given resolution (xvfb `-screen 0 WxHx24` sets the resolution — the project is fullscreen; `-- --touch`) so the touch-controls overlay + HUD can be looked at without a device. `SHOT_HANGAR`/`SHOT_DEV`/`SHOT_TOAST`/`SHOT_SYSTEMS`/`SHOT_TELEPORT`=1 open states; `TOUCH_SCALE`/`SAFE_INSET` preview a phone's scale/cutout |
 
 ## gen_*/build_*/draw_*/fetch_*/ingest_*/export_*/parse_* — asset & data generators
 

@@ -72,6 +72,22 @@ godot --headless --export-debug "Android" builds/android/Astryx.apk
 - A translucent joystick ring now draws at the finger's touch-down point while
   steer-dragging (`TouchControls._draw_steer_ring`) — there was previously no visual at
   all for the steer zone, only the invisible drag-to-look behavior.
+- **Touch sizing + docking (2026-09-27)**: `scripts/ui/hud_scale.gd` (`HudScale`) is the one
+  place touch sizes come from. `touch_scale()` = how much a canvas unit must grow for a
+  48-unit target to reach 7.6 mm (Android's 48 dp) from `screen_get_dpi()`/`screen_get_size()`,
+  clamped 1.0–1.6, always 1.0 off-mobile. The overlay uses `TouchControls.overlay_scale()`
+  (that wish cut down so the right cluster stays out of the 45 % joystick zone and under
+  the SYSTEMS/TELEPORT buttons — ~1.25 on a 20:9 phone); the hangar uses it capped at 1.35.
+  `HudScale.safe_insets()` turns `DisplayServer.get_display_safe_area()` (notch/cutout)
+  into canvas-unit insets for both. On touch, `hud.gd::_touch_layout()` re-docks every
+  1280×720-authored widget onto the real canvas on each `size_changed` (right-edge widgets
+  keep their right gap, bottom widgets follow the true bottom, centre text re-centres); the
+  toast/scan/prompt column moved to a top-centre band out of the joystick zone. Overlay
+  buttons hide while docked; the touch hangar is two columns (ships | colour + finish +
+  MK1/MK2 segmented toggles) with an UNDOCK button, scrolling only if the canvas is too short.
+  Desktop (no `--touch`) layout is unchanged. Preview a phone on desktop:
+  `TOUCH_SCALE=1.6 SAFE_INSET=60,0,0,0 SHOT_HANGAR=1 xvfb-run -a -s "-screen 0 2400x1080x24" godot --path . res://tools/render_touch_hud.tscn -- --touch`
+  (the xvfb screen size IS the resolution — the project is fullscreen, `--resolution` alone is ignored).
 - None of the touch feel could be tested off-device — expect to adjust `LOOK_SENS` and button sizes after the first run.
 
 ## September 23 prerelease

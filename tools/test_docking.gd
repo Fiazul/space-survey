@@ -11,7 +11,7 @@ func _ready() -> void:
 	add_child(main)
 	main.set_process(false)
 	main.ship.set_physics_process(false)
-	main._land_beside_dock()
+	main.ship.relocate(Ephemeris.spawn_pos())   # the arrival park sits inside the station ring
 	main.props.dock_name = ""
 	main._update_dock_ui()
 	check("unnamed existing station permits docking", main._dock_in_range)

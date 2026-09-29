@@ -1,8 +1,9 @@
 class_name PlatformTeleport
 extends CanvasLayer
 # Isolated platform fast-travel console — NOT the star map and with no tie to it. It just
-# lists every space-platform system: UNLOCKED (reached) ones bright + clickable, LOCKED ones
-# dark grey + disabled. Click an unlocked tile, hit CONFIRM, and the teleport ritual carries
+# lists every system you have reached (each has a platform once visited), bright + clickable;
+# the one you're docked at is marked. Unreached stars need the interstellar drive. Click a
+# tile, hit CONFIRM, and the teleport ritual carries
 # you there. Opened from the dock's "TELEPORT NETWORK" button (main._on_open_teleport_map).
 
 var main                      # set by main right after instancing
@@ -107,7 +108,7 @@ func _build_tiles() -> void:
 	for c in _grid.get_children():
 		c.queue_free()
 	for id in SystemDB.all():
-		if not SystemDB.is_teleport_platform(id) or id == SystemDB.INTERSTELLAR:
+		if not SystemDB.is_teleport_platform(id):
 			continue
 		var here: bool = (id == main.current_system)
 		var unlocked: bool = main.is_teleport_unlocked(id)

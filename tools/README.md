@@ -71,8 +71,6 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `gen_teleport_audio.py` | `assets/teleport.wav` teleport whoosh |
 | `gen_ui_click.py` | `assets/ui_click.wav` UI click |
 | `draw_tab_target.py` | `TAB_TARGETING.png` diagram |
-| `draw_wh_network.py` | `WORMHOLE_NETWORK.png` from `/tmp/wh_graph.json` |
-| `export_wh_graph.gd` | Dumps the live wormhole graph to `/tmp/wh_graph.json` for `draw_wh_network.py` |
 | `parse_tycho.py` | Parses the raw Tycho-2 catalogue into `tools/data/tycho_slim.bin` |
 | `real_positions.py` | Reference computation of real Sun/planet/star positions (dev verification, not consumed by the game) |
 

@@ -222,7 +222,7 @@ func _setup(shot: Array) -> void:
 	add_child(patch)
 	patch.bind_body(earth, s)
 	var ship: Vector3 = dir * (s.ground_radius_km(dir, radius) + alt)
-	patch.update_for(ship, body, true, radius, alt, 0.02, ceiling, earth, s)
+	patch.update_for(ship, body, radius, alt, 0.02, ceiling, earth, s)
 	patch.force_ready()
 	# Floating origin, exactly as PlanetSystem does it.
 	patch.position = -ship
@@ -293,7 +293,7 @@ func _setup(shot: Array) -> void:
 	var sim_time_s := float(opts.get("sim_time_s", 0.0))
 	var cloud := CL.new()
 	add_child(cloud)
-	cloud.update_for(-ship, body, true, radius, alt, 0.02, ceiling, deck_earth, to_sun, sim_time_s)
+	cloud.update_for(-ship, body, radius, alt, 0.02, ceiling, deck_earth, to_sun, sim_time_s)
 	if str(shot[4]).begins_with("parity_"):
 		cloud.visible = false
 

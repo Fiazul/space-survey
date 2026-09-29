@@ -2,7 +2,7 @@ class_name TestOnboardingMigration
 extends Node
 ## A saved onboarding_step indexes the step list that shipped when it was written;
 ## Onboarding._ready must re-derive it from the completed-id set.
-const OLD_IDS := ["thrust", "scan", "claim", "map", "log", "wormhole", "dock", "teleport_net", "fire", "swarm", "boss"]
+const OLD_IDS := ["thrust", "scan", "claim", "map", "log", "retired_step", "dock", "teleport_net", "fire", "swarm", "boss"]
 
 func _ready() -> void:
 	var failed := 0

@@ -10,7 +10,6 @@ func _ready() -> void:
 	var ship := Ship.new()
 	add_child(ship)
 	ship._set_capture(false)
-	ship.newton = true
 	var combat := Combat.new()
 	add_child(combat)
 	var saved_cycle: float = Ephemeris.rotation_clock.cycle_minutes

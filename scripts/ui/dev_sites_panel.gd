@@ -6,9 +6,8 @@ extends CanvasLayer
 # restores capture. main.gd owns the Ctrl+P key; this class only exposes toggle().
 #
 # Dev tool: no separate flag gate, same as F6/F7/F9 on Ship (always available).
-# Sol only — outside Sol the ship isn't Newton-anchored to a body by name at all
-# (ship.newton is false), so the list is intentionally left empty with a note
-# instead of guessing at arcade-system coordinates.
+# Sol only — DevSites names Sol bodies, so in any other system the list is left
+# empty with a note.
 
 const DS := preload("res://scripts/world/dev_sites.gd")
 
@@ -67,7 +66,7 @@ func _close() -> void:
 
 # ---------------------------------------------------------------------------
 func _refresh() -> void:
-	var in_sol := ship != null and ship.newton
+	var in_sol := ship != null and Ephemeris.system_id == Ephemeris.SOL_ID
 	_title.text = "TELEPORT — SOL" if in_sol \
 		else "TELEPORT — return to Sol first"
 	for c in _list.get_children():
@@ -180,8 +179,6 @@ func go(site: Dictionary) -> void:
 		ship.nearest_dir = planets.nearest_dir
 		ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
 		ship.set_terrain_frame(planets.surface_basis(planets.nearest_name), planets.surface_angle(planets.nearest_name))
-		ship.speed_limit = planets.speed_limit
-		ship.gravity = planets.gravity
 		ship.last_newton_g = ship._newton_g()
 
 

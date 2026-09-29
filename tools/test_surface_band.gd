@@ -10,8 +10,7 @@ extends SceneTree
 # about whether the band contains anything at all.
 #
 # So the first thing this file asserts is that each band is NON-EMPTY. Then that
-# the tile never binds Earth's maps on another world, and never appears in an
-# arcade system where "altitude" is not in kilometres.
+# the tile never binds Earth's maps on another world.
 
 const G := preload("res://scripts/world/planet_generator.gd")
 const SP := preload("res://scripts/world/surface_patch.gd")
@@ -87,12 +86,10 @@ func _band() -> int:
 	failed += _check("gas_giant_gets_no_tile", _open_window(jup, AIRLESS_KILL).is_empty())
 	failed += _check("star_gets_no_tile", _open_window(sun, AIRLESS_KILL).is_empty())
 
-	# An arcade system reports "altitude" in 0.01-AU units. A tile there would be a
-	# ground plate floating in deep space.
-	failed += _check("arcade_system_gets_no_tile",
-		not SP.should_show("Kepler-22b", false, 1.0, AIRLESS_KILL, _ceiling_of(moon), moon))
+	# arcade_system_gets_no_tile deleted 2026-09-29: every system is km now, no
+	# non-physical altitude exists to guard against.
 	failed += _check("nameless_body_gets_no_tile",
-		not SP.should_show("", true, 1.0, AIRLESS_KILL, _ceiling_of(moon), moon))
+		not SP.should_show("", 1.0, AIRLESS_KILL, _ceiling_of(moon), moon))
 
 	# The five plate assertions that stood here (plate_grows_with_altitude,
 	# plate_never_below_min / above_max, plate_always_dwarfs_the_altitude,
@@ -117,7 +114,7 @@ func _open_window(recipe: Dictionary, kill: float) -> Array:
 	var ceiling := _ceiling_of(recipe)
 	for i in 12000:
 		var alt := float(i) * 0.01
-		if SP.should_show("Probe", true, alt, kill, ceiling, recipe):
+		if SP.should_show("Probe", alt, kill, ceiling, recipe):
 			out.append(alt)
 	return out
 
@@ -266,7 +263,7 @@ func _tile() -> int:
 	# thread); force_ready() is the test-only hook that blocks until it lands
 	# and commits, so a deterministic test does not have to guess how many
 	# frames a real background job needs.
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	patch.force_ready()
 	var r: Dictionary = patch.report()
 
@@ -279,18 +276,18 @@ func _tile() -> int:
 
 	# Standing still must not throw the rings away and rebuild them.
 	var tris0 := int(r.tris)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	failed += _check("standing_still_keeps_the_same_rings",
 		int(patch.report().tris) == tris0)
 
 	# Climbing out of the band puts it away again.
-	patch.update_for(dir * (MOON_R + 40.0), "Moon", true, MOON_R, 40.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(dir * (MOON_R + 40.0), "Moon", MOON_R, 40.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	failed += _check("tile_hides_above_the_band", not bool(patch.report().visible))
 
 	# Earth at EZ: the regression commit 8933730 fixed, checked on the live object
 	# and not only on the arithmetic.
 	var earth_recipe := G.recipe_for({"name": "Earth"})
-	patch.update_for(Vector3(0.0, 6471.0, 0.0), "Earth", true, 6371.0, 100.0,
+	patch.update_for(Vector3(0.0, 6471.0, 0.0), "Earth", 6371.0, 100.0,
 		EARTH_KILL, _ceiling_of(earth_recipe), earth_recipe,
 		G.terrain_sampler(earth_recipe))
 	failed += _check("no_ground_tile_at_earth_ez", not bool(patch.report().visible))
@@ -349,17 +346,17 @@ func _band_edge_hysteresis() -> int:
 	var patch := SP.new()
 	patch._ready()
 	failed += _check("hyst_enters_band_on_first_nominal_pass",
-		patch._in_band_hyst("Moon", true, ceiling - 0.01, AIRLESS_KILL, ceiling, moon))
+		patch._in_band_hyst("Moon", ceiling - 0.01, AIRLESS_KILL, ceiling, moon))
 	failed += _check("hyst_holds_a_hair_past_the_ceiling",
-		patch._in_band_hyst("Moon", true, ceiling + 0.01, AIRLESS_KILL, ceiling, moon))
+		patch._in_band_hyst("Moon", ceiling + 0.01, AIRLESS_KILL, ceiling, moon))
 	failed += _check("hyst_releases_once_clearly_past_the_ceiling",
-		not patch._in_band_hyst("Moon", true, ceiling * 1.1, AIRLESS_KILL, ceiling, moon))
+		not patch._in_band_hyst("Moon", ceiling * 1.1, AIRLESS_KILL, ceiling, moon))
 	# Once released, it must not simply always say yes - re-entering from
 	# clearly outside still needs a nominal pass.
 	failed += _check("hyst_stays_out_far_above_the_ceiling",
-		not patch._in_band_hyst("Moon", true, ceiling * 2.0, AIRLESS_KILL, ceiling, moon))
+		not patch._in_band_hyst("Moon", ceiling * 2.0, AIRLESS_KILL, ceiling, moon))
 	failed += _check("hyst_re_enters_on_a_real_nominal_pass",
-		patch._in_band_hyst("Moon", true, ceiling - 0.01, AIRLESS_KILL, ceiling, moon))
+		patch._in_band_hyst("Moon", ceiling - 0.01, AIRLESS_KILL, ceiling, moon))
 	patch.free()
 	return failed
 
@@ -384,7 +381,7 @@ func _ring_boundary_normal_agreement() -> int:
 	var sampler: TerrainSampler = G.terrain_sampler(moon)
 	patch.bind_body(moon, sampler)
 	var m_ceiling := _ceiling_of(moon)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	patch.force_ready()
 
 	var base: float = float(patch.report().base_quad_km)
@@ -435,7 +432,7 @@ func _ring_boundary_height_agreement() -> int:
 	var sampler: TerrainSampler = G.terrain_sampler(moon)
 	patch.bind_body(moon, sampler)
 	var m_ceiling := _ceiling_of(moon)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	patch.force_ready()
 
 	var base: float = float(patch.report().base_quad_km)
@@ -501,7 +498,7 @@ func _ring_rim_color_agreement() -> int:
 	var sampler: TerrainSampler = G.terrain_sampler(moon)
 	patch.bind_body(moon, sampler)
 	var m_ceiling := _ceiling_of(moon)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, m_ceiling, moon, sampler)
 	patch.force_ready()
 
 	var base: float = float(patch.report().base_quad_km)

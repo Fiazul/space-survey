@@ -168,7 +168,7 @@ func _build_at(lat: float, lon: float, alt: float, body: String, radius: float) 
 	var dir := DS.dir_for(lat, lon)
 	var pos: Vector3 = dir * (sampler.ground_radius_km(dir, radius) + alt)
 	var ceiling: float = G.band_ceiling_km(sampler)
-	patch.update_for(pos, body, true, radius, alt, 0.02, ceiling, recipe, sampler)
+	patch.update_for(pos, body, radius, alt, 0.02, ceiling, recipe, sampler)
 	patch.force_ready()
 	return patch
 

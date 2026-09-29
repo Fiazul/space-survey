@@ -284,7 +284,7 @@ func drive_time() -> float:
 	return _eng_sustain
 
 
-# Hard-silence the engine immediately (docked / wormhole transit). Also clears the
+# Hard-silence the engine immediately (docked / teleport). Also clears the
 # drive clock, so the music + cruise arc restart fresh next time you fly out.
 func engine_off() -> void:
 	_eng_on = false

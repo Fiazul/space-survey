@@ -129,7 +129,7 @@ func _setup(shot: Dictionary) -> void:
 	add_child(patch)
 	patch.bind_body(recipe, s)
 	var alt_for_patch: float = (ship.length() - radius) if shot.kind == "dist" else float(shot.value)
-	patch.update_for(ship, body, true, radius, alt_for_patch, 0.02, ceiling, recipe, s)
+	patch.update_for(ship, body, radius, alt_for_patch, 0.02, ceiling, recipe, s)
 	patch.force_ready()
 	patch.position = -ship
 	var east: Vector3 = dir.cross(Vector3.UP).normalized()
@@ -198,7 +198,7 @@ func _setup(shot: Dictionary) -> void:
 	# way planet_system.gd does, so its own gating speaks for itself) ---
 	var cloud := CL.new()
 	add_child(cloud)
-	cloud.update_for(-ship, body, true, radius, alt_for_patch, 0.02, ceiling, recipe, to_sun, 0.0)
+	cloud.update_for(-ship, body, radius, alt_for_patch, 0.02, ceiling, recipe, to_sun, 0.0)
 	cloud.visible = cloud.visible and _shells != "noclouds"
 
 	if body == "Earth":

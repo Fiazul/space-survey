@@ -2,16 +2,16 @@ class_name QuestLog
 extends CanvasLayer
 # The MISSION LOG (J). Every body in the catalogue is a mission (see MissionDB). Left column:
 # a scrollable list of every mission, grouped by system, with a status icon. Right column:
-# the selected mission's title, crude story, status, and a NAVIGATE button that sets
-# the orange guide toward its system and closes the log — you FLY there and survey it.
+# the selected mission's title, crude story, status, and a TRACK button for missions in
+# the system you're in — the nav arrow guides you and you fly close to survey it.
 # Pauses flight + frees the cursor like the Star Map; process_mode = ALWAYS so J keeps working
 # while the tree is paused.
 #
 # Status per mission (from main.star_state(system) + codex):
 #   complete  — already surveyed (green ✓)
 #   active    — it's in the system you're in, not yet surveyed (cyan ◆)
-#   open      — reachable (discovered / nav / here) but you're elsewhere (◇ — navigate)
-#   locked    — no known route yet (🔒)
+#   open      — in a system you've visited, but you're elsewhere (◇ — teleport from a dock)
+#   locked    — in a system not yet reached; needs the interstellar drive (🔒)
 
 const PANEL := Vector2(1010, 560)
 const PANEL_POS := Vector2((1280 - 1010) * 0.5, (720 - 560) * 0.5)
@@ -328,8 +328,8 @@ func _refresh_detail() -> void:
 
 	var stat_txt: String = { "complete": "✓  SURVEYED",
 		"active": "◆  YOU ARE HERE — fly close to survey it",
-		"open": "◇  Another system",
-		"locked": "🔒  No known route" }.get(status, "")
+		"open": "◇  Another system — teleport there from any dock",
+		"locked": "🔒  %s" % main.NOT_REACHED_TEXT if main != null else "🔒" }.get(status, "")
 	_dlabel(stat_txt, 13, _status_col(status))
 
 	var sep := HSeparator.new()
@@ -375,7 +375,7 @@ func _status(id: String, body: String, st: String) -> String:
 		return "complete"
 	if st == "here":
 		return "active"
-	if st == "discovered" or st == "nav":
+	if st == "discovered":
 		return "open"
 	return "locked"
 
@@ -392,7 +392,6 @@ func _sys_col(st: String) -> Color:
 	match st:
 		"here":       return Color(0.6, 1.0, 0.7)
 		"discovered": return Color(1.0, 0.84, 0.45)
-		"nav":        return Color(0.55, 0.9, 1.0)
 		_:            return Color(0.62, 0.66, 0.74)
 
 

@@ -131,7 +131,7 @@ func _shadow_ring_boundary_continuity() -> int:
 	var sampler: TerrainSampler = G.terrain_sampler(moon)
 	patch.bind_body(moon, sampler)
 	patch.set_view(Vector3(0.72, 0.16, 0.4), 1.0, 0.0)
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, 0.03, 35.0, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, 0.03, 35.0, moon, sampler)
 	patch.force_ready()
 
 	var base: float = float(patch.report().base_quad_km)

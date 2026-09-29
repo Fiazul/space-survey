@@ -23,7 +23,7 @@ const SHIPS := [
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
 # The three states worth looking at, in Ship._propulsion_power terms:
 #   rest    engines lit but idle
-#   cruise  ordinary sublight flight with no Shift - 550 / (SUBLIGHT_MAX * BOOST_MULT)
+#   cruise  ordinary flight with no Shift - 550 / (VISUAL_CRUISE_KMS * BOOST_MULT)
 #   boost   Shift held; Ship clamps _propulsion_power up to 0.82
 const SHOTS := [
 	{ "label": "rest", "power": 0.0, "surge": 0.0 },

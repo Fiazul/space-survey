@@ -174,7 +174,7 @@ func _build() -> void:
 	edit_hud.pressed.connect(_on_edit_hud)
 	col.add_child(edit_hud)
 
-	# --- Reset Progress: wipe the save (visited systems, codex, coins, HUD layout) and restart
+	# --- Reset Progress: wipe the save (visited systems, codex, HUD layout) and restart
 	# fresh from Earth. Two-tap confirm so it can't be hit by accident.
 	_reset_btn = Button.new()
 	_reset_btn.text = "Reset Progress…"

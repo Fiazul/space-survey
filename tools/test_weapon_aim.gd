@@ -23,7 +23,6 @@ func _ready() -> void:
 	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
 	var ship := Ship.new()
 	add_child(ship)
-	ship.newton = true
 	ship.anchor_off = Vector3.UP*6372
 	ship.velocity = Vector3.RIGHT*.04
 	ship.prepare_weapons()
@@ -97,7 +96,6 @@ func _ready() -> void:
 	ship.velocity = Vector3.ZERO
 	for model in ship.ship_count():
 		ship.swap_ship(model)
-		ship.newton = true
 		ship.systems.weapons_target = true
 		ship.systems.step(1)
 		combat.update_aim(ship)

@@ -12,7 +12,7 @@ func _ready() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
 
 func _draw() -> void:
-	if ship == null or ship.camera == null or ship.frozen or ship.transiting:
+	if ship == null or ship.camera == null or ship.frozen:
 		return
 	var cam: Camera3D = ship.camera
 	var nose: Vector3 = -ship.global_basis.z * 1000.0

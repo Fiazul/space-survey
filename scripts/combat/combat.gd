@@ -257,6 +257,12 @@ func reset(active := false, with_boss := false, count := SWARM_COUNT) -> void:
 			_aliens.append(_factory.make_boss())   # Vortex
 
 
+# The one gate on player fire. Roadmap S.8 defines the real combat envelope;
+# until then any flight that is not docked may fire.
+static func fire_allowed(ship: Node3D) -> bool:
+	return not ship.frozen
+
+
 # Called by main each frame. `pressed` = left fire held; `laser` = right-click beam.
 func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	hitmarker = maxf(hitmarker - delta, 0.0)
@@ -264,7 +270,7 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	_target_t = maxf(_target_t - delta, 0.0)   # the hit-target bar fades back to the boss
 	# Slow passive regen, then a fast top-up of both bars drawn from the storage reserve.
 	# Per-ship cap; both bars auto-regen toward it (weapon faster than boost).
-	e_max = float(ship.energy_max) if ship.has_method("is_hypersonic") else ENERGY_MAX
+	e_max = float(ship.energy_max) if ship is Ship else ENERGY_MAX
 	energy = minf(energy + WEAPON_REGEN * delta, e_max)
 	# Boost regen pauses WHILE boosting, so holding Shift visibly drains the bar.
 	if not ship.is_boosting:
@@ -275,14 +281,12 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	# Live muzzle, tracking the hull's cosmetic bank — bolts spawn here AND their trail tail
 	# re-anchors here every frame, so the start stays glued to the nose even as you strafe.
 	var muzzle_now: Vector3 = ship.muzzle_off() if ship.has_method("muzzle_off") else sp + fwd * ship.muzzle - ship.transform.basis.y * ship.muzzle_drop
-	# You can only fire at regular (sublight) combat speed. main force-slows the ship to it
-	# while you hold fire, so this just blocks the brief moment before the slowdown lands.
 	ship.update_weapon_environment()
 	if pressed or laser:
 		ship.prepare_weapons()
 	var mounts_ready: bool = ship.weapons_ready()
 	update_aim(ship, delta)
-	var slow_enough: bool = ship.velocity.length() <= Ship.WEAPON_FIRE_SPEED * 1.05
+	var allowed := fire_allowed(ship)
 	# All current player weapons use compact plasma pulses, including touch fire.
 	if _laser != null:
 		_laser.visible = false
@@ -290,7 +294,7 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 
 	# Per-hull combat identity: defence (max HP), bullet speed and bullet size all come
 	# from the active ship (see SHIP_MODELS). player_max drives the HUD's hull bar.
-	player_max = ship.max_hp if ship.has_method("is_hypersonic") else PLAYER_MAX_HP
+	player_max = ship.max_hp if ship is Ship else PLAYER_MAX_HP
 	player_hp = mini(player_hp, player_max)
 
 	# Advance existing shots before spawning: a new pulse is drawn at the muzzle
@@ -298,8 +302,8 @@ func update(ship: Node3D, pressed: bool, delta: float, laser := false) -> void:
 	_step_plasma(ship, delta)
 	_cool = maxf(_cool - delta, 0.0)
 	var bolt_cost: float = BOLT_ENERGY * ship.energy_use
-	if (pressed or laser) and mounts_ready and slow_enough and _cool <= 0.0 and ship.can_fire and energy >= bolt_cost:
-		_cool = ship.fire_cooldown if ship.has_method("is_hypersonic") else BOLT_COOLDOWN
+	if (pressed or laser) and mounts_ready and allowed and _cool <= 0.0 and ship.can_fire and energy >= bolt_cost:
+		_cool = ship.fire_cooldown if ship is Ship else BOLT_COOLDOWN
 		energy -= bolt_cost
 		ship.systems.discharge(_next_mount)
 		plasma.emit(ship.muzzle_off(_next_mount), ship.velocity, ship.barrel_direction(_next_mount), int(ship.bolt_damage), sp, ship.systems.muzzle_node(_next_mount))
@@ -499,7 +503,7 @@ func update_aim(ship: Ship, delta := 0.0) -> void:
 func _step_plasma(ship: Ship, delta: float) -> void:
 	var body := ship.nearest_name if not ship.nearest_name.is_empty() else ship.anchor_name
 	var center: Vector3 = Vector3.ZERO if body == ship.anchor_name else ship.anchor_off + ship.nearest_dir * ship.nearest_dist
-	var rotating_body := body if ship.newton and FlightMode.has_drag_model(body) else ""
+	var rotating_body := body if FlightMode.has_drag_model(body) else ""
 	plasma.sync_surface_frame(rotating_body,center,ship.terrain_basis)
 	var impacts := plasma.advance(delta, ship.anchor_off, _aliens, ship.terrain,
 		center, ship.terrain_basis, Ephemeris.body_radius_km(body), ship.velocity)
@@ -880,18 +884,15 @@ func _boss_burst(a: Dictionary, sp: Vector3) -> void:
 	_spawn_bolt(_abolts, a.pos + aim * (a.size * 0.5), aim * (ALIEN_BOLT_SPEED * 1.4), _abolt_mat)
 	_combat_t = COMBAT_HOLD
 
-# Energy cell: only ever offered when the boost tank is actually low, and only in open
-# interstellar flight. It appears ahead in view, then HOMES to the ship (faster than the
+# Energy cell: only ever offered when the boost tank is actually low. It appears ahead in view, then HOMES to the ship (faster than the
 # ship moves) so it always reaches you — no chasing. Floating-origin: world pos stored,
 # drawn relative to the ship; the ⚡ label is fixed-size so it stays readable at any range.
 func _step_pickups(ship: Node3D, sp: Vector3, fwd: Vector3, delta: float) -> void:
-	var min_limit: float = minf(ship.speed_limit, ship.struct_limit)
-	var open_space: bool = min_limit >= ship.SUBLIGHT_MAX and not ship.transiting
 	var speed: float = ship.velocity.length()
 	_pickup_cd -= delta
 	# Offer a cell only when you NEED it — boost tank under PICKUP_NEED_FRAC of full.
 	var need: bool = boost_energy < PICKUP_NEED_FRAC * e_max
-	if open_space and need and _pickup_cd <= 0.0 and _pickups.size() < PICKUP_CAP:
+	if need and _pickup_cd <= 0.0 and _pickups.size() < PICKUP_CAP:
 		_pickup_cd = PICKUP_EVERY
 		var ahead: float = maxf(PICKUP_AHEAD, speed * 1.3)   # lead grows with speed so it's on-screen long enough to see
 		_spawn_pickup(sp + fwd * ahead + _rand_dir() * PICKUP_SCATTER)

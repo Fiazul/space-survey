@@ -99,7 +99,7 @@ func _normals() -> int:
 	patch.bind_body(earth, sampler)
 	var dir := _dir_of(27.95, 86.80)
 	var ceiling: float = G.band_ceiling_km(sampler)
-	patch.update_for(dir * (EARTH_R + 8.0), "Earth", true, EARTH_R, 8.0, 0.02,
+	patch.update_for(dir * (EARTH_R + 8.0), "Earth", EARTH_R, 8.0, 0.02,
 		ceiling, earth, sampler)
 	patch.force_ready()
 

@@ -7,7 +7,7 @@ extends Control
 
 const R := 86.0
 const PANEL := Vector2(196, 196)
-const DIST_SCALE := 0.072       # units -> radar px (then clamped to the rim) — ÷10 for the spread
+const DIST_SCALE := 0.072       # km -> radar px; past ~1,200 km a blip clamps to the rim (direction only)
 
 # roles
 const BODY := 0

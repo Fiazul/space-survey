@@ -16,23 +16,9 @@ const DIST := 120000.0
 const TARGET_RADIUS := 45000.0
 const BRIGHTNESS := 1.0         # edge-on is faint, so keep it up
 
-# --- Voyage to the core (the looming approach) ---
-# The real Sun→Sgr A* distance. The galaxy is a fixed backdrop, so to make it actually GROW as
-# the Vela Iron Pulse flies the galactic drive toward it, we move the disc's CENTRE from DIST
-# (the far backdrop look) in toward the origin as `remaining_ly` shrinks 26000 → 0. The disc
-# keeps its physical size (TARGET_RADIUS), so when its centre reaches you the band wraps 360°
-# and you're AT the core. CRUCIAL: we never use the real ~1.6e11-unit distance (float32 would
-# shatter) — the render distance is a safe, bounded [0, DIST] mapping while the SCANNER still
-# reports the true light-years. main calls advance_ly() each frame from ship.galactic_loom_rate().
-const CORE_LY := 26000.0       # real distance to the galactic centre (the scanner's full reading)
-var remaining_ly := CORE_LY    # live distance still to go; CORE_LY = far backdrop, 0 = at the core
-var _dir_n := DIR.normalized() # cached core direction (render space)
-
-
 func _init() -> void:
 	# Honest Sol sky: you are inside the disc. The Milky Way is stars (the HYG
-	# field), not an outside-in spiral painting. Keep the node for the later
-	# core voyage; do not draw it as a backdrop.
+	# field), not an outside-in spiral painting. Kept, hidden, for a later sky pass.
 	visible = false
 
 
@@ -89,40 +75,7 @@ func _ready() -> void:
 	x = x.normalized()
 	var y := z.cross(x).normalized()
 	basis = Basis(x, y, z)
-	_apply_loom()
-
-
-# Place the disc centre at the render distance for the current `remaining_ly`. Linear map:
-# remaining = CORE_LY → DIST (far backdrop, the normal look); remaining = 0 → origin (you're
-# inside the core). Bounded in [0, DIST], so coordinates stay tiny and float-safe the whole way.
-func _apply_loom() -> void:
-	position = _dir_n * (DIST * remaining_ly / CORE_LY)
-
-
-# Loom the core in by `ly` light-years this frame (SIGNED: positive = toward the core / looms in,
-# negative = flying back out / recedes). main feeds this from ship.galactic_loom_rate(), the fixed
-# voyage pace — decoupled from the ship's real translation, so true_pos is never moved astronomically.
-# Clamped to [0, CORE_LY]; the signed form is what lets you actually LEAVE the core instead of being
-# trapped at 0.
-func advance_ly(ly: float) -> void:
-	remaining_ly = clampf(remaining_ly - ly, 0.0, CORE_LY)
-	_apply_loom()
-
-
-# Snap the backdrop back to its full far distance. main calls this on every system arrival
-# (wormhole hop, emergency jump home), since you're then ~26,000 ly from the core again — so
-# you never stay wrapped inside the core/clouds after leaving the voyage.
-func reset_distance() -> void:
-	remaining_ly = CORE_LY
-	_apply_loom()
-
-
-# Scanner readouts (the Iron Pulse's live core-distance gauge, surfaced on the ship + HUD).
-func remaining() -> float:
-	return remaining_ly
-
-func total() -> float:
-	return CORE_LY
+	position = DIR.normalized() * DIST
 
 
 const _CORNER := [

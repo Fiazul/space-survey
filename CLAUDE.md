@@ -27,7 +27,7 @@ scenes/Main.tscn (one-node stub, boots res://scripts/core/main.gd)
   │            WedgeFighterDesign
   ├─ world/    PlanetSystem, PlanetGenerator, SurfaceRecipe, SurfacePatch,
   │            TerrainSampler, Starfield, GalaxyModel, Props
-  ├─ travel/   Wormhole, Navigator, PlatformTeleport
+  ├─ travel/   Navigator, PlatformTeleport
   ├─ combat/   Combat, CombatFX, EnemyFactory
   └─ ui/       HUD + panels (CodexPanel, StarMap, QuestLog, PlanetInfo, …)
 ```
@@ -97,15 +97,14 @@ for f in tools/test_*.gd; do
     tools/test_music_director_scene.gd|tools/test_plasma.gd|tools/test_plasma_frame.gd|\
     tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
     tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\
-    tools/test_weapon_aim.gd|tools/test_landing_cycle.gd) continue ;;
+    tools/test_weapon_aim.gd|tools/test_landing_cycle.gd|tools/test_system_ephemeris.gd|\
+    tools/test_proxima_boot.gd|tools/test_one_physics.gd|tools/test_travel.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
 ```
-Removed 2026-09-08: `test_wh_network.gd` (hung — `SystemDB.arrival_pos()` reaches the
-`Ephemeris` autoload, which does not exist under `--script`; wormhole hop guarantee is
-currently unchecked, reinstate as a scene-based test), `test_dingo57_starship.gd`,
-`test_jazoone_spaceship.gd` (ships left the roster).
+Removed 2026-09-08: `test_dingo57_starship.gd`, `test_jazoone_spaceship.gd` (ships left
+the roster).
 
 Known noisy pass: `test_streak_scale.gd` preloads `ship.gd` (which touches the
 `Ephemeris` autoload), so `--script` prints a `SCRIPT ERROR`/`Failed to load script`
@@ -122,6 +121,9 @@ Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_chase_rig
 `test_dem_calibration.tscn`, `test_music_director_scene.tscn`, `test_ship_modules.tscn`,
 `test_landing_support.tscn`, `test_surface_facility.tscn`, `test_ship_systems.tscn`,
 `test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`,
+`test_system_ephemeris.tscn`, `test_proxima_boot.tscn`, `test_one_physics.tscn` (one flight
+model: GEO circular for a day with the Sun on, a generated HYG system falls at GM/r²),
+`test_travel.tscn` (visited-gate, `ASTRYX_DEV_TRAVEL=1`, a save in a deleted system → Sol pad),
 `test_landing_cycle.tscn` (all seven hulls at 60 and 20 fps over rotating Earth; ~30 s;
 `LANDING_VERBOSE=1` prints measurements, `LANDING_CLOCK=<unix_s>|wall` sets the rotation phase, `LANDING_HULLS=1,6` limits hulls,
 `LANDING_TRACE=descend|hold|depart|open|rest|press|slope` prints a 4 Hz trace).
@@ -155,9 +157,9 @@ runs it.
 
 ## Directives
 
-- Scene-unit convention: 1 scene unit = 1 km for physical bodies (`ship.gd:61-64`).
-  Arcade (non-Sol) systems use 1u = 0.01 AU with body radii boosted by `VISUAL_SCALE`
-  (`planet_system.gd:36-42`) — never assume a bare unit count means km outside Sol.
+- Scene-unit convention: 1 scene unit = 1 km, all systems (`ship.gd:61-64`). Sol comes
+  from `SolEphemeris`, every other star from `GeneratedEphemeris` at real scale; Newton
+  and anchored positions everywhere (docs/plans/2026-09-29-one-physics-ripout.md).
 - Every Sol feature shipped so far is a first pass. Treat none of it as finished
   (`CONTEXT.md`).
 - Always keep `TerrainSampler` the single height source. Never add a second height/noise
@@ -195,7 +197,8 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 - Never say "world position"/"global transform" for a body's coordinate — say **true
   position** (ship stays at render origin; bodies draw at true minus ship's true).
 - Never build an "arcade gravity well" / safe-zone pull / idle-release physics — Newton
-  inverse-square only, no damping, no arcade 550 speed cap in Sol.
+  inverse-square only, no damping, no speed cap. The ship's frame free-falls with its
+  anchor body (`Ship._newton_g` subtracts each body's pull on the anchor).
 - Never add a "fat air shell" / Kerbal bubble / arcade planet spin — Earth atmosphere is a
   100 km drag-only skin; inside it the ship turns WITH the planet.
 - Never build a landing game / landing gear / one mesh per planet / unique GLB per world —
@@ -219,7 +222,6 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 | `.godot/` | Godot editor (import cache, class registry) — gitignored |
 | `assets/starfield_{naked,low,high,tycho}.res` | `tools/build_starfield.gd` (`godot --headless --script tools/build_starfield.gd`) |
 | `assets/planets/*` | `tools/fetch_planet_maps.py` (→ /tmp) then `tools/ingest_planet_maps.py` (crop/resize into `assets/planets/`) |
-| `WORMHOLE_NETWORK.png` | `tools/export_wh_graph.gd` (dumps `/tmp/wh_graph.json`) → `tools/draw_wh_network.py` |
 | `TAB_TARGETING.png` | `tools/draw_tab_target.py` |
 | `assets/fx/exhaust_noise.png` | `tools/gen_exhaust_noise.py` |
 | `assets/{sfx_fire,laser_loop,notify,teleport}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,teleport,engine}_audio.py`, `tools/gen_booster.py` |
@@ -252,7 +254,6 @@ expected; per-line/per-function narration is not.
 | `CREDITS.md` | Asset credits — what's code-generated vs. free/AI-generated, and where from |
 | `STARFIELD.md` | How the real-catalogue star field is built and rendered |
 | `TAB_TARGETING.md` | How nose-aim Tab-targeting picks and cycles candidates |
-| `WORMHOLE_NETWORK.md` | The wormhole graph's structure and routing rules |
 | `lore.md` | In-universe codex — fleet, factions, setting |
 | `docs/adr/` | Accepted architecture decisions (the "why" behind structural choices) |
 | `docs/specs/2026-09-26-ship-roster-and-modules.md` | The seven-hull roster + swappable weapon/pad module GLBs, generated via `tools/blender/` |

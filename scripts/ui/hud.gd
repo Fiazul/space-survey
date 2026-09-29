@@ -35,7 +35,7 @@ var ship: Ship
 var planets: PlanetSystem
 var combat: Combat           # for HP / kills readout
 @onready var codex := Codex   # autoload; discovery progress
-var origin_name := "Earth"   # what the distance readout measures from (per system)
+var physical_system_name := "SOL"   # physical systems name their star
 
 var toast := ""              # transient "✓ discovered" message
 var toast_t := 0.0
@@ -628,7 +628,7 @@ func _set_systems_open(open: bool) -> void:
 		if ship_ref != null:
 			ship_ref._set_capture(false)
 	elif not open and is_systems_open() and _systems_recapture:
-		if ship_ref != null and not ship_ref.frozen and not ship_ref.transiting:
+		if ship_ref != null and not ship_ref.frozen:
 			ship_ref._set_capture(true)
 		_systems_recapture = false
 	_btn_bar.visible = open
@@ -1639,7 +1639,7 @@ func refresh() -> void:
 	# Ease the core flash back toward zero (set fresh each frame by main while in the danger zone).
 	_flash_a = maxf(_flash_a - 2.0 * get_process_delta_time(), 0.0)
 	_flash.color.a = _flash_a * 0.55
-	var weapons_visible := not ship.frozen and not ship.transiting and ship.systems != null \
+	var weapons_visible := not ship.frozen and ship.systems != null \
 		and (ship.systems.weapons_target or ship.systems.weapons_fraction > .01)
 	_reticle.visible = weapons_visible
 	_hitmarker.visible = false # hit confirmation is drawn by fire control itself
@@ -1652,42 +1652,39 @@ func refresh() -> void:
 	_flight_vector.ship = ship
 	_flight_vector.show_nose = not _reticle.visible
 	_flight_vector.queue_redraw()
-	_dist_label.text = "%s  /  %s" % ["SOL" if ship.newton else origin_name.to_upper(), ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
+	_dist_label.text = "%s  /  %s" % [physical_system_name, ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
 	var spd := ship.velocity.length()
-	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED" if ship.newton else ""
+	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED"
 	_speed_label.text = _fmt_speed(spd)
 	_tape_label.visible = true
-	if ship.newton:
-		var agl: float = planets.ground_altitude_km(ship.nearest_name) if planets != null else INF
-		var stellar := planets != null and planets.kind_of(ship.nearest_name) == "star"
-		if stellar:
-			var radius_distance := ship.anchor_distance_km() if ship.nearest_name == ship.anchor_name else ship.nearest_dist
-			agl = radius_distance-ship.nearest_radius
-		var outward := -ship.nearest_dir.normalized()
-		var vertical := ship.velocity.dot(outward)
-		var g := ship.last_newton_g.length() / 0.00980665
-		var altitude := "—" if agl == INF else ("%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl)
-		if stellar:
-			_tape_label.text = "PHOTO ALT  %s\nRADIAL  %s %s   /   %.2f g" % [altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
-			if vertical < 0 and ship.last_thrust_accel.dot(outward) > 0 \
-					and (ship.last_thrust_accel+ship.support_accel+ship.last_newton_g).dot(outward) < 0:
-				_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
-		elif agl < 100.0:
-			_tape_label.text = "AGL  %s   /   V/S  %s%s\nGRAVITY  %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
-			if ship.mach_number > .05:
-				_tape_label.text += "\nMACH  %.1f   /   AIR LOAD  %s" % [ship.mach_number, _fmt_percent(ship.air_load)]
-		else:
-			_tape_label.text = "ALT  %s\nRADIAL  %s%s   /   %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
-		if ship.drop_flash > 0.0:
-			_mode_label.text = "CRUISE EXIT"
-		if ship.time_rate > 1.0:
-			_mode_label.text += "   ×%.0f" % ship.time_rate
-		if ship.debug_toast != "":
-			toast = ship.debug_toast
-			toast_t = 2.2
-			ship.debug_toast = ""
+	var agl: float = planets.ground_altitude_km(ship.nearest_name) if planets != null else INF
+	var stellar := planets != null and planets.kind_of(ship.nearest_name) == "star"
+	if stellar:
+		var radius_distance := ship.anchor_distance_km() if ship.nearest_name == ship.anchor_name else ship.nearest_dist
+		agl = radius_distance-ship.nearest_radius
+	var outward := -ship.nearest_dir.normalized()
+	var vertical := ship.velocity.dot(outward)
+	var g := ship.last_newton_g.length() / 0.00980665
+	var altitude := "—" if agl == INF else ("%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl)
+	if stellar:
+		_tape_label.text = "PHOTO ALT  %s\nRADIAL  %s %s   /   %.2f g" % [altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
+		if vertical < 0 and ship.last_thrust_accel.dot(outward) > 0 \
+				and (ship.last_thrust_accel+ship.support_accel+ship.last_newton_g).dot(outward) < 0:
+			_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
+	elif agl < 100.0:
+		_tape_label.text = "AGL  %s   /   V/S  %s%s\nGRAVITY  %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
+		if ship.mach_number > .05:
+			_tape_label.text += "\nMACH  %.1f   /   AIR LOAD  %s" % [ship.mach_number, _fmt_percent(ship.air_load)]
 	else:
-		_tape_label.text = ""
+		_tape_label.text = "ALT  %s\nRADIAL  %s%s   /   %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
+	if ship.drop_flash > 0.0:
+		_mode_label.text = "CRUISE EXIT"
+	if ship.time_rate > 1.0:
+		_mode_label.text += "   ×%.0f" % ship.time_rate
+	if ship.debug_toast != "":
+		toast = ship.debug_toast
+		toast_t = 2.2
+		ship.debug_toast = ""
 	if ship.systems != null:
 		if not ship.landing_site.is_empty():
 			_mode_label.text = "%s / PAD LOCKED · %s LIFT" % [ship.landing_site, "UP" if ship.touch_active else "SPACE"]
@@ -1698,7 +1695,7 @@ func refresh() -> void:
 			var lift_g := ship.jet_accel.dot(ship.anchor_off.normalized())/0.00980665
 			if absf(lift_g) > .01:
 				_tape_label.text += "\nLIFT JETS  %+.2f g" % lift_g
-			if ship.newton and ship.terrain != null and ship.anchor_name == ship.nearest_name:
+			if ship.terrain != null and ship.anchor_name == ship.nearest_name:
 				var body_position := ship.terrain_local(ship.anchor_off, true)
 				for site in ship.terrain.facilities:
 					var center := SurfaceFacility.to_site(site, body_position)
@@ -1715,10 +1712,10 @@ func refresh() -> void:
 			_mode_label.text = "HARDPOINTS READY" if ship.weapons_ready() else "HARDPOINTS DEPLOYING"
 		elif ship.systems.weapons_fraction > .01:
 			_mode_label.text = "HARDPOINTS STOWING"
-	if planets != null and not ship.transiting and not ship.frozen and not planets.stellar_hazard.is_empty():
-		var stellar: Dictionary = planets.stellar_hazard
-		if int(stellar.level) > 0:
-			_tape_label.text += "\n%s  /  %.0f kW/m²" % [stellar.state, float(stellar.flux_w_m2)/1000.0]
+	if planets != null and not ship.frozen and not planets.stellar_hazard.is_empty():
+		var hazard: Dictionary = planets.stellar_hazard
+		if int(hazard.level) > 0:
+			_tape_label.text += "\n%s  /  %.0f kW/m²" % [hazard.state, float(hazard.flux_w_m2)/1000.0]
 	_combat_panel.visible = _edit or firing
 
 	if combat != null:

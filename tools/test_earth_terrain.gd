@@ -415,7 +415,7 @@ func _rings() -> int:
 	# - cold arrival, rescale and recenter all go through the same off-thread
 	# path, so nothing commits synchronously in one call any more. Before a
 	# batch lands, every ring's committed vertex count is legitimately zero.
-	patch.update_for(dir * (MOON_R + 1.0), "Moon", true, MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
+	patch.update_for(dir * (MOON_R + 1.0), "Moon", MOON_R, 1.0, 0.1, m_ceiling, moon, sampler)
 	var before_ready: PackedInt32Array = patch.report().ring_verts
 	var built_before := 0
 	for v in before_ready:
@@ -485,7 +485,7 @@ func _rings() -> int:
 	# Constant budget with altitude is the whole point of rings: detail and reach
 	# stop competing. A single plate had to trade one for the other.
 	var tris_low := int(r.tris)
-	patch.update_for(dir * (MOON_R + 3.0), "Moon", true, MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
+	patch.update_for(dir * (MOON_R + 3.0), "Moon", MOON_R, 3.0, 0.1, m_ceiling, moon, sampler)
 	patch.force_ready()
 	var tris_high := int(patch.report().tris)
 	# NEAR-constant, not identical. The budget is 4 rings x 64x64 whatever the
@@ -600,7 +600,7 @@ func _cap() -> int:
 		and SP.design_speed_ms(5.0) < SP.design_speed_ms(15.0)
 		and SP.design_speed_ms(15.0) < SP.design_speed_ms(100.0))
 
-	# THE UNIT TRAP. speed_limit is units/s and 1 unit = 1 km in Sol, so a 600 m/s
+	# THE UNIT TRAP. design_speed_units is scene units/s and 1 unit = 1 km, so a 600 m/s
 	# cap is 0.6. Writing 600.0 there gives 600 km/s: every "the cap is applied"
 	# assertion still passes and the bound below is silently void.
 	failed += _check("units_conversion_is_per_kilometre",
@@ -676,7 +676,7 @@ func _descent() -> int:
 		alt -= 0.004                 # ~4 m of descent per frame
 		travelled += 0.0018          # 108 m/s at 60 fps
 		var pos: Vector3 = (base * EARTH_R + north * travelled).normalized() * (EARTH_R + alt)
-		patch.update_for(pos, "Earth", true, EARTH_R, alt, 0.02, ceiling, earth, s)
+		patch.update_for(pos, "Earth", EARTH_R, alt, 0.02, ceiling, earth, s)
 		# update_for only DISPATCHES a rebuild (WorkerThreadPool) now; this test
 		# is about per-ALTITUDE-STEP consistency (mixed scales, missing rings,
 		# rescale count), not real-time frame pacing - that is covered
@@ -726,7 +726,7 @@ func _warm_rebuild_keeps_albedo() -> int:
 	var patch := SP.new()
 	patch._ready()
 	var pos := Vector3.RIGHT * (EARTH_R + 0.4)
-	patch.update_for(pos, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s)
+	patch.update_for(pos, "Earth", EARTH_R, 0.4, 0.02, ceiling, earth, s)
 	patch.force_ready()
 	failed += _check("close_tile_is_visible", patch.visible)
 	failed += _check("close_tile_has_ground", patch.has_ground())
@@ -734,7 +734,7 @@ func _warm_rebuild_keeps_albedo() -> int:
 	failed += _check("cold_ready_snaps_fade_to_one", float(fades[0]) > 0.99)
 	# 8 km is well past ring 0's rebuild fraction at this altitude.
 	var pos2: Vector3 = pos.rotated(Vector3.UP, 8.0 / EARTH_R)
-	patch.update_for(pos2, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s,
+	patch.update_for(pos2, "Earth", EARTH_R, 0.4, 0.02, ceiling, earth, s,
 		(pos2 - pos) / 0.25)
 	failed += _check("close_recenter_dispatched", bool(patch.get("_thread_pending")))
 	var spins := 0
@@ -746,7 +746,7 @@ func _warm_rebuild_keeps_albedo() -> int:
 	failed += _check("close_recenter_finished_off_thread", spins < 8000)
 	# Live poll path — the game never force_ready()s. The first committed
 	# replacement ring is the one that used to land at stream_fade=0.
-	patch.update_for(pos2, "Earth", true, EARTH_R, 0.4, 0.02, ceiling, earth, s)
+	patch.update_for(pos2, "Earth", EARTH_R, 0.4, 0.02, ceiling, earth, s)
 	fades = patch.get("_ring_fade")
 	var committed: int = patch.rings_committed_this_update()
 	failed += _check("warm_poll_commits_a_ring", committed >= 1)

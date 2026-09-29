@@ -1,23 +1,23 @@
 # Astryx
 
-Space survey game. Sol is becoming a 1:1 physical world; other systems stay authored arenas for now.
+Space survey game. Every star system is a 1:1 physical world: Sol from real data, the others generated at real scale.
 
 ## Language
 
 **Scene unit**:
 One kilometre. Every `true_pos` and body radius is stored in these units.
-_Avoid_: Godot unit, meter (not yet), old 0.1 AU unit
+_Avoid_: Godot unit, meter (not yet), AU unit, arcade unit
 
 **True position**:
-A body's absolute position in scene units, Earth-centred. The ship stays at the render origin; bodies draw at true position minus the ship's true position. On the ship itself this is a derived 32-bit view of the anchored state, not the state.
+A body's absolute position in scene units, in its system's frame (Sol: Earth-centred; other stars: star-centred). The ship stays at the render origin; bodies draw at true position minus the ship's true position. On the ship itself this is a derived 32-bit view of the anchored state, not the state.
 _Avoid_: world position, global transform
 
 **Anchor body**:
-The body the ship's physics is measured from — the nearest one. The ship's real state is (anchor, offset in km from its centre); the offset is small, so a substep of motion survives at Venus or Saturn where an absolute coordinate cannot hold it. Cross-body distances go through `Ephemeris.rel_km` in 64-bit before packing. Outside Sol the anchor is Earth, which is the origin.
+The body the ship's physics is measured from — the nearest one. The ship's real state is (anchor, offset in km from its centre); the offset is small, so a substep of motion survives at Venus or Saturn where an absolute coordinate cannot hold it. Cross-body distances go through `Ephemeris.rel_km` in 64-bit before packing. Every system anchors the same way. The frame falls with its body: each body's pull on the anchor is subtracted, so only the anchor's pull and the others' tidal residue act on the ship.
 _Avoid_: absolute ship position as state, `body.pos - ship.true_pos`, re-origin threshold, floating-origin shift
 
 **Physical body**:
-A Sol body whose radius and separation are real. Past the camera far plane it is a sky disc with the real angular size. The cut is the near face, not the centre — a star bigger than the far plane still becomes a cook ball when you close in.
+A body whose radius and separation are real — every body, in every system. Past the camera far plane it is a sky disc with the real angular size. The cut is the near face, not the centre — a star bigger than the far plane still becomes a cook ball when you close in.
 _Avoid_: scaled planet, fat planet, star forced to sky disc forever
 
 **Opaque world**:
@@ -29,7 +29,7 @@ The Sol start: 42,157 km from Earth's centre on the anti-Sun ray. Parked — no 
 _Avoid_: start pad, hangar origin
 
 **Newton**:
-Sol inverse-square pull from the live bodies. Vacuum has no damping. Arcade idle-release is off. A mouse or key turn carries speed with the hull so the nose and the path match.
+Inverse-square pull from the system's bodies, in every system. Vacuum has no damping. No idle release. A mouse or key turn carries speed with the hull so the nose and the path match.
 _Avoid_: arcade well, safe-zone pull, leftover “I turned but still fall in”
 
 **Earth atmosphere**:
@@ -44,10 +44,10 @@ _Avoid_: mystery altitude, Sun as a unique object
 LOCAL / CRUISE / AIR. Zone is where. Mode is how. Cruise is Sol time warp outside a body's exclusion (Elite EZ, real size). Earth 100 km. Venus 250. Mars 80. Titan 600. Giants a few hundred km above the 1-bar skin. Airless +10 km. Stars +2500 km chromosphere. Hitting EZ from cruise or fat engines is DROP — sit on the shell, dump speed, short tape cue, not a white blink. Air is still drag after that. You do not skip the air into a skin kill.
 _Avoid_: Elite white flash as the trick, arcade FTL in Sol, cruise through a world
 
-**Sol speed**:
-Earth-relative. m/s when slow, km/s when fast. Engines are a few g. No arcade 550 cap in Sol.
+**Speed**:
+Anchor-relative. m/s when slow, km/s when fast. Engines are a few g. No speed cap, no warp spool.
 Time warp: period faster, comma slower. Dies in air or on burn.
-_Avoid_: u/s, warp-as-local-flight
+_Avoid_: u/s, warp-as-local-flight, sublight cap
 
 **Planet generator**:
 One cook. Catalog row → true position → recipe. Real map when we have evidence. Spectral/size when we do not. Sky is HYG points; you only cook a ball when the player is there. EZ is high bird-eye on that ball. Tape Cook/Look is the render log. Pacman voids in mosaics fill with recipe crust. You will not land.

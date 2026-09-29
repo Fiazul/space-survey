@@ -91,8 +91,8 @@ func _ready() -> void:
 			func(m): return m.shader == ShipMesh.CRUISER_PROPULSION_SHADER).size() and _nozzle_drives(model) > 0)
 		if i > 1:
 			_check("stats_escalate_%d" % i, int(info.hp) > int(previous.hp) and int(info.dmg) >= int(previous.dmg) \
-				and float(info.fire_cd) < float(previous.fire_cd) and float(info.energy_max) > float(previous.energy_max) \
-				and float(info.warp) > float(previous.warp))
+				and float(info.fire_cd) < float(previous.fire_cd) and float(info.energy_max) > float(previous.energy_max))
+			# warp escalation dropped 2026-09-29: per-hull warp is gone with the arcade drive.
 		previous = info
 		rig.gear_target = false
 		rig.step(2.0)

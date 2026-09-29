@@ -70,10 +70,12 @@ func _initialize() -> void:
 	failed += _check("geo_from_mean_earth", is_equal_approx(E.GEO_RADIUS_KM, 42157.0))
 
 	var src := FileAccess.get_file_as_string("res://scripts/world/planet_system.gd")
-	failed += _check("physical_vis_1", src.find("1.0 if (is_star or p.get(\"physical\", false))") >= 0)
-	failed += _check("vrad_physical_1", src.find("1.0 if (b.star or b.get(\"physical\", false))") >= 0)
-	failed += _check("rings_inner_real", src.find("* 1.15 *") >= 0)
-	failed += _check("rings_outer_real", src.find("* 2.35 *") >= 0)
+	# physical_vis_1 / vrad_physical_1 rewritten 2026-09-29: the arcade VISUAL_SCALE
+	# branch they guarded is gone, so every body paints at its real radius.
+	failed += _check("no_visual_scale", src.find("VISUAL_SCALE") < 0)
+	failed += _check("paint_at_real_radius", src.find("PlanetGenerator.paint(p, float(p.radius))") >= 0)
+	failed += _check("rings_inner_real", src.find("float(p.radius) * 1.15,") >= 0)
+	failed += _check("rings_outer_real", src.find("float(p.radius) * 2.35,") >= 0)
 
 	if failed == 0:
 		print("sol_truth: OK")

@@ -150,3 +150,77 @@ Surprising / needs a decision:
   Sol's. Slice 3/4.
 - `_is_guarded`, props, the fly-arrive offset and `_land_beside_dock` all assume arcade
   units; they are gated or bypassed in physical non-Sol systems, not converted.
+
+## Slice 2 done (2026-09-29, branch `one-physics`)
+
+What changed:
+- One integration path. `ship.newton` and every branch on it are gone; so are the arcade
+  constants (`THRUST`/`STRAFE_THRUST`, `SUBLIGHT_MAX`, `GRAVITY_IDLE_SPEED`, `SETTLE_*`,
+  `DAMPING`, `DRIFT_DAMPING`, `WARP_*`, `HYPERSONIC_SPEED`, `SOL_FIELD_RADIUS`,
+  `WEAPON_FIRE_SPEED`, flip leap), per-hull `warp`/`bolt_speed`, the warp spool, the galactic
+  drive and `speed_limit`/`struct_limit`/`star_field_dist`/`gravity` inputs. The velocity
+  ceiling left is `MAX_SPEED * boost` (10,000 km/s, was already there in Sol) and the dock
+  approach cap. `VISUAL_CRUISE_KMS` (550) is a look-only reference for engine heat/streaks.
+  Autopilot is a stub: point, burn at Newton accel, cut 3 radii out (S.4 replaces it).
+- **Anchor frame free-falls.** `Ship._newton_g` = Σ g_i(ship) − Σ g_i(anchor centre), in
+  64-bit scalars. Sol numbers moved only by the Sun's direct term (GM_sun/AU² = 5.93e-6
+  km/s² = 6e-4 g at the ground, 2.6 % of g at GEO). No Sol test expectation needed to change:
+  every gate test passes as before; the only printed Sol differences are closed-loop pilot
+  paths (`test_playable_minute` apogee 321.2 → 321.4 km, i.e. 6e-4 relative = the removed
+  term; flight 146.3 → 149.2 s because the pilot's warp/correction taps shift;
+  `test_surface_streaming` lag 19.7 → 19.6 km). Proxima boot at 4e4143d fell 0.7886 km in
+  30 s against the world's own 1.0518 (star pull 25 % off); now 0.8520 vs 0.8526.
+- `GeneratedEphemeris.spawn_park_km` = 2 radii (no star-dominance clamp).
+- Every system is physical: `SystemDB.is_physical`, `Ephemeris.is_physical_system`, the
+  authored arcade bodies (`_k2_18/_proxima/_trappist/_alien/_single_star`) and the non-Sol
+  `arrival_pos` table are gone. `bodies(id)` = the system's ephemeris worlds for every id;
+  an id with no star row (the `interstellar` hub) answers with Sol. Alien Zone's star is
+  "Hostile Star" (`star_name`).
+- `_arrive` always anchors at `spawn_body()`/`spawn_pos()`; `_arrive(INTERSTELLAR)` and
+  saves in the hub land in Sol. Non-Sol saves whose anchor is not a body of the generated
+  system keep the arrival spawn (arcade `off` is never restored outside Sol).
+- PlanetSystem: `VISUAL_SCALE`, speed zones, arcade gravity/`GRAV_G`/`STAR_GRAVITY_*`, arcade
+  moon orbits, `ORBIT_*`, static `b.pos`, hub fly-arrive, `star_dist` and every `physical`
+  gate are gone; `is_physical(name)` became `has_body(name)`; `_fmt_star_dist` became the
+  km-native `_fmt_dist_km`. `SurfacePatch`/`CloudLayer` `should_show`/`update_for` lost the
+  `physical` argument (all tool callers updated).
+- Props: only Sol's GEO-parked station + Finn remain; non-Sol stations/probes, the generic
+  platform and the structure slow zone are deleted. **Non-Sol props are hidden** until slice
+  3 places stations per body. `OrbitalStations` (ISS/Tiangong) show in Sol only.
+- Combat: one gate, `Combat.fire_allowed(ship)` = not docked and not in transit.
+  `has_method("is_hypersonic")` duck-typing became `ship is Ship`. Guardian spawning (it
+  was already off in physical systems) is deleted with `_is_guarded`.
+- Tests: new `tools/test_one_physics.tscn` (no `newton` symbol, GEO radius within 0.014 %
+  over a day with the Sun on, Moon-distance sunward drift 0.13 km vs 38.3 km uncorrected,
+  Tau Ceti boots/anchors/falls within 0.2 % of GM/r², fire gate). Rewritten or deleted, each
+  with a one-line reason in the file: test_plasma "interstellar frame", test_ship_roster
+  warp escalation, test_surface_band `arcade_system_gets_no_tile`, test_cloud_layer
+  non-physical gate, test_surface_integration arcade NAN (now a generated-world check),
+  test_sol_truth VISUAL_SCALE source checks, test_system_ephemeris/test_proxima_boot
+  `is_physical_system`/`newton` checks.
+
+Deviation from the brief: `ship.nearest_dist` stays. It is not arcade — the Newton path
+reads it for the exclusion shell, the air/weapons test and time-warp zones.
+
+What slice 3 can delete:
+- `Wormhole.slow_limit` (unread), `SystemDB.HUB_ENTRY`, `_interstellar()`, the
+  `INTERSTELLAR` redirects in `_arrive`/`_restore_location`/`system_for`,
+  `main._update_core_hazard`/`_core_kill`/GalaxyModel loom (nothing drives it now),
+  `hud.origin_name`, the Props `probe` machinery (no probes left), `_land_beside_dock`
+  (no non-Sol docks), `StarRecipe.scene_radius` use in the sky shell.
+- Combat still runs the Alien Zone swarm with arcade-unit constants (SPAWN_RADIUS 60, etc.)
+  in a km world, and bolts feel full body pulls (`PlanetSystem.gravity_at`, not the tidal
+  frame) — both S.8.
+
+Surprises:
+- The sun-jump bug (`docs/bugs/2026-09-23-sun-jump-flight.md`) is **not** this defect and is
+  not changed by it: that was the Sun's own pull (0.274 km/s²) beating 3 g engines at a
+  120 km park, fixed then by the 4 R park. Anchored at the Sun, the frame term only removes
+  the planets' pull on the Sun's centre (~1e-9 of it).
+- The HYG sky shell still sits geocentric (sky in Tau Ceti is Sol's), as slice 1 noted.
+- Docs still describing the arcade model, for slice 4: `PLANET_GENERATOR.md:155`,
+  `docs/SESSION-2026-09-04-skin-band.md:59,442,882`,
+  `docs/specs/2026-08-17-sol-physical-scale-design.md:17`,
+  `docs/superpowers/specs/2026-09-04-earth-flyover-terrain-design.md:29,186`,
+  `docs/superpowers/plans/2026-09-04-earth-flyover-terrain.md:1340,1387`,
+  `docs/ROADMAP.md:108-109,135` (decision text, keep).

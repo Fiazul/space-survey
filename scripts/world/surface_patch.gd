@@ -426,13 +426,9 @@ func covers_horizon(ship_pos: Vector3) -> bool:
 	return offset_angle + horizon_angle <= atan(half_width / _radius)
 
 
-# `physical` is the 1u = 1 km truth flag. Without it an arcade system (1u = 0.01 AU,
-# radii boosted by VISUAL_SCALE) hands us an "altitude" of 0.1 that is really a
-# million kilometres, and a ground tile pops in deep space. main._update_skin_kill
-# guards the kill line the same way.
-static func should_show(body: String, physical: bool, alt: float, kill: float,
+static func should_show(body: String, alt: float, kill: float,
 		ceiling: float, recipe: Dictionary) -> bool:
-	if body.is_empty() or not physical:
+	if body.is_empty():
 		return false
 	if not PlanetGenerator.has_surface(recipe):
 		return false
@@ -460,15 +456,15 @@ var _last_ship_pos := Vector3.ZERO
 var _last_ship_vel := Vector3.ZERO
 
 
-func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
+func _in_band_hyst(body: String, alt: float, kill: float,
 		ceiling: float, recipe: Dictionary) -> bool:
-	var nominal := should_show(body, physical, alt, kill, ceiling, recipe)
+	var nominal := should_show(body, alt, kill, ceiling, recipe)
 	if nominal or not _was_in_band:
 		_was_in_band = nominal
 		return nominal
 	# Already showing and the nominal test just failed: stay shown unless alt
 	# has cleared either edge by the hysteresis margin too.
-	var held := should_show(body, physical, alt, kill * (1.0 - BAND_HYSTERESIS),
+	var held := should_show(body, alt, kill * (1.0 - BAND_HYSTERESIS),
 		ceiling * (1.0 + BAND_HYSTERESIS), recipe)
 	_was_in_band = held
 	return held
@@ -479,7 +475,7 @@ func _in_band_hyst(body: String, physical: bool, alt: float, kill: float,
 # and main's contact kill held DIFFERENT instances - two 14.6 MB height-map loads,
 # and the one-shared-function design this slice rests on was not actually true in
 # the shipped path. They agreed only because the maths is deterministic.
-func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
+func update_for(ship_pos: Vector3, body: String, radius: float,
 		alt: float, kill: float, ceiling: float, recipe: Dictionary,
 		sampler: TerrainSampler, ship_vel: Vector3 = Vector3.ZERO) -> void:
 	perf_commit_us = 0
@@ -491,9 +487,9 @@ func update_for(ship_pos: Vector3, body: String, physical: bool, radius: float,
 		return
 	# PREBUILD: warm the rings while still approaching so they exist by the time
 	# the band opens, rather than hitching in on arrival.
-	var in_band := _in_band_hyst(body, physical, alt, kill, ceiling, recipe)
+	var in_band := _in_band_hyst(body, alt, kill, ceiling, recipe)
 	_last_in_band = in_band
-	var warming: bool = physical and not body.is_empty() \
+	var warming: bool = not body.is_empty() \
 		and PlanetGenerator.has_surface(recipe) \
 		and alt > kill and alt < ceiling * PREBUILD_CEILINGS
 	if not in_band and not warming:

@@ -14,7 +14,6 @@ func _ready() -> void:
 	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
 	var ship := Ship.new()
 	add_child(ship)
-	ship.newton = true
 	ship.anchor_off = Vector3.UP * 6471.0
 	ship.toggle_hardpoints()
 	ship.prepare_weapons()
@@ -37,9 +36,8 @@ func _ready() -> void:
 	check("Mars atmosphere exit locks", not ship.weapons_in_atmosphere())
 	ship.anchor_name = "Earth"
 	ship.anchor_off = Vector3.UP * 6372.0
-	ship.newton = false
-	check("interstellar frame stays locked", not ship.weapons_in_atmosphere())
-	ship.newton = true
+	# "interstellar frame stays locked" (newton=false) deleted 2026-09-29: one physics,
+	# no non-Newton frame exists to lock.
 	var combat := Combat.new()
 	add_child(combat)
 	# Fixed fixtures remain reproducible while the live tuning defaults change.

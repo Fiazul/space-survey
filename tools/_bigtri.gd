@@ -11,7 +11,7 @@ func _initialize() -> void:
 	var lat := deg_to_rad(20.5); var lon := deg_to_rad(-17.0)
 	var dir := Vector3(cos(lat)*cos(lon), sin(lat), cos(lat)*sin(lon)).normalized()
 	var alt := 13.0
-	patch.update_for(dir * (R + alt), "Earth", true, R, alt, 0.02, ceiling, earth, s)
+	patch.update_for(dir * (R + alt), "Earth", R, alt, 0.02, ceiling, earth, s)
 	var rep: Dictionary = patch.report()
 	print("_bigtri: alt %.0f km, base %.0f m, ring quads %.2f/%.2f/%.2f/%.2f km"
 		% [alt, float(rep.base_quad_km)*1000.0,

@@ -66,7 +66,6 @@ func _falls_toward(body: String, start_alt: float, speed: float, secs: float,
 		min_move: float) -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	ship.set_anchor(body)
 	check("%s_anchor_taken" % body, ship.anchor_name == body)
 	var radius: float = Ephemeris.body_radius_km(body)
@@ -88,7 +87,6 @@ func _falls_toward(body: String, start_alt: float, speed: float, secs: float,
 func _reanchor_keeps_the_ship_still() -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	var moon: Vector3 = Ephemeris.rel_km("Moon", "Earth")
 	ship.anchor_off = moon * 0.5              # halfway out to the Moon
 	ship.velocity = Vector3(1.5, -0.25, 3.0)
@@ -105,7 +103,7 @@ func _reanchor_keeps_the_ship_still() -> void:
 	ship.set_anchor("Earth")
 	check("reanchor_back_is_reversible",
 		ship.anchor_off.distance_to(moon * 0.5) < 0.001)
-	# An absolute fixture (a Sol wormhole portal sits ~80,000 km out) renders at
+	# An absolute true-position fixture ~80,000 km out renders at
 	# the same offset whichever body the ship is anchored to.
 	var portal := Vector3(80000.0, 0.0, 0.0)
 	var portal_from_earth: Vector3 = ship.rel_to(portal)
@@ -142,7 +140,6 @@ func _drag_model_gated_to_earth() -> void:
 
 	var venus := ShipScript.new()
 	add_child(venus)
-	venus.newton = true
 	venus.set_anchor("Venus")
 	var v_alt := Ephemeris.body_radius_km("Venus") + 50.0
 	venus.anchor_off = Vector3(1.0, 0.0, 0.0) * v_alt
@@ -160,7 +157,6 @@ func _drag_model_gated_to_earth() -> void:
 	# velocity ULP, so an unchanged Vector3 there does not mean drag is disabled.
 	var earth := ShipScript.new()
 	add_child(earth)
-	earth.newton = true
 	earth.set_anchor("Earth")
 	earth.anchor_off = Vector3(1.0, 0.0, 0.0) * (Ephemeris.EARTH_RADIUS_KM + 5.0)
 	earth.velocity = Vector3(-3.0, 0.0, 0.0)
@@ -176,7 +172,6 @@ func _drag_model_gated_to_earth() -> void:
 func _anchor_rejects_craft() -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	ship.set_anchor("Earth")
 	check("voyager_has_pos", Ephemeris.has_pos("Voyager 1"))
 	check("voyager_not_anchorable", not Ephemeris.is_anchorable("Voyager 1"))
@@ -193,7 +188,6 @@ func _entry_handshake_survives_time_warp() -> void:
 	for rate in [100.0, 1000.0]:
 		var ship := ShipScript.new()
 		add_child(ship)
-		ship.newton = true
 		ship.set_anchor("Earth")
 		var dir := Vector3(1.0, 0.0, 0.0)
 		ship.anchor_off = dir * (Ephemeris.EARTH_RADIUS_KM + 42000.0)
@@ -245,7 +239,6 @@ func _entry_edge_fires_on_every_frame_in_the_sweep() -> void:
 		for i in range(n):
 			var ship := ShipScript.new()
 			add_child(ship)
-			ship.newton = true
 			ship.set_anchor("Earth")
 			var frac: float = 0.02 + 0.96 * (float(i) / float(n - 1))   # (0.02 .. 0.98) of travel
 			var dir := Vector3(1.0, 0.0, 0.0)
@@ -269,7 +262,6 @@ func _entry_edge_fires_on_every_frame_in_the_sweep() -> void:
 func _combat_shift_frame_matches_ship() -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	ship.set_anchor("Earth")
 	ship.anchor_off = Vector3(6800.0, 300.0, -150.0)
 	var combat := CombatScript.new()
@@ -293,7 +285,6 @@ func _combat_shift_frame_matches_ship() -> void:
 func _legacy_save_lands_on_earth() -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	check("fresh_ship_anchors_earth", ship.anchor_name == "Earth")
 	var legacy_pos := Vector3(42157.0, 0.0, 0.0)
 	ship.true_pos = legacy_pos
@@ -325,7 +316,6 @@ func _true_pos_handoff_continuity() -> void:
 		var bound: float = c[3]
 		var ship := ShipScript.new()
 		add_child(ship)
-		ship.newton = true
 		ship.set_anchor(a)
 		ship.anchor_off = off
 		var true_before: Vector3 = ship.true_pos

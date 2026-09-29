@@ -39,7 +39,7 @@ func _initialize() -> void:
 	patch._thread_pending = true
 	patch._thread_group_id = WorkerThreadPool.add_group_task(func(_i: int): OS.delay_msec(250), 1)
 	var started := Time.get_ticks_msec()
-	patch.update_for(Vector3.RIGHT * 7000.0, "Earth", true, 6371.0, 629.0, 0.0, 35.0, recipe, sampler)
+	patch.update_for(Vector3.RIGHT * 7000.0, "Earth", 6371.0, 629.0, 0.0, 35.0, recipe, sampler)
 	check("leaving atmosphere does not wait on worker", Time.get_ticks_msec() - started < 100)
 	check("leaving atmosphere hides local patch", not patch.visible)
 	patch._abandon_rebuild()

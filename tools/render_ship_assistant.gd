@@ -37,7 +37,6 @@ func _ready() -> void:
 	await _shot("landing-clearance")
 	facility.visible = false
 	ship.visible = false
-	ship.newton = true
 	var stations := OrbitalStations.new()
 	add_child(stations)
 	for id in ["iss","tiangong"]:

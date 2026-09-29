@@ -27,13 +27,13 @@ const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # The cruiser retains its authored OBJ propulsion; the remaining hulls use named GLB sockets.
 # A tier unlocks by GameState.SHIP_UNLOCK.
 const SHIP_MODELS := [
-	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "bolt_speed": 1250.0, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 119.8, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "finish_pick": true, "default_color": "silver" },
-	{ "name": "Kestrel", "path": "res://assets/ships/kestrel/kestrel.glb", "modular": true, "length": 0.525, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.04, "hp": 165, "bolt_scale": 1.00, "bolt_speed": 1300.0, "fire_cd": 0.105, "dmg": 2, "energy_max": 130.0, "energy_use": 0.64, "warp": 110.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "navy" },
-	{ "name": "Swift", "path": "res://assets/ships/swift/swift.glb", "modular": true, "length": 0.6, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.00, "hp": 185, "bolt_scale": 1.05, "bolt_speed": 1350.0, "fire_cd": 0.095, "dmg": 3, "energy_max": 140.0, "energy_use": 0.68, "warp": 116.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "burgundy" },
-	{ "name": "Harrier", "path": "res://assets/ships/harrier/harrier.glb", "modular": true, "length": 0.70875, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.92, "hp": 215, "bolt_scale": 1.20, "bolt_speed": 1375.0, "fire_cd": 0.088, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "warp": 120.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
-	{ "name": "Osprey", "path": "res://assets/ships/osprey/osprey.glb", "modular": true, "length": 0.9, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.86, "hp": 250, "bolt_scale": 1.30, "bolt_speed": 1400.0, "fire_cd": 0.082, "dmg": 4, "energy_max": 165.0, "energy_use": 0.78, "warp": 124.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "silver" },
-	{ "name": "Condor", "path": "res://assets/ships/condor/condor.glb", "modular": true, "length": 1.125, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 290, "bolt_scale": 1.40, "bolt_speed": 1425.0, "fire_cd": 0.076, "dmg": 5, "energy_max": 180.0, "energy_use": 0.82, "warp": 128.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "emerald" },
-	{ "name": "Albatross", "path": "res://assets/ships/albatross/albatross.glb", "modular": true, "length": 1.5, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.74, "hp": 340, "bolt_scale": 1.50, "bolt_speed": 1450.0, "fire_cd": 0.070, "dmg": 6, "energy_max": 200.0, "energy_use": 0.86, "warp": 134.0, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "champagne" },
+	{ "name": "Class II Galactic Cruiser", "path": "res://assets/class_ii_galactic_cruiser/Class II Gallactic Cruiser.obj", "length": 0.92, "yaw": 180.0, "pitch": 0.0, "engine_pitch": 0.88, "hp": 220, "bolt_scale": 1.35, "fire_cd": 0.10, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "light_accent": Color(0.38, 0.72, 1.0), "light_energy": 0.42, "class_ii_cruiser": true, "color_pick": true, "finish_pick": true, "default_color": "silver" },
+	{ "name": "Kestrel", "path": "res://assets/ships/kestrel/kestrel.glb", "modular": true, "length": 0.525, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.04, "hp": 165, "bolt_scale": 1.00, "fire_cd": 0.105, "dmg": 2, "energy_max": 130.0, "energy_use": 0.64, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "navy" },
+	{ "name": "Swift", "path": "res://assets/ships/swift/swift.glb", "modular": true, "length": 0.6, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 1.00, "hp": 185, "bolt_scale": 1.05, "fire_cd": 0.095, "dmg": 3, "energy_max": 140.0, "energy_use": 0.68, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "burgundy" },
+	{ "name": "Harrier", "path": "res://assets/ships/harrier/harrier.glb", "modular": true, "length": 0.70875, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.92, "hp": 215, "bolt_scale": 1.20, "fire_cd": 0.088, "dmg": 3, "energy_max": 150.0, "energy_use": 0.72, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "graphite" },
+	{ "name": "Osprey", "path": "res://assets/ships/osprey/osprey.glb", "modular": true, "length": 0.9, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.86, "hp": 250, "bolt_scale": 1.30, "fire_cd": 0.082, "dmg": 4, "energy_max": 165.0, "energy_use": 0.78, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "silver" },
+	{ "name": "Condor", "path": "res://assets/ships/condor/condor.glb", "modular": true, "length": 1.125, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 290, "bolt_scale": 1.40, "fire_cd": 0.076, "dmg": 5, "energy_max": 180.0, "energy_use": 0.82, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "emerald" },
+	{ "name": "Albatross", "path": "res://assets/ships/albatross/albatross.glb", "modular": true, "length": 1.5, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.74, "hp": 340, "bolt_scale": 1.50, "fire_cd": 0.070, "dmg": 6, "energy_max": 200.0, "energy_use": 0.86, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "champagne" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.
@@ -65,35 +65,13 @@ const HULL_KM := 0.08               # ~80 m reference craft — visible, small a
 # =================================================================
 
 # --- Flight tuning ---
-# Heavier hull: lower THRUST + lower DAMPING means the ship carries its momentum and
-# banks into wide, curving turns instead of snapping direction (no more jig-jag).
-# Cruise speed stays ~THRUST/DAMPING (≈220), but acceleration and turn-out are gentler.
-const THRUST := 1650.0        # forward/back accel (units/s^2) — ×10 for the spread-out system
-const STRAFE_THRUST := 1050.0 # lateral / vertical accel
 const BOOST_MULT := 3.0       # Shift multiplier
 const BOOST_DRAIN := 5.0      # boost energy/sec burned while boosting — very efficient, so a full
 							  # tank lasts a long time and tops back up fast (combat owns the pool)
 const MAX_SPEED := 10000.0
-# Calm in-system cruise: sublight (non-warp) flight is capped here so you're not
-# blitzing past the planets near Sol. Boost (Shift) multiplies it for fast travel.
-# This is SEPARATE from warp — the per-ship ly tops are unaffected.
-const SUBLIGHT_MAX := 550.0
-const GRAVITY_IDLE_SPEED := 50.0   # below this, an un-thrusting ship is released from gravity (no idle drift)
-# Weapons speed-lock: you can only fire at regular (sublight) speed. Holding fire force-caps
-# the ship to this, so opening fire while warping/boosting drops you to combat speed.
-const WEAPON_FIRE_SPEED := SUBLIGHT_MAX
-# Auto-settle: close to a body, gently bleed speed toward a hover so releasing thrust
-# holds you on station to capture (thrust still lets you nudge/orbit). Closer = stronger.
-const SETTLE_RANGE := 900.0
-const SETTLE_RATE := 1.5
-# Damping vs thrust sets the real cruise speed (~THRUST/DAMPING here) — MAX_SPEED is
-# just a ceiling. Lower DAMPING = more glide/momentum (the "heavy" feel).
-const DAMPING := 0.75         # higher = eases to a stop faster when idle (WARP cruise tuning)
-# Sublight drift: a much lighter damping used at non-warp speeds so the ship GLIDES — it
-# carries momentum through turns and coasts when you ease off, instead of braking itself.
-# Sublight top speed is capped (SUBLIGHT_MAX) regardless, so this only adds drift, not
-# speed. At warp we blend back to DAMPING so FTL travel times stay tuned.
-const DRIFT_DAMPING := 0.32
+# Visual only: the speed (km/s) at which engine heat and motion streaks reach their
+# cruise look. Never a flight limit.
+const VISUAL_CRUISE_KMS := 550.0
 const BRAKE_RATE := 3.0       # Vela's air-brake (R): eases velocity to ~0 over ~1.5s
 const STEER_SMOOTH := 9.0     # mouse-steer inertia: lower = heavier, more turn coast
 const STRAFE_SMOOTH := 5.0    # A/D & up/down (strafe/lift) input inertia: lower = heavier
@@ -120,16 +98,6 @@ const YAW_KEY_RATE := 0.6     # A/D also steer the yaw from the keyboard: they I
 							  # spin and change direction with a key (they still strafe too).
 const ROLL_RATE := 1.8        # manual Q/E roll (rad/s)
 const FLIP_TIME := 3.4        # cinematic drift-flip duration — long & SLOW, a heavy lazy roll (W+C)
-const FLIP_CRUISE := 340.0    # steady glide speed DURING the flip so it travels across space
-const FLIP_SWERVE := 4.2      # peak yaw-rate of the wavey curve the glide carves (rad/s)
-const FLIP_EASE := 2.2        # how gently the glide blends in/out (lower = more seamless)
-const FLIP_LEAP_BOOST := 0.9  # extra speed at the START of the flip → a quick LEAP that punches
-							  # out of slow-zones (the flip also BYPASSES the body speed cap)
-
-# Warp arrival: a warp ship eases out of warp as it falls toward the nearest mark, so
-# it arrives instead of blasting past (and the star has time to bloom into a sphere).
-const WARP_ARRIVE_TIME := 2.0      # seconds-to-arrival at which warp starts easing out
-const WARP_ARRIVE_SPEED := 400.0   # gentle speed warp bleeds down to (slow enough to scan)
 const BANK_ANGLE := 0.8       # max cosmetic bank into turns (rad ≈ 46°) — a clear, visible roll
 const BANK_GAIN := 0.7        # bank per unit yaw-RATE (rad/s); full bank ≈ at MAX_YAW_RATE
 const BANK_SMOOTH := 5.0
@@ -229,7 +197,6 @@ var true_pos: Vector3:
 		return _AF.absolute(anchor64(), anchor_off)
 	set(value):
 		relocate(_AF.decompose(value, anchor64()))
-var speed_limit := INF         # set by main from PlanetSystem; eases us down near a body
 # The nearest body's shared height function, assigned by main each frame. The SAME
 # instance the ground rings and the contact kill use - three readers, one function.
 var terrain: TerrainSampler
@@ -249,15 +216,11 @@ var _surface_owned_revision := -1
 var _surface_owned_body := ""
 var nearest_dir := Vector3.ZERO  # toward nearest body; we only ease down when approaching it
 var nearest_name := ""           # body F10 / tape use (Sun when you're at the Sun)
-var nearest_dist := INF        # distance to nearest body; set by main (warp arrival ease-out)
+var nearest_dist := INF        # distance to nearest body; set by main (exclusion shell, air)
 var nearest_radius := 1.0      # visual/physical radius of that body (km)
 var flight_mode := "LOCAL"     # LOCAL | CRUISE | AIR (or SKIN/INSIDE/CENTER)
 var drop_flash := 0.0          # seconds of DROP cue after hitting an EZ
 const DROP_FLASH_SECS := 0.4
-var star_field_dist := 0.0     # distance to this system's star; set by main (FTL gate; 0 = locked until known)
-var struct_limit := INF        # strict sublight cap near stations/probes; set by main from props
-var gravity := Vector3.ZERO    # set by main from PlanetSystem; pull toward bodies
-var newton := false            # Sol 1:1: real GM/r², no arcade cancel, no vacuum damp
 # Entry-intensity state, refreshed once per fly() frame. Wind audio and the HUD
 # G/Vspd/Mach/Load readout key off these so they always agree with each other and
 # with the drag that's actually slowing the ship.
@@ -282,16 +245,8 @@ var transiting := false        # in a wormhole tunnel — motion held, view lock
 var camera: Camera3D           # assigned by main; driven from fly()
 @onready var audio := GameAudio   # autoload; the engine voice is driven from fly()
 var mouse_sens := MOUSE_SENS   # live mouse sensitivity (Settings menu adjusts this)
-var warp := 1.0                # per-ship MAX speed multiplier; >1 = breaks physics (Vela)
-var has_galactic_drive := false  # this hull can run the galactic drive (Vela Iron Pulse)
-# Live core-distance scanner (only meaningful on the Iron Pulse). main feeds these from the
-# GalaxyModel each frame so the HUD can read total + remaining distance to the core in real time.
-var core_total_ly := 0.0       # full distance of the voyage (≈ 26,000 ly)
-var core_dist_ly := 0.0        # distance still to go right now (shrinks as you fly the drive)
-var _warp_charge := 0.0        # 0..1 spool-up; ramps while thrusting forward
 var fire_cooldown := 0.22      # seconds between shots (combat reads this)
 var max_hp := 100              # this hull's defence / hull integrity (combat reads this)
-var bolt_speed := 950.0        # this hull's bullet velocity (combat reads this)
 var bolt_scale := 1.0          # this hull's bullet size multiplier (combat reads this)
 var bolt_damage := 1           # damage per bolt (combat reads this) — Lyra's hit hard
 var bolt_laser := false        # bolts render as red laser beams (Lyra) — combat reads this
@@ -303,8 +258,8 @@ var locked := false            # skin-kill cutscene: no thrust, no steer, camera
 var has_laser := false         # right-click nose laser beam (Raptor 2 Neo) — combat reads this
 var laser_offset := Vector3.ZERO   # local muzzle offset for the beam (x=right, y=up)
 var auto_capture := false       # captures bodies in range automatically (no V) — Raptor 2 Neo
-var combat_lock := false        # set by main while in combat — no interstellar/FTL speed
-var firing := false             # set by main while holding fire — force-caps to combat speed
+var combat_lock := false        # set by main while in combat
+var firing := false             # set by main while holding fire
 var touch_fire := false         # mobile: the on-screen FIRE button (NOT the emulated mouse, which
 								# every touch would otherwise trigger) — main reads this on touch builds
 var touch_held := false         # any active touch contact keeps idle leveling paused
@@ -315,40 +270,18 @@ var touch_brake := false        # mobile joystick: pushed past the back cone (15
 var combat_ref: Node                   # set by main — owns the shared energy pools
 var _boost_starved := false            # true while boosting on an empty tank -> plume sputters
 var is_boosting := false               # true while boost is actually engaged (combat pauses boost regen)
-var boost_blocked := false             # true when Shift pressed in a slow-zone (boost unavailable)
 var auto_cruise := false        # Num Lock: hold W+Shift hands-free (forward thrust + boost)
-var autopilot := false          # hands-off cinematic flight to autopilot_target (M-map)
+# Stub until roadmap S.4 (cruise autopilot): point at the target and burn at the
+# Newton engines, cut out AP_STOP_RADII body radii from its centre.
+var autopilot := false
 var autopilot_target := Vector3.ZERO   # anchor-frame position to fly to (main keeps it current)
 var autopilot_name := ""        # body the autopilot is bound to (main refreshes the target)
-const AP_ARRIVE := 600.0        # stop autopilot within this distance of the target
+const AP_STOP_RADII := 3.0
 const AP_TURN := 2.5            # autopilot turn rate toward the target
 var muzzle := 2.5              # forward distance bolts spawn at — this hull's nose tip
 var muzzle_drop := 0.0         # how far BELOW the nose bolts emerge (set per hull from its height)
-# Warp multiplies cruise speed. The REAL top speed is the terminal velocity THRUST·warp/DAMPING
-# (the cap = MAX_SPEED·warp is just a ceiling and isn't reached) — so, with 1 ly = 6.32M units,
-# time per ly ≈ UNITS_PER_LY·DAMPING / (THRUST·warp) = 2874.6 / warp seconds (W-cruise, no boost;
-# Shift/auto-cruise boost ×3 is ~3× faster). Each authored hull supplies its own `warp` value.
-const HYPERSONIC_SPEED := 150000.0   # above this a warp ship is "hypersonic" (no combat)
-const WARP_FLOOR := 1.0        # zero-charge = calm sublight; holding W spools up to warp
-# FTL gate: warp can only spool up once you're beyond the system star's gravity field.
-# Inside this radius you fly normal sublight cruise no matter the hull.
-const SOL_FIELD_RADIUS := 2200.0
-const WARP_CHARGE_TIME := 9.0  # seconds of thrust to reach full warp
-const WARP_DECAY_TIME := 3.5   # seconds to spool back down when you ease off
-
-# --- Galactic drive (Vela Iron Pulse only) ---
-# The pilgrimage to the Milky Way's core (~26,000 ly). It is NOT a translation speed tier — flying
-# the real distance at that speed shatters float precision and piles up across saves. Instead the
-# galaxy backdrop LOOMS in toward the core at a fixed pace (galactic_loom_rate → main → galaxy),
-# decoupled from how fast the ship actually moves. She still flies normal space at her own warp;
-# this just advances the bounded voyage. Only while in deep space (warp_ready) and spooled up.
-const GALACTIC_SEC_PER_LY := 0.08      # LOCKED voyage pace — the tuned 0.08 s/ly (do not drift)
-const GALACTIC_LOOM_LY_PER_S := 1.0 / GALACTIC_SEC_PER_LY   # = 12.5 ly/s → ~26,000 ly in ~34.7 min
-const GALACTIC_TEST_MULT := 1.0  # ⚠ TEST ONLY — set back to 1.0 before shipping. 10× the loom
-								  # → core run in ~3.5 min instead of ~35, so the voyage is testable.
-
 # Station landing zone: speed is force-reduced as you near the pad so you can
-# actually land — applies to ALL ships, warp included. Fed by main via dock_approach.
+# actually land — applies to every hull. Fed by main via dock_approach.
 const DOCK_EDGE_SPEED := 1000.0    # speed cap at the outer edge of the zone (gentle entry)
 const DOCK_PLATFORM_SPEED := 60.0  # speed cap right at the pad (smooth final approach)
 const DOCK_SPIN := 0.5             # showroom turntable spin (rad/s) while docked
@@ -371,20 +304,6 @@ const ENTRY_SPEED_MAX_KMS := 3.0
 # Per-substep drag clamp: at most this fraction of current speed removed in one
 # _newton_atmo_drag call, so drag is continuous and can never zero velocity outright.
 const DRAG_MAX_DV_FRAC := 0.25
-
-# True when a warp ship is blazing fast — combat + crosshair are disabled.
-func is_hypersonic() -> bool:
-	return warp > 1.0 and velocity.length() > HYPERSONIC_SPEED
-
-# This hull can build full FTL right now: it has a warp drive AND it's clear of every
-# force-slow safe-zone (deep space). Near a star/planet the zone caps your speed.
-func warp_ready() -> bool:
-	return (not newton) and warp > 1.0 and is_inf(speed_limit)
-
-# In open/FTL deep space: every speed cap (body gravity zone, station/probe/wormhole
-# slow-zone) is lifted. This is the "interstellar" signal the music state machine reads.
-func in_open_space() -> bool:
-	return is_inf(speed_limit) and is_inf(struct_limit)
 
 
 # --- Anchored frame (docs/adr/0002) -----------------------------------------
@@ -563,11 +482,6 @@ func _debug_speed_txt(km_s: float) -> String:
 
 
 func _clamp_time_warp(thrusting: bool, is_braking: bool) -> void:
-	if not newton:
-		_time_idx = 0
-		time_rate = 1.0
-		flight_mode = _FM.LOCAL
-		return
 	var who := nearest_name if nearest_name != "" else anchor_name
 	var dist := nearest_dist if nearest_name != "" and nearest_dist < INF else anchor_off.length()
 	var zone := Ephemeris.flight_zone(who, dist)
@@ -630,22 +544,44 @@ func _cruise_ok_now() -> bool:
 # this and MAX_SUBSTEPS below are the two levers on _newton_g's per-frame cost.
 const NEWTON_G_SKIP_THRESHOLD := 1.0e-12
 
-# Every world with real mass — planets AND the 1:1 moons, matching the mu sum
-# PlanetSystem.refresh already does. Each pull is measured in the anchor frame.
+# Every world with real mass (planets and 1:1 moons), measured in the anchor frame.
+# Body positions are frozen for the session, so the anchor does not really fall;
+# the frame is treated as free-falling with it: each body's pull on the anchor's
+# centre is subtracted, leaving the anchor's own pull plus the tidal residue of the
+# rest. Without it the star's direct pull (2.6 % of Earth's g at GEO, dominant past
+# ~259,000 km) drags a parked ship sunward. All sums in 64-bit scalars (ADR-0002).
 func _newton_g() -> Vector3:
-	var g := Vector3.ZERO
+	var gx := 0.0
+	var gy := 0.0
+	var gz := 0.0
 	var a64 := anchor64()   # hoisted: this runs per substep, over ~31 bodies
+	var sx := float(anchor_off.x)
+	var sy := float(anchor_off.y)
+	var sz := float(anchor_off.z)
 	for p in Ephemeris.gravity_bodies():
-		var rel: Vector3 = _AF.sub64(Ephemeris.pos64(str(p.name)), a64) - anchor_off
-		var d2 := rel.length_squared()
-		if d2 <= 1.0e-6:
-			continue
+		var b64: PackedFloat64Array = Ephemeris.pos64(str(p.name))
+		var ax: float = b64[0] - a64[0]
+		var ay: float = b64[1] - a64[1]
+		var az: float = b64[2] - a64[2]
+		var rx := ax - sx
+		var ry := ay - sy
+		var rz := az - sz
+		var d2 := rx*rx + ry*ry + rz*rz
+		var a2 := ax*ax + ay*ay + az*az
 		var mu: float = float(p.mu)
-		if mu / d2 < NEWTON_G_SKIP_THRESHOLD:
+		if mu / d2 < NEWTON_G_SKIP_THRESHOLD and mu / maxf(a2, 1.0e-6) < NEWTON_G_SKIP_THRESHOLD:
 			continue
-		var d := sqrt(d2)
-		g += rel * (mu / (d2 * d))
-	return g
+		if d2 > 1.0e-6:
+			var k := mu / (d2 * sqrt(d2))
+			gx += rx * k
+			gy += ry * k
+			gz += rz * k
+		if a2 > 1.0e-6:
+			var ka := mu / (a2 * sqrt(a2))
+			gx -= ax * ka
+			gy -= ay * ka
+			gz -= az * ka
+	return Vector3(gx, gy, gz)
 
 
 # Perf cap (docs/adr/0002 finding 6): at extreme time-warp (1e5×) `sim` can
@@ -880,8 +816,6 @@ func weapons_ready() -> bool:
 
 
 func weapons_in_atmosphere() -> bool:
-	if not newton:
-		return false
 	var body := nearest_name if not nearest_name.is_empty() else anchor_name
 	var air := Ephemeris.atmo_top_km(body)
 	var radius := Ephemeris.body_radius_km(body)
@@ -955,22 +889,6 @@ func apply_surface_contact(contact: Dictionary, body_basis: Basis, local_now: Ve
 		_advance_anchor(body_basis*(contact.seat as Vector3))
 	surface_impact = surface_impact or bool(contact.hit)
 
-# True while the galactic drive is carrying us — the drive hull, spooled up, in clear deep space.
-# main uses it to loom the core; the HUD uses it for the drive readout; streaks use it for the blur.
-func galactic_cruising() -> bool:
-	return has_galactic_drive and warp_ready() and _warp_charge > 0.02
-
-# Signed ly/s the galactic core looms this frame: the LOCKED voyage pace (0.08 s/ly × test mult),
-# its sign set by whether she's heading toward the core (+ = approach) or away (− = recede). It is
-# NOT scaled by spool/throttle — once she's cruising the drive, the pace is the locked 0.08 s/ly,
-# full stop. DECOUPLED from her real translation speed, so the ~26,000 ly haul is a bounded illusion
-# that never moves true_pos. main feeds this to galaxy.advance_ly each frame.
-func galactic_loom_rate() -> float:
-	if not galactic_cruising() or velocity.length() < 1.0:
-		return 0.0
-	var heading := signf(velocity.normalized().dot(GalaxyModel.DIR.normalized()))
-	return GALACTIC_LOOM_LY_PER_S * GALACTIC_TEST_MULT * heading
-
 var _current_model := 0        # index into SHIP_MODELS
 var _color_choice := {}        # ship name -> palette key
 var _finish_choice := {}       # ship name -> "metallic" | "glassy"
@@ -1023,7 +941,6 @@ var _bank := 0.0
 var _lean := 0.0              # eased cosmetic nose-lean into a climb/dive (mesh-only)
 var _flip_t := 0.0            # remaining cinematic flip time (0 = not flipping)
 var _flip_dir := 1.0          # +1 roll/drift right · -1 left
-var _flip_yaw := 0.0          # accumulated swerve of the drift heading during the flip
 var _cruise_t := 0.0           # seconds held on a straight cruise (drives the cinematic sway)
 var _mouse_delta := Vector2.ZERO
 var _steer := Vector2.ZERO     # eased mouse-steer (rotational inertia for curving turns)
@@ -1074,7 +991,7 @@ func _input(event: InputEvent) -> void:
 			_cam_zoom = clampf(_cam_zoom - ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
 		elif event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			_cam_zoom = clampf(_cam_zoom + ZOOM_STEP, ZOOM_MIN, ZOOM_MAX)
-	elif event is InputEventKey and event.pressed and not event.echo and newton:
+	elif event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_PERIOD or event.keycode == KEY_BRACKETRIGHT:
 			_time_idx = mini(_time_idx + 1, TIME_RATES.size() - 1)
 			time_rate = TIME_RATES[_time_idx]
@@ -1106,7 +1023,7 @@ func add_touch_look(v: Vector2) -> void:
 
 const TOUCH_PITCH_MD := 9.0   # touch_pitch (±1, held) -> an md.y-equivalent rate for fly()'s pitch branch
 
-# Keyboard + touch combined, so every W/S/A/D/warp/autopilot-cancel site reads one source
+# Keyboard + touch combined, so every W/S/A/D/autopilot-cancel site reads one source
 # instead of re-deriving "is the player thrusting" per site (the touch joystick is analog,
 # keys are digital — mixing them ad hoc at each call site is how one of them gets missed).
 func _in_fwd() -> float:
@@ -1171,7 +1088,7 @@ func restore_facility_attachment(id: String, sampler: TerrainSampler, body_basis
 # hull within the assistant's 2 km envelope of a solid surface in Sol.
 func _support_jets_in_use() -> bool:
 	if support_active: return true
-	if not newton or terrain == null or anchor_name != nearest_name or not bool(terrain.surface.get("solid", false)):
+	if terrain == null or anchor_name != nearest_name or not bool(terrain.surface.get("solid", false)):
 		return false
 	return terrain.alt_above_ground_km(terrain_local(anchor_off, true), anchor_radius_km()) < 2.0
 
@@ -1206,7 +1123,7 @@ func _apply_landing_support(delta: float, input: Vector3, manual_accel: Vector3)
 	support_active = false
 	support_accel = Vector3.ZERO
 	_support_visual_accel = Vector3.ZERO
-	if not newton or systems == null \
+	if systems == null \
 			or terrain == null or not bool(terrain.surface.get("solid",false)) \
 			or not landing_site.is_empty() or anchor_name != nearest_name:
 		return
@@ -1265,9 +1182,9 @@ func _level_near_planet(delta: float, player_active: bool) -> void:
 	if terrain == null or not bool(terrain.surface.get("solid",false)):
 		_level_idle_s = 0.0
 		return
-	var up := anchor_off.normalized() if newton else -nearest_dir.normalized()
-	var altitude := anchor_distance_km()-anchor_radius_km() if newton else nearest_dist-nearest_radius
-	if newton and anchor_name != nearest_name:
+	var up := anchor_off.normalized()
+	var altitude := anchor_distance_km()-anchor_radius_km()
+	if anchor_name != nearest_name:
 		_level_idle_s = 0.0
 		return
 	var band := maxf(35.0,Ephemeris.atmo_top_km(nearest_name))
@@ -1310,7 +1227,6 @@ func _hold_facility_pad(delta: float) -> bool:
 	_flip_t = 0.0
 	time_rate = 1.0
 	_time_idx = 0
-	_warp_charge = 0.0
 	var ang := Ephemeris.scene_spin_rad_s(anchor_name)*delta
 	var spin := Basis(Vector3.UP, ang)
 	# Ride the pad by rotating the double-precision offset with the body, as
@@ -1374,7 +1290,7 @@ func fly(delta: float) -> void:
 			sin(wob * 0.7) * 0.012, PI, sin(wob * 0.5) * 0.018)
 		_clear_air_fx()
 		_update_authored_propulsion(0.4, delta) # engines low — calm, not hypersonic
-		_update_streaks(SUBLIGHT_MAX * 0.7)     # restrained streaks — dark, not warp-busy
+		_update_streaks(VISUAL_CRUISE_KMS * 0.7)     # restrained streaks, not full cruise
 		_update_camera(delta)
 		if audio:
 			audio.engine_off()   # silent in the wormhole
@@ -1489,43 +1405,31 @@ func fly(delta: float) -> void:
 		_look_yaw = 0.0
 		_look_pitch = 0.0
 		# Carry normal forward flight; a gravity-driven backwards fall keeps its direction.
-		if newton:
-			velocity = TurnCarry.apply(velocity, attitude_before, transform.basis)
+		velocity = TurnCarry.apply(velocity, attitude_before, transform.basis)
 	# Level after flight's steering/velocity carry so the idle visual turn does
 	# not redirect the ship's momentum or fight a pilot input.
 	_level_near_planet(delta,pilot_active)
 
 	# --- Thrust (local axes -> world via current basis) ---
-	# Shift = boost, draining the shared boost pool (owned by combat). It only ENGAGES
-	# (and only burns energy) when the boost can actually push you faster — i.e. you're
-	# NOT pinned by a star/station slow-zone. Pressing Shift in a slow-zone does nothing
-	# and costs nothing.
+	# Shift = boost, draining the shared boost pool (owned by combat).
 	var boost := 1.0
 	var be: float = combat_ref.boost_energy if combat_ref != null else 1.0
-	var boost_effective := minf(speed_limit, struct_limit) >= SUBLIGHT_MAX
 	var want_boost := Input.is_physical_key_pressed(KEY_SHIFT) or auto_cruise
 	is_boosting = false
-	# Pressed Shift where boost can't help (a slow-zone) -> tell the player, cost nothing.
-	boost_blocked = want_boost and not boost_effective
-	if want_boost and be > 0.0 and boost_effective:
+	if want_boost and be > 0.0:
 		boost = BOOST_MULT
 		is_boosting = true
 		if combat_ref != null:
 			combat_ref.boost_energy = maxf(combat_ref.boost_energy - BOOST_DRAIN * energy_use * delta, 0.0)
-	# Plume only chokes if you're trying to boost effectively but the tank is empty.
-	_boost_starved = want_boost and boost_effective and be <= 0.0
+	# Plume only chokes if you're trying to boost but the tank is empty.
+	_boost_starved = want_boost and be <= 0.0
 	var fwd := 0.0
 	var strafe := 0.0
 	var lift := 0.0
-	# S is reverse thrust on every hull — with the heavier flight model
-	# you need to be able to back off and reposition. In Sol, S is a brake instead:
-	# reverse-along-nose while facing Earth is an outbound burn and feels like "S
-	# takes me away".
+	# S is a brake: reverse-along-nose while facing Earth is an outbound burn and
+	# feels like "S takes me away".
 	fwd -= _in_fwd()
-	if _in_brake() and not newton:
-		fwd += 1.0
-	# Honest Sol uses S as a brake (see dump: turn-away leftover).
-	var braking := newton and _in_brake()
+	var braking := _in_brake()
 	if Input.is_physical_key_pressed(KEY_A):
 		strafe -= 1.0
 	if Input.is_physical_key_pressed(KEY_D):
@@ -1540,34 +1444,11 @@ func fly(delta: float) -> void:
 	if _pad_release > 0.0 and lift >= 0.0 and not _in_brake():
 		lift = 1.0  # brief clearance lift; mouse, roll and main thrust remain manual
 
-	# FTL: every hull can spool warp by holding W. There's no gate — instead the
-	# force-slow safe-zones around stars/planets cap your speed when you're near them,
-	# so you naturally drop out of warp near a body and fly free in the deep.
-	# Auto-pilot drives forward at warp toward the target (overrides manual thrust).
 	if autopilot:
 		fwd = -1.0
 		strafe = 0.0
 		lift = 0.0
 		braking = false
-	var eff_warp := 1.0
-	# Every hull (the Iron Pulse included) translates at its OWN warp here — fast, but a sane,
-	# bounded coordinate rate. Her dramatic galactic SPEED is not a translation tier; it's the
-	# core-voyage looming (see galactic_loom_rate + main), which is decoupled from true_pos so the
-	# ~26,000 ly haul can never balloon the floating-origin coordinate the way it used to.
-	if newton:
-		# Honest Sol: engines only. Warp is not a local speed tier.
-		_warp_charge = 0.0
-		eff_warp = 1.0
-	elif warp > 1.0 and not combat_lock and not (systems != null and (systems.gear_target or systems.gear_fraction > .01)):
-		if _in_fwd() > 0.0 or autopilot:   # auto-cruise/autopilot/touch-thrust spool warp too
-			_warp_charge = minf(_warp_charge + delta / WARP_CHARGE_TIME, 1.0)
-		else:
-			_warp_charge = maxf(_warp_charge - delta / WARP_DECAY_TIME, 0.0)
-		var c := _warp_charge * _warp_charge * (3.0 - 2.0 * _warp_charge)   # smoothstep
-		eff_warp = lerpf(WARP_FLOOR, warp, c)
-	elif combat_lock or (systems != null and systems.gear_fraction > .01):
-		# No interstellar speed during combat — bleed any spool back to sublight.
-		_warp_charge = maxf(_warp_charge - delta / WARP_DECAY_TIME, 0.0)
 
 	# Heavy lateral/vertical control: ease the A/D and Space/Ctrl inputs so they ramp into
 	# thrust and coast out of it (a weighty, drifting feel) instead of snapping on/off.
@@ -1575,12 +1456,12 @@ func fly(delta: float) -> void:
 	var sk := clampf(STRAFE_SMOOTH * delta, 0.0, 1.0)
 	_strafe = lerpf(_strafe, strafe, sk)
 	_lift = lerpf(_lift, lift, sk)
-	var t_fwd := NEWTON_THRUST if newton else THRUST
-	var t_side := NEWTON_STRAFE if newton else STRAFE_THRUST
-	if newton and dev_speed and _cruise_ok_now():
+	var t_fwd := NEWTON_THRUST
+	var t_side := NEWTON_STRAFE
+	if dev_speed and _cruise_ok_now():
 		t_fwd *= DEV_THRUST_MULT
 		t_side *= DEV_THRUST_MULT
-	var local_accel := Vector3(_strafe * t_side, _lift * t_side, fwd * t_fwd) * eff_warp
+	var local_accel := Vector3(_strafe * t_side, _lift * t_side, fwd * t_fwd)
 	var g_thrusting := local_accel.length_squared() > 0.0001
 	last_thrust_accel = (transform.basis * local_accel) * boost if g_thrusting else Vector3.ZERO
 	if local_accel.length_squared() > 0.0001:
@@ -1594,102 +1475,37 @@ func fly(delta: float) -> void:
 		_rcs_command = -lateral_velocity.normalized() * .55 if lateral_velocity.length() > .0001 else Vector3.ZERO
 	_rcs_braking = braking
 
-	# Gravitational tug toward nearby bodies. It draws you in and helps you settle to land,
-	# but must NEVER trap you. Two safeguards:
-	#  • IDLE RELEASE — a parked, slow ship (no thrust) is let go entirely, so gravity can't
-	#    balance damping into a permanent ~30 u/s drift toward the star while you sit still.
-	#  • OUTWARD FADE — thrusting away from the pull fades it out (gone when straight out).
-	# Sol newton skips both — a parked ship must fall, and vacuum has no damping.
-	var g := gravity
-	if newton:
-		_clamp_time_warp(g_thrusting, braking)
-		if drop_flash > 0.0:
-			drop_flash = maxf(drop_flash - delta, 0.0)
-		var sim: float = delta * time_rate
-		simulation_delta = sim
-		_newton_advance(sim)
-		_footprint_tick(delta, fwd < 0.0, fwd > 0.0)
-		last_newton_g = _newton_g()
-		# Gated together with drag/corotate (finding 5): Earth's RHO0/scale-height
-		# curve is the only one that exists, so Mach/Load/wind-audio must stay
-		# silent anywhere that curve doesn't apply (Venus/Titan) rather than fire
-		# Earth numbers against no matching drag — backlog is a real density table.
-		if _FM.has_drag_model(anchor_name):
-			var air_top := Ephemeris.atmo_top_km(anchor_name)
-			var alt_now := anchor_off.length() - anchor_radius_km()
-			air_load = _FM.air_load(alt_now, velocity.length(), air_top) if air_top > 0.0 else 0.0
-			mach_number = _FM.mach(velocity.length())
-		else:
-			air_load = 0.0
-			mach_number = 0.0
+	_clamp_time_warp(g_thrusting, braking)
+	if drop_flash > 0.0:
+		drop_flash = maxf(drop_flash - delta, 0.0)
+	var sim: float = delta * time_rate
+	simulation_delta = sim
+	_newton_advance(sim)
+	_footprint_tick(delta, fwd < 0.0, fwd > 0.0)
+	last_newton_g = _newton_g()
+	# Gated together with drag/corotate (finding 5): Earth's RHO0/scale-height
+	# curve is the only one that exists, so Mach/Load/wind-audio must stay
+	# silent anywhere that curve doesn't apply (Venus/Titan) rather than fire
+	# Earth numbers against no matching drag — backlog is a real density table.
+	if _FM.has_drag_model(anchor_name):
+		var air_top := Ephemeris.atmo_top_km(anchor_name)
+		var alt_now := anchor_off.length() - anchor_radius_km()
+		air_load = _FM.air_load(alt_now, velocity.length(), air_top) if air_top > 0.0 else 0.0
+		mach_number = _FM.mach(velocity.length())
 	else:
 		air_load = 0.0
 		mach_number = 0.0
-		last_newton_g = Vector3.ZERO
-		if not g_thrusting and velocity.length() < GRAVITY_IDLE_SPEED:
-			g = Vector3.ZERO                        # idle + slow → released; you settle to a stop
-		elif g.length() > 0.01 and g_thrusting:
-			var thrust_dir := (transform.basis * local_accel).normalized()
-			var outward := -g.normalized()
-			var align := thrust_dir.dot(outward)   # 1 = thrusting straight out, -1 = straight in
-			if align > 0.0:
-				g *= (1.0 - align)                  # fade the pull as you head outward
-		velocity += g * delta
 
-	# Damping: velocity eases toward zero when you're not thrusting. Sublight uses the
-	# light DRIFT_DAMPING so the ship glides and carries momentum through turns; as warp
-	# spools up we blend back to the heavier DAMPING that the FTL travel speeds are tuned
-	# around, so deep-space cruise times are unchanged.
-	if not newton:
-		var damp := DRIFT_DAMPING
-		if eff_warp > 1.0:
-			damp = lerpf(DRIFT_DAMPING, DAMPING, smoothstep(1.0, 2.0, eff_warp))
-		velocity = velocity.lerp(Vector3.ZERO, clampf(damp * delta, 0.0, 1.0))
-		# Auto-settle near a body: a soft brake that strengthens as you close in, so EASING OFF the
-		# throttle lets you hover and capture instead of drifting past. Only while coasting, though —
-		# holding thrust pushes you right in (and through), so a body never freezes you in place.
-		if nearest_dist < SETTLE_RANGE and not braking and not g_thrusting:
-			var settle := SETTLE_RATE * (1.0 - nearest_dist / SETTLE_RANGE)
-			velocity = velocity.lerp(Vector3.ZERO, clampf(settle * delta, 0.0, 1.0))
-	# Sol brake: a smooth hard stop plus a warp dump.
 	if braking:
 		velocity = velocity.lerp(Vector3.ZERO, clampf(BRAKE_RATE * delta, 0.0, 1.0))
-		_warp_charge = 0.0
-	var cap := MAX_SPEED * eff_warp * boost
-	if not newton and eff_warp <= 1.0:
-		cap = minf(cap, SUBLIGHT_MAX * boost)   # arcade systems only; Sol is uncapped
-	# Force-slow safe-zones around stars/planets/moons (NO pull) — applied in ANY mode
-	# and ANY direction, so you ease right down to orbit, analyse, and capture a body,
-	# and a star drops you out of warp as you arrive. Scaled by the body's mass.
-	cap = minf(cap, speed_limit)
-	# Harbour cap near stations — any mode, so you never blast through a structure.
-	cap = minf(cap, struct_limit)
-	# Weapons lock: while you hold fire you're pulled down to regular combat speed — you
-	# can't shoot above it, so opening fire itself slows the ship out of warp/boost.
-	if firing:
-		cap = minf(cap, WEAPON_FIRE_SPEED)
-	# Bleed warp charge when something is force-slowing us, so the drive visibly drops
-	# out of warp as you settle near a body/station (or open fire) instead of pinning at full spool.
-	if (speed_limit < INF or struct_limit < INF or firing) and cap < MAX_SPEED:
-		_warp_charge = minf(_warp_charge, cap / maxf(MAX_SPEED, 1.0))
-	# The drift-flip LEAP bypasses slow-zone/gravity caps so it can break you out of a well.
-	if _flip_t > 0.0:
-		cap = maxf(cap, FLIP_CRUISE * (1.0 + FLIP_LEAP_BOOST))
-	velocity = velocity.limit_length(cap)
+	velocity = velocity.limit_length(MAX_SPEED * boost)
 
 	# Platform approach: inside the station's landing zone the speed is force-reduced
-	# so you can actually land — no matter how fast you arrived (warp included). The
-	# cap shrinks smoothly with proximity, easing you down rather than snapping. You
-	# keep steering, you just can't blast through. (dock_approach is fed by main.)
+	# so you can actually land. The cap shrinks smoothly with proximity. (dock_approach
+	# is fed by main.)
 	if dock_approach > 0.0:
 		var land_cap := lerpf(DOCK_EDGE_SPEED, DOCK_PLATFORM_SPEED, dock_approach)
 		velocity = velocity.limit_length(land_cap)
-
-	# --- Floating origin: never move the node; accumulate the true position ---
-	# Safe now: every hull translates at its own warp (bounded coordinate rate), and the core
-	# voyage looms separately instead of flying real distance — so this never balloons.
-	if not newton:
-		anchor_off += velocity * delta
 
 	# --- Cosmetic banking (on the mesh only, so the camera stays steady) ---
 	var target_bank := clampf(-turn * BANK_GAIN - _strafe * 0.35, -BANK_ANGLE, BANK_ANGLE)
@@ -1701,15 +1517,10 @@ func fly(delta: float) -> void:
 	_cruise_t = (_cruise_t + delta) if cruising else maxf(_cruise_t - delta * 3.0, 0.0)
 	var sway_ramp := clampf((_cruise_t - SWAY_DELAY) / SWAY_RAMP, 0.0, 1.0)
 	if sway_ramp > 0.0:
-		# Two non-harmonic sines → an organic drift rather than a metronome wobble. At
-		# interstellar speed the wave stretches LONGER and a touch wider (a grand, slow
-		# banking roll) vs. the quicker breathe of normal sublight cruise.
-		var warpf := smoothstep(1.0, 2.0, eff_warp)        # 0 sublight → 1 full warp
-		var rate := lerpf(1.0, 0.5, warpf)                 # slower = longer wave at warp
-		var amp := SWAY_ANGLE * lerpf(1.0, 1.45, warpf)    # slightly wider roll at warp
+		# Two non-harmonic sines → an organic drift rather than a metronome wobble.
 		var st := Time.get_ticks_msec() * 0.001
-		var sway := (sin(st * 0.9 * rate) + 0.4 * sin(st * 0.37 * rate + 1.1)) / 1.4
-		target_bank = clampf(target_bank + sway * amp * sway_ramp, -BANK_ANGLE, BANK_ANGLE)
+		var sway := (sin(st * 0.9) + 0.4 * sin(st * 0.37 + 1.1)) / 1.4
+		target_bank = clampf(target_bank + sway * SWAY_ANGLE * sway_ramp, -BANK_ANGLE, BANK_ANGLE)
 	_bank = lerpf(_bank, target_bank, clampf(BANK_SMOOTH * delta, 0.0, 1.0))
 	# Nose-lean into a climb/dive: vertical mouse leans the whole hull (mesh only; the real
 	# pitch already happened on the transform above). Eased slowly so the big ship tips its
@@ -1721,7 +1532,7 @@ func fly(delta: float) -> void:
 		_lean *= 1.0 - systems.gear_fraction
 	_mesh_root.rotation = Vector3(_lean, 0.0, _bank)   # clear any transit flip/wobble
 	# Cinematic drift-flip: a full 360° barrel roll layered on the bank (cosmetic — heading
-	# is untouched). The sideways drift kick was added to velocity in do_flip().
+	# and velocity are untouched).
 	if _flip_t > 0.0:
 		_flip_t = maxf(_flip_t - delta, 0.0)
 		var fp := 1.0 - _flip_t / FLIP_TIME            # 0 → 1 across the move
@@ -1729,16 +1540,6 @@ func fly(delta: float) -> void:
 		# sweep (x-y), the nose never pitches/yaws off the aim line. Heavy eased slow-fast-slow.
 		var fe := fp * fp * (3.0 - 2.0 * fp)
 		_mesh_root.rotation.z = _bank + _flip_dir * TAU * fe
-		# DRIVE the ship through a wide wavey arc so it visibly TRAVELS while rolling. A compound
-		# sine gives a rich S-on-S-on-S weave (more curve); facing/aim (transform) is untouched.
-		# The glide is LERPED in (and out), so entering/leaving the flip is seamless — no snap.
-		var weave := sin(fp * TAU) + 0.45 * sin(fp * 2.0 * TAU) + 0.22 * sin(fp * 3.0 * TAU)
-		_flip_yaw += _flip_dir * FLIP_SWERVE * weave * delta
-		# Quick LEAP: a speed burst that decays into the cruise glide over the first third.
-		if not newton:
-			var leap := 1.0 + FLIP_LEAP_BOOST * (1.0 - smoothstep(0.0, 0.32, fp))
-			var glide := (-transform.basis.z).rotated(Vector3.UP, _flip_yaw) * (FLIP_CRUISE * leap)
-			velocity = velocity.lerp(glide, clampf(FLIP_EASE * delta, 0.0, 1.0))
 
 	# --- Engine / booster intensity ---
 	var flipping := _flip_t > 0.0
@@ -1768,7 +1569,7 @@ func fly(delta: float) -> void:
 		_engine_mat.emission_energy_multiplier = lerpf(
 			_engine_mat.emission_energy_multiplier, e, clampf(8.0 * delta, 0.0, 1.0))
 
-	# Fat motion streaks during the leap-push (warp-like), normal speed-based otherwise.
+	# Fat motion streaks during the flip, speed-based otherwise.
 	_update_streaks(maxf(velocity.length(), MAX_SPEED * 0.7) if flipping else velocity.length())
 	_update_camera(delta)
 
@@ -1783,10 +1584,8 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 	var k := clampf(7.0 * delta, 0.0, 1.0)
 	var t := Time.get_ticks_msec() * 0.001
 	# Each ship's named booster surface keeps its authored shape. Speed only changes
-	# its heat/flow: sublight is bright, while boost/warp drives it white-hot.
-	var speed_power := clampf(velocity.length() / (SUBLIGHT_MAX * BOOST_MULT), 0.0, 1.0)
-	var warp_power := clampf(_warp_charge, 0.0, 1.0) if warp > 1.0 else 0.0
-	var target_power := maxf(speed_power, warp_power)
+	# its heat/flow: cruise is bright, while boost drives it white-hot.
+	var target_power := clampf(velocity.length() / (VISUAL_CRUISE_KMS * BOOST_MULT), 0.0, 1.0)
 	# A small throttle lead prevents a dead-looking delay before the ship accelerates.
 	target_power = maxf(target_power, clampf(throttle / 1.7, 0.0, 1.0) * 0.28)
 	if is_boosting:
@@ -2053,10 +1852,10 @@ func _build_streaks() -> void:
 func _update_streaks(speed: float) -> void:
 	if _streaks == null:
 		return
-	# Sublight cue: 0 at rest -> ~full by SUBLIGHT_MAX (the calm-cruise cap). Kept subtle
-	# so it reads as "moving" without the busy warp look — but visible enough to notice.
-	var sub := clampf(speed / SUBLIGHT_MAX, 0.0, 1.0)
-	# High-speed/warp stretch: off until ~1/3 of MAX_SPEED, full near the top.
+	# Cruise cue: 0 at rest -> ~full by VISUAL_CRUISE_KMS. Kept subtle so it reads as
+	# "moving" without the busy high-speed look.
+	var sub := clampf(speed / VISUAL_CRUISE_KMS, 0.0, 1.0)
+	# High-speed stretch: off until ~1/3 of MAX_SPEED, full near the top.
 	var hi := clampf((speed / MAX_SPEED - 0.3) / 0.5, 0.0, 1.0)
 	var t := maxf(sub * 0.72, hi)
 	_streaks.emitting = t > 0.01
@@ -2064,16 +1863,6 @@ func _update_streaks(speed: float) -> void:
 	_streaks.speed_scale = 1.0 + t * 1.6
 	var a: Color = _streak_mat.albedo_color
 	a.a = t * 0.8
-	# Galactic drive only: at her absolute top speed the normal ramp is already maxed out, so
-	# push the streaks PAST it — a much faster, denser hyperspace blur. Eased by the spool charge
-	# so it swells in with the drive; ONLY this hull while actually cruising, so regular flight
-	# (and every other ship) keeps the exact streak feel above.
-	if galactic_cruising():
-		var g := _warp_charge   # 0..1 drive spool
-		_streaks.emitting = true
-		_streaks.amount_ratio = 1.0
-		_streaks.speed_scale = lerpf(2.6, 9.0, g)   # far faster flow than the warp max (2.6)
-		a.a = lerpf(0.8, 0.95, g)
 	_streak_mat.albedo_color = a
 
 
@@ -2096,10 +1885,8 @@ func _build_ship_model(idx: int) -> void:
 	_engine_mat = null
 
 	var info = SHIP_MODELS[idx]
-	warp = float(info.get("warp", 1.0))
 	fire_cooldown = float(info.get("fire_cd", 0.22))
 	max_hp = int(info.get("hp", 100))
-	bolt_speed = float(info.get("bolt_speed", 950.0))
 	bolt_scale = float(info.get("bolt_scale", 1.0))
 	bolt_damage = int(info.get("dmg", 1))
 	bolt_laser = bool(info.get("bolt_laser", false))
@@ -2111,8 +1898,6 @@ func _build_ship_model(idx: int) -> void:
 	laser_offset = info.get("laser_offset", Vector3.ZERO)
 	auto_capture = bool(info.get("auto_capture", false))
 	_engine_pitch = float(info.get("engine_pitch", 1.0))
-	has_galactic_drive = bool(info.get("galactic_drive", false))
-	_warp_charge = 0.0
 	# Loads a PackedScene (.glb/.gltf/.fbx/.dae) OR a bare Mesh (.obj) — wrap a Mesh
 	# in a MeshInstance3D so both paths produce a model Node3D.
 	var res := load(info.path)
@@ -2413,17 +2198,13 @@ func _kill_turn_rates() -> void:
 	_look_pitch_s = 0.0
 
 
-# Cinematic drift-flip (W + C): a full barrel roll plus a sideways drift slew. The roll is
-# cosmetic (mesh only, so heading/aim are unaffected); the drift is a one-off velocity kick
-# that decays through the normal damping. dir < 0 = left, ≥ 0 = right. Works in free-look too.
+# Cinematic drift-flip (W + C): a full barrel roll, cosmetic (mesh only, so heading, aim and
+# velocity are unaffected). dir < 0 = left, ≥ 0 = right. Works in free-look too.
 func do_flip(dir := 1.0) -> void:
 	if _flip_t > 0.0 or frozen or transiting or (systems != null and systems.gear_fraction > .01):
 		return
 	_flip_dir = -1.0 if dir < 0.0 else 1.0
 	_flip_t = FLIP_TIME
-	_flip_yaw = 0.0
-	# Motion is DRIVEN each frame during the flip (see fly()'s flip block) so the ship glides
-	# through a wide arc instead of spinning on the spot — no one-shot impulse to be damped away.
 
 
 # Begin hands-off cinematic flight to a body (main keeps autopilot_target current).
@@ -2443,7 +2224,7 @@ func _autopilot_steer(delta: float) -> void:
 		autopilot = false
 		return
 	var to := autopilot_target - anchor_off
-	if to.length() < AP_ARRIVE:
+	if to.length() < AP_STOP_RADII * maxf(Ephemeris.body_radius_km(autopilot_name), 1.0):
 		autopilot = false
 		return
 	var dir := to.normalized()

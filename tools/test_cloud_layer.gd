@@ -13,35 +13,34 @@ func _initialize() -> void:
 	# Shell radius = body radius + cloud_alt_km.
 	var layer := CL.new()
 	layer.call("_ready")
-	layer.update_for(Vector3.ZERO, "Earth", true, 6371.0, 10.0, 0.02, ceiling, earth, Vector3.RIGHT, 0.0)
+	layer.update_for(Vector3.ZERO, "Earth", 6371.0, 10.0, 0.02, ceiling, earth, Vector3.RIGHT, 0.0)
 	var mesh: SphereMesh = layer.get("_mesh").mesh
 	check("shell_radius_is_body_plus_cloud_alt",
 		is_equal_approx(mesh.radius, 6371.0 + CL.cloud_alt_km(earth)))
 	var rotation := Basis(Vector3.UP, 1.2)
-	layer.update_for(Vector3.ZERO, "Earth", true, 6371.0, 10.0, 0.02, ceiling, earth, Vector3.RIGHT, 0.0, rotation)
+	layer.update_for(Vector3.ZERO, "Earth", 6371.0, 10.0, 0.02, ceiling, earth, Vector3.RIGHT, 0.0, rotation)
 	check("cloud_map_follows_body_rotation", layer.get("_mesh").basis.is_equal_approx(rotation))
 
 	# Visible-gate mirrors the ring gate (SurfacePatch.should_show), narrowed by
 	# whether the recipe carries any cloud coverage.
 	check("cloud_gate_true_when_ring_open_and_recipe_has_clouds",
-		CL.should_show("Earth", true, 10.0, 0.02, ceiling, earth)
-		== SP.should_show("Earth", true, 10.0, 0.02, ceiling, earth))
+		CL.should_show("Earth", 10.0, 0.02, ceiling, earth)
+		== SP.should_show("Earth", 10.0, 0.02, ceiling, earth))
 	check("cloud_gate_false_above_ceiling_like_ring",
-		not CL.should_show("Earth", true, ceiling + 5.0, 0.02, ceiling, earth)
-		and not SP.should_show("Earth", true, ceiling + 5.0, 0.02, ceiling, earth))
+		not CL.should_show("Earth", ceiling + 5.0, 0.02, ceiling, earth)
+		and not SP.should_show("Earth", ceiling + 5.0, 0.02, ceiling, earth))
 	check("cloud_gate_false_below_kill_like_ring",
-		not CL.should_show("Earth", true, 0.0, 0.02, ceiling, earth)
-		and not SP.should_show("Earth", true, 0.0, 0.02, ceiling, earth))
+		not CL.should_show("Earth", 0.0, 0.02, ceiling, earth)
+		and not SP.should_show("Earth", 0.0, 0.02, ceiling, earth))
 
 	# Airless/cloudless body: ring can still open (rock terrain), the deck must not.
 	var moon_ceiling := G.band_ceiling_km(G.terrain_sampler(moon))
-	check("ring_opens_on_moon", SP.should_show("Moon", true, 1.0, 0.02, moon_ceiling, moon))
+	check("ring_opens_on_moon", SP.should_show("Moon", 1.0, 0.02, moon_ceiling, moon))
 	check("no_cloud_layer_on_airless_moon",
-		not CL.should_show("Moon", true, 1.0, 0.02, moon_ceiling, moon))
+		not CL.should_show("Moon", 1.0, 0.02, moon_ceiling, moon))
 
-	# Arcade "altitude" is really a million km in 0.01-AU units — never gate open.
-	check("cloud_gate_guards_non_physical_bodies",
-		not CL.should_show("Fictional", false, 10.0, 0.02, ceiling, earth))
+	# cloud_gate_guards_non_physical_bodies deleted 2026-09-29: no arcade units remain.
+	check("cloud_gate_needs_a_body", not CL.should_show("", 10.0, 0.02, ceiling, earth))
 
 	# Regression (2026-09-08): Earth's cloud_amount=1.0 used to slide the
 	# map-backed threshold centre to 0, so a genuinely clear texel (raw=0)

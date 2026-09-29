@@ -23,7 +23,7 @@ const BRIGHTNESS := 1.0         # edge-on is faint, so keep it up
 # keeps its physical size (TARGET_RADIUS), so when its centre reaches you the band wraps 360°
 # and you're AT the core. CRUCIAL: we never use the real ~1.6e11-unit distance (float32 would
 # shatter) — the render distance is a safe, bounded [0, DIST] mapping while the SCANNER still
-# reports the true light-years. main calls advance_ly() each frame from ship.galactic_loom_rate().
+# reports the true light-years. Nothing drives advance_ly() since the galactic drive left the roster (2026-09-29).
 const CORE_LY := 26000.0       # real distance to the galactic centre (the scanner's full reading)
 var remaining_ly := CORE_LY    # live distance still to go; CORE_LY = far backdrop, 0 = at the core
 var _dir_n := DIR.normalized() # cached core direction (render space)
@@ -100,7 +100,7 @@ func _apply_loom() -> void:
 
 
 # Loom the core in by `ly` light-years this frame (SIGNED: positive = toward the core / looms in,
-# negative = flying back out / recedes). main feeds this from ship.galactic_loom_rate(), the fixed
+# negative = flying back out / recedes). Fed by the retired galactic drive, the fixed
 # voyage pace — decoupled from the ship's real translation, so true_pos is never moved astronomically.
 # Clamped to [0, CORE_LY]; the signed form is what lets you actually LEAVE the core instead of being
 # trapped at 0.

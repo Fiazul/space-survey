@@ -49,7 +49,7 @@ func _cold_tile_has_no_ground() -> int:
 	# One update_for call only DISPATCHES the background rebuild; nothing has
 	# landed yet, so a cold tile must not claim ground even though it is
 	# inside the band.
-	patch.update_for(pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, ceiling, moon, sampler)
+	patch.update_for(pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, ceiling, moon, sampler)
 	failed += _check("cold_tile_has_no_ground", not patch.has_ground())
 	failed += _check("cold_tile_not_visible", not bool(patch.report().visible))
 
@@ -71,7 +71,7 @@ func _body_switch_clears_ground() -> int:
 	var moon_sampler: TerrainSampler = G.terrain_sampler(moon)
 	var moon_ceiling := _ceiling_of(moon)
 	patch.bind_body(moon, moon_sampler)
-	patch.update_for(moon_pos, "Moon", true, MOON_R, 1.0, AIRLESS_KILL, moon_ceiling, moon, moon_sampler)
+	patch.update_for(moon_pos, "Moon", MOON_R, 1.0, AIRLESS_KILL, moon_ceiling, moon, moon_sampler)
 	patch.force_ready()
 	failed += _check("moon_committed_before_switch", patch.has_ground())
 
@@ -79,7 +79,7 @@ func _body_switch_clears_ground() -> int:
 	var mars_pos: Vector3 = mars_dir * (MARS_R + 1.0)
 	var mars_sampler: TerrainSampler = G.terrain_sampler(mars)
 	var mars_ceiling := _ceiling_of(mars)
-	patch.update_for(mars_pos, "Mars", true, MARS_R, 1.0, AIRLESS_KILL, mars_ceiling, mars, mars_sampler)
+	patch.update_for(mars_pos, "Mars", MARS_R, 1.0, AIRLESS_KILL, mars_ceiling, mars, mars_sampler)
 	failed += _check("switched_body_has_no_ground_before_commit", not patch.has_ground())
 	failed += _check("switched_body_not_visible_before_commit", not bool(patch.report().visible))
 

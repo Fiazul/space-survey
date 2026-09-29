@@ -86,7 +86,6 @@ func _ready() -> void:
 	check("rendered globe matches terrain basis", first._bodies[0].sphere.basis.is_equal_approx(first.surface_basis("Earth")))
 	var ship := Ship.new()
 	add_child(ship)
-	ship.newton = true
 	ship.anchor_off = first.surface_basis("Earth")*amazon*6372
 	var local_before := first.surface_basis("Earth").inverse()*ship.anchor_off
 	ship._newton_corotate(60)

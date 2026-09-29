@@ -14,7 +14,6 @@ func _ready() -> void:
 	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
 	var ship := Ship.new()
 	add_child(ship)
-	ship.newton = true
 	var flat := FlatWorld.new({})
 	flat.surface = {"solid": true}
 	for index in ship.ship_count():

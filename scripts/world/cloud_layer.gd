@@ -258,11 +258,11 @@ static func cloud_uv_offset(sim_time_s: float) -> Vector2:
 # planet_system reads through `_surface.visible`), narrowed by whether this
 # body's recipe carries any cloud coverage at all — an airless/cloudless rocky
 # world (Moon, Mercury) still opens the ring but must not spawn a deck.
-static func should_show(body: String, physical: bool, alt_km: float, kill_km: float,
+static func should_show(body: String, alt_km: float, kill_km: float,
 		ceiling_km: float, recipe: Dictionary) -> bool:
 	if not has_clouds(recipe):
 		return false
-	return SurfacePatchScript.should_show(body, physical, alt_km, kill_km, ceiling_km, recipe)
+	return SurfacePatchScript.should_show(body, alt_km, kill_km, ceiling_km, recipe)
 
 
 func hush() -> void:
@@ -270,10 +270,10 @@ func hush() -> void:
 	visible_now = false
 
 
-func update_for(body_pos_rel: Vector3, body: String, physical: bool, radius_km: float,
+func update_for(body_pos_rel: Vector3, body: String, radius_km: float,
 		alt_km: float, kill_km: float, ceiling_km: float, recipe: Dictionary,
 		sun_dir: Vector3, sim_time_s: float, body_basis: Basis = Basis.IDENTITY) -> void:
-	var show := should_show(body, physical, alt_km, kill_km, ceiling_km, recipe)
+	var show := should_show(body, alt_km, kill_km, ceiling_km, recipe)
 	visible_now = show
 	_mesh.visible = show
 	if not show:

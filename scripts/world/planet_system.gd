@@ -18,53 +18,6 @@ const CloudLayerScript := preload("res://scripts/world/cloud_layer.gd")
 #
 # refresh() is called by main.gd with the ship's true position each frame.
 
-# Approach speed-zone (units/s). Ceiling stays >= cruise so normal flight near a
-# body isn't throttled.
-# Force-slow "gravity safe-zones" (NO pull — just a speed cap). A body force-slows the
-# ship within radius × zone-mult (stars get the wider zone, like a much bigger gravity
-# reach), eased down to a floor that's LOWER for more massive bodies. Zones are finite,
-# so you can always fly back out — and outside every zone you're free to warp.
-const STAR_ZONE_MULT := 120.0    # star slow-zone radius = star radius × this (wider: felt sooner)
-const STAR_ZONE_FLOOR := 45.0    # speed cap at a star's CENTRE. The approach still slows you (warp
-								 # drops at the zone edge), but this floor stays high enough to fly
-								 # straight THROUGH the sun instead of crawling to a near-stop.
-const STAR_EDGE_SPEED := 64.0    # speed cap at a STAR's zone edge — lower than planets, so you
-								 # notice the drag the moment you enter a star's range
-const PLANET_ZONE_MULT := 45.0   # planet/moon slow-zone radius = radius × this
-# VISUAL size boost: planets/moons (and their moon-orbit spacing + LOD + capture range) are
-# rendered this much bigger so they read as substantial worlds, not specks dwarfed by the ship.
-# Heliocentric DISTANCES (real JPL positions) and gravity/slow-zones are NOT scaled — only the
-# look. Relative geometry is preserved (moons scale with their parent, so they stay outside it).
-const VISUAL_SCALE := 2.7   # mild bump: bodies a touch bigger so Mercury isn't dwarfed by the ship (stars stay unscaled)
-# Visual orbital revolution: planets circle the Sun for life (they START at their real JPL
-# position, then drift). Kepler-ordered: inner planets visibly orbit, outer ones crawl.
-# Speeds are accelerated (real motion is invisible over a play session). Sun + Earth stay put.
-const ORBIT_ENABLED := true
-const ORBIT_K := 16.0      # bigger = faster orbits (angular speed = ORBIT_K / r^1.5)
-# NOTE units: 1u = 0.01 AU, so 100 u/s = 1 AU/s. These are deliberately LOW so flight
-# near Sol/any body is a slow crawl (fractions of an AU per second), never "a few AU
-# per press". You only get warp-fast out in the deep, beyond every zone.
-const ZONE_EDGE_SPEED := 90.0    # speed cap at the zone's outer edge (~0.9 AU/s)
-const ZONE_FLOOR := 8.0          # slowest cap, at a very massive body's centre (~0.08 AU/s)
-
-# Gravity: a gentle, mass-scaled tug toward each planet (mass ~ radius²), falling
-# off with distance², clamped so thrust always wins. Retuned for the 0.1-AU scale.
-const GRAVITY_ENABLED := false   # no gravitational pull — bodies are SAFE ZONES (speed-limited), not wells
-# Mass-based gravity: accel = GRAV_G × mass(Earth=1) / dist². Real masses (see the
-# body specs) make the giants + Sun grab hard while Mercury/Mars barely tug. Capped
-# below thrust (~1650) so a planet can pull you in, but full throttle always escapes.
-const GRAV_G := 31400.0             # gravity constant for the gameplay scale
-const GRAVITY_MAX_ACCEL := 800.0    # per-body pull ceiling (units/s²)
-const GRAVITY_RANGE_MULT := 60.0    # a body's well reaches within radius × this
-# Stars are tiny on screen but carry a sun's mass — up close they pull hard enough to
-# visibly bend your hull's path. Felt only within STAR_GRAVITY_RANGE. This is ON (the
-# ship feels star gravity) while planet gravity + BOLT gravity stay OFF (GRAVITY_ENABLED):
-# keeping gravity_at() returning zero means bullets fly dead-straight near every star.
-const STAR_GRAVITY_ENABLED := true     # stars pull the SHIP (planets don't; bullets don't)
-const STAR_GRAVITY_K := 18000000000.0  # accel = K / dist² (capped) — retuned for the ×10 spread
-const STAR_GRAVITY_RANGE := 90000.0    # the well reaches out far enough to "call" you in
-const STAR_GRAVITY_MAX := 160.0        # ceiling (units/s²); thrust (~1650) still wins
-
 # Assigned by main before this node enters the tree.
 @onready var eph := Ephemeris   # autoload
 
@@ -73,20 +26,11 @@ var nearest_name := ""
 var nearest_dist := INF
 var nearest_dir := Vector3.ZERO   # unit vector from ship toward the nearest body
 var nearest_radius := 1.0         # visual radius of the nearest body (capture range scales with it)
-var speed_limit := INF
-var gravity := Vector3.ZERO
-var star_dist := INF              # distance to this system's primary star (gates FTL / warp)
 var stellar_hazard := {}          # non-lethal proximity telemetry, reset on system changes
-var speed_zones := false          # Sol 1:1 slice: speed pass comes later
 var cook_n := 0                   # physical worlds this frame
 var cook_mesh_n := 0              # cook balls in range
 var cook_sky_n := 0               # sky discs past the far plane
 var cook_look := ""               # nearest: name  mesh|sky  source  kind
-# Nearest named hub star you could "fly-arrive" into (id + distance + render offset). main reads
-# these in the hub: fly close enough and it drops you into that star's local frame (see _arrive).
-var hub_star_id := ""
-var hub_star_dist := INF
-var hub_star_rel := Vector3.ZERO   # render-space vector ship→star (so arrival keeps your spot)
 
 var _bodies := []
 var _stars := []        # named real stars as floating-origin destinations
@@ -179,10 +123,10 @@ func stellar_recipe_for(name: String) -> Dictionary:
 	return {}
 
 
-func is_physical(name: String) -> bool:
+func has_body(name: String) -> bool:
 	for b in _bodies:
 		if b.name == name:
-			return bool(b.get("physical", false))
+			return true
 	return false
 
 
@@ -237,7 +181,7 @@ func load_system(specs: Array) -> void:
 		_build_planet(spec)
 	var nphys := 0
 	for b in _bodies:
-		if b.get("physical", false):
+		if not b.craft:
 			nphys += 1
 	if nphys > 0:
 		print("[sol cook] %d physical worlds through the generator" % nphys)
@@ -250,7 +194,6 @@ func load_system(specs: Array) -> void:
 	# reset transient readouts so a stale name doesn't linger one frame
 	nearest_name = ""
 	nearest_dist = INF
-	speed_limit = INF
 
 
 func _build_planet(p: Dictionary) -> void:
@@ -259,8 +202,6 @@ func _build_planet(p: Dictionary) -> void:
 		p = p.duplicate(true)
 		var stellar_recipe := StarRecipe.resolve(p)
 		p.color = stellar_recipe.color_a
-		if not p.get("physical", false):
-			p.radius = StarRecipe.scene_radius(stellar_recipe)
 
 	var dot := Sprite3D.new()
 	dot.texture = _dot_tex
@@ -280,8 +221,7 @@ func _build_planet(p: Dictionary) -> void:
 	if use_model:
 		model = _make_glb_body(p)
 	if model == null:
-		var vis: float = 1.0 if (is_star or p.get("physical", false)) else VISUAL_SCALE
-		var look := PlanetGenerator.paint(p, float(p.radius) * vis)
+		var look := PlanetGenerator.paint(p, float(p.radius))
 		sphere = look.sphere
 		mat = look.mat
 		recipe = look.recipe
@@ -291,8 +231,7 @@ func _build_planet(p: Dictionary) -> void:
 	var ring: MeshInstance3D = null
 	if p.get("ring", false):
 		ring = MeshInstance3D.new()
-		var rvis: float = 1.0 if p.get("physical", false) else VISUAL_SCALE
-		ring.mesh = _make_ring_mesh(float(p.radius) * 1.15 * rvis, float(p.radius) * 2.35 * rvis, 96)
+		ring.mesh = _make_ring_mesh(float(p.radius) * 1.15, float(p.radius) * 2.35, 96)
 		ring.material_override = PlanetGenerator.make_ring_material(recipe)
 		ring.rotation = Vector3(deg_to_rad(26.7), 0.0, deg_to_rad(7.0))   # Saturn's tilt
 		ring.visible = false
@@ -318,29 +257,21 @@ func _build_planet(p: Dictionary) -> void:
 		if dir == Vector3.ZERO:
 			dir = Vector3(0, 0, -1)
 		drift_vel = dir * float(p.get("drift", 0.0))
-	if sphere != null and p.get("physical", false):
+	if sphere != null:
 		sphere.basis = eph.surface_basis(str(p.name))
 	_bodies.append({
 		"name": p.name, "radius": float(p.radius),
 		"mass": float(p.get("mass", float(p.radius) * float(p.radius) * 0.05)),   # Earth=1; fallback ~ size
 		"craft": is_craft, "drift_vel": drift_vel,
-		"live": p.get("live", true) and not is_craft,   # craft use their own drift, not live
-		"pos": craft_pos if is_craft else p.get("pos", Vector3.ZERO),
-		"star": is_star,                      # the system's primary — gates FTL (star field)
-		"parent": p.get("parent", ""),        # non-empty => a moon orbiting that body
-		"orbit_r": float(p.get("orbit_r", 0.0)),
-		"orbit_speed": float(p.get("orbit_speed", 0.0)),
-		"fixed": p.get("fixed", false),       # Earth: stays put (geocentric origin), no sun-orbit
-		# Moons get a random start phase (spread them); planets start at 0 so they begin at
-		# their real JPL position, then revolve.
-		"orbit_a": (randf() * TAU if String(p.get("parent", "")) != "" else 0.0),
+		"pos": craft_pos,                     # craft only: drifts from here
+		"star": is_star,                      # the system's primary
+		"parent": p.get("parent", ""),        # non-empty => a moon of that body
 		"dot": dot, "sphere": sphere, "mat": mat, "model": model, "label": label,
 		"ring": ring,
-		"sky": _make_body_sky(p, recipe) if (p.get("physical", false) and not p.get("star", false)) else null,
+		"sky": _make_body_sky(p, recipe) if not is_star and not is_craft else null,
 		"recipe": recipe,
 		"mu": eph.gm(str(p.name)),
 		"spin": eph.spin_rad_s(str(p.name)),
-		"physical": p.get("physical", false),
 		"close_maps": false,
 	})
 
@@ -386,7 +317,7 @@ func _make_glb_body(p: Dictionary) -> Node3D:
 	add_child(holder)
 	holder.add_child(inst)
 	# Stars keep their real size; only planets/moons are visually enlarged.
-	var vis: float = 1.0 if (p.get("star", false) or p.get("physical", false)) else VISUAL_SCALE
+	var vis := 1.0
 	_fit(holder, inst, float(p.radius) * 2.0 * vis)   # longest axis == diameter
 	_self_light(inst, p.color, float(p.get("glow", 1.0)), p.get("star", false))
 	holder.visible = false
@@ -438,7 +369,7 @@ func _place_body_sky(b: Dictionary, rel: Vector3, dist: float, too_far: bool) ->
 	b.sky.position = (rel / dist) * shell
 	b.sky.visible = true
 	if b.sky.material_override is ShaderMaterial:
-		var body_true: Vector3 = eph.scene_pos(str(b.name)) if b.live else b.pos
+		var body_true: Vector3 = b.pos if b.craft else eph.scene_pos(str(b.name))
 		var sm := b.sky.material_override as ShaderMaterial
 		PlanetGenerator.apply_view(sm, _star_true() - body_true, 0.0)
 		sm.set_shader_parameter("sky_glow", 1.0)
@@ -534,8 +465,8 @@ func _build_star_shell() -> void:
 		})
 
 
-# `ship_off` is the ship's offset from `anchor` in km (docs/adr/0002); `anchor`
-# is "" outside Sol, where every coordinate is small and the offset IS absolute.
+# `ship_off` is the ship's offset from `anchor` in km (docs/adr/0002). With no
+# anchor the offset is taken as a position in the current system's frame.
 # Everything this writes into `_rel` stays SHIP-relative, so nothing downstream
 # (navigator, minimap, HUD, surface band) has to know an anchor exists.
 func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = Vector3.ZERO) -> void:
@@ -543,105 +474,46 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 	stellar_hazard = {}
 	nearest_dist = INF
 	nearest_name = ""
-	speed_limit = INF
-	gravity = Vector3.ZERO
-	star_dist = INF
-	hub_star_dist = INF
-	hub_star_id = ""
 	nearest_radius = 1.0
 	cook_n = 0
 	cook_mesh_n = 0
 	cook_sky_n = 0
 	cook_look = ""
 
-	# Render positions computed THIS frame, by name. Moons read their parent from here so
-	# they track the planet's visually-revolved position, not its raw Horizons spot (planets
-	# are built before moons in _sol(), so a parent is always present by the time a moon needs
-	# it). Without this, fast inner planets (Mars) drift off and their moons orbit empty space.
 	var star_true := _star_true()
 	var anchored := anchor != ""
 	var ship_pos: Vector3 = _AF.absolute(eph.pos64(anchor), ship_off) if anchored else ship_off
-	var frame_pos := {}
 	for b in _bodies:
 		var rad: float = b.radius
-		var vrad: float = rad * (1.0 if (b.star or b.get("physical", false)) else VISUAL_SCALE)
-		# Moons orbit their (live) parent; Sol bodies read live Horizons positions; others static.
 		var bpos: Vector3
-		if b.get("craft", false):
+		if b.craft:
 			b.pos += b.drift_vel * delta       # Voyagers drift outward forever
 			bpos = b.pos
-		elif b.parent != "" and not b.get("physical", false):
-			# Arcade moons only. Sol 1:1 moons stay on live JPL / fallback spots.
-			b.orbit_a += float(b.orbit_speed) * delta
-			var oa: float = b.orbit_a
-			var off: Vector3 = Vector3(cos(oa), 0.18 * sin(oa * 0.5), sin(oa)) * float(b.orbit_r) * VISUAL_SCALE
-			# Follow the parent's revolved render position (this frame), falling back to its raw
-			# Horizons spot if for some reason it wasn't computed yet.
-			bpos = frame_pos.get(b.parent, eph.scene_pos(b.parent)) + off
-		elif b.live:
-			bpos = eph.scene_pos(b.name)
-			# Visual revolution around the Sun (planets only). Advance the phase and rotate the
-			# real heliocentric vector about the ecliptic-ish up axis.
-			if ORBIT_ENABLED and not b.star and not b.fixed and not b.get("physical", false):
-				var sunp: Vector3 = eph.scene_pos("Sun")
-				var h: Vector3 = bpos - sunp
-				var r := h.length()
-				if r > 0.01:
-					b.orbit_a += (ORBIT_K / pow(r, 1.5)) * delta
-					bpos = sunp + h.rotated(Vector3.UP, b.orbit_a)
 		else:
-			# Authored systems: spread the static planet layout by the same factor the planets
-			# grew, so bigger bodies don't end up inside their (unscaled) star. Star sits at origin.
-			bpos = b.pos * (1.0 if b.star else VISUAL_SCALE)
-		frame_pos[b.name] = bpos   # parents are computed before their moons (see _sol order)
-		# Sol's physical bodies read their offset from the anchor in doubles; the
-		# authored systems (and the drifting Voyagers) keep the plain subtraction,
-		# where every coordinate is small enough for it to be exact.
+			bpos = eph.scene_pos(b.name)
 		var rel: Vector3 = _rel_to_ship(b, anchored, anchor, ship_off, bpos, ship_pos)
 		var dist := rel.length()
 		if b.star and b.recipe.has("stellar"):
-			var exposure := StarRecipe.exposure(b.recipe, dist, vrad)
+			var exposure := StarRecipe.exposure(b.recipe, dist, rad)
 			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
 				stellar_hazard = exposure
 
-		var mu: float = float(b.get("mu", 0.0))
-		if mu > 0.0 and dist > 0.001:
-			# Physical Sol: real GM/r². No range fade, no arcade ceiling.
-			gravity += (rel / dist) * (mu / (dist * dist))
-		elif GRAVITY_ENABLED and dist > 0.001 and dist < rad * GRAVITY_RANGE_MULT:
-			var a := minf(GRAV_G * float(b.mass) / (dist * dist), GRAVITY_MAX_ACCEL)
-			gravity += (rel / dist) * a
-
-		# Force-slow safe-zone (NO pull): cap speed within a mass/size-scaled radius, eased from
-		# the edge speed down to a floor at the body. Stars use a HIGHER floor (STAR_ZONE_FLOOR)
-		# so you still decelerate on approach but can fly THROUGH the sun, not crawl to a stop.
-		if speed_zones:
-			var zone: float = rad * (STAR_ZONE_MULT if b.star else PLANET_ZONE_MULT)
-			if dist < zone:
-				var zt := dist / zone
-				var edge: float = STAR_EDGE_SPEED if b.star else ZONE_EDGE_SPEED
-				var floor_spd: float = STAR_ZONE_FLOOR if b.star else _slow_min(float(b.mass))
-				speed_limit = minf(speed_limit, lerpf(floor_spd, edge, zt))
-
 		b.dot.position = rel
-		b.label.position = rel + Vector3(0.0, vrad * 1.5 + 0.5, 0.0)
+		b.label.position = rel + Vector3(0.0, rad * 1.5 + 0.5, 0.0)
 		_rel[b.name] = rel        # for the navigator (render-space position)
 
 		if dist < nearest_dist:
 			nearest_dist = dist
 			nearest_name = b.name
-			nearest_radius = vrad
-		if b.get("star", false) and dist < star_dist:
-			star_dist = dist   # how far we are from this system's sun (FTL gate)
+			nearest_radius = rad
 
 		if b.get("mat") != null and b.mat is ShaderMaterial:
 			var to_sun: Vector3 = eph.rel_km(eph.primary_star, str(b.name)) \
-				if (anchored and b.get("physical", false) and eph.has_pos(str(b.name))) \
+				if (anchored and not b.craft and eph.has_pos(str(b.name))) \
 				else star_true - bpos
-			var alt := dist - vrad
+			var alt := dist - rad
 			var det := PlanetGenerator.close_detail(alt)
-			var body_atmo_top: float = eph.atmo_top_km(str(b.name)) if b.get("physical", false) else -1.0
-			PlanetGenerator.apply_view(b.mat, to_sun, det, alt, body_atmo_top)
+			PlanetGenerator.apply_view(b.mat, to_sun, det, alt, eph.atmo_top_km(str(b.name)))
 			PlanetGenerator.set_cloud_drift(b.mat, CloudLayerScript.cloud_uv_offset(_cloud_time_s))
 			# Push the globe's cloud_amount only when GameState.cloud_quality
 			# actually changed since the last push (cached per body) — see
@@ -651,70 +523,53 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			if not is_equal_approx(float(b.get("_pushed_cloud_amount", -1.0)), wanted_cloud_amount):
 				PlanetGenerator.set_cloud_amount(b.mat, wanted_cloud_amount)
 				b["_pushed_cloud_amount"] = wanted_cloud_amount
-			if not b.get("close_maps", false) and PlanetGenerator.close_enough(dist, vrad):
+			if not b.get("close_maps", false) and PlanetGenerator.close_enough(dist, rad):
 				PlanetGenerator.ensure_close_maps(b.mat, b.recipe)
 				b.close_maps = true
 
-		# crossfade: dot (far) -> body (near), scaled to the RENDERED body size
-		var far_d := vrad * 70.0
-		var near_d := vrad * 18.0
-		var frac := clampf((dist - near_d) / maxf(far_d - near_d, 0.001), 0.0, 1.0)
-		var sphere_a := 1.0 - frac
-
-		# Physical Sol bodies keep the mesh while the near face is inside the far
-		# plane. Past that the mesh is clipped, so a sky-shell disc holds the disc.
-		# Stars use the same cut — never force the cook mesh off.
-		var physical: bool = b.get("physical", false)
-		var too_far: bool = physical and eph.physical_too_far(dist, rad)
-		if physical and not b.get("craft", false):
+		# The mesh stays while the near face is inside the far plane. Past that the
+		# mesh is clipped, so a sky-shell disc holds the disc. Stars use the same cut.
+		var too_far: bool = eph.physical_too_far(dist, rad)
+		if not b.craft:
 			cook_n += 1
 			if too_far:
 				cook_sky_n += 1
 			else:
 				cook_mesh_n += 1
 		if b.model != null:
-			var on: bool = (physical and not too_far) or ((not physical) and sphere_a > 0.45)
-			b.model.visible = on
-			if on:
+			b.model.visible = not too_far
+			if not too_far:
 				b.model.position = rel
 				b.model.rotate_y(b.spin * delta)
 		else:
 			b.sphere.position = rel
-			if physical:
-				b.sphere.basis = eph.surface_basis(str(b.name))
-			else:
-				b.sphere.rotate_y(b.spin * delta)
-			b.sphere.visible = (physical and not too_far) or ((not physical) and sphere_a > 0.45)
+			b.sphere.basis = eph.surface_basis(str(b.name))
+			b.sphere.visible = not too_far
 
 		if b.get("sky") != null:
 			_place_body_sky(b, rel, dist, too_far)
 
-		# Planetary ring (Saturn): track the body, fade in with the close-up sphere.
+		# Planetary ring (Saturn): tracks the body while its mesh is on.
 		if b.ring != null:
 			b.ring.position = rel
-			b.ring.visible = (not too_far) and (physical or sphere_a > 0.02)
+			b.ring.visible = not too_far
 			if b.ring.visible:
 				var rc: Color = b.ring.material_override.albedo_color
-				rc.a = 0.6 * (1.0 if physical else sphere_a)
+				rc.a = 0.6
 				b.ring.material_override.albedo_color = rc
 
-		b.dot.visible = (not physical) and frac > 0.02
-		if b.dot.visible:
-			var dc: Color = b.dot.modulate
-			dc.a = frac
-			b.dot.modulate = dc
-			b.dot.pixel_size = clampf(dist * 0.0008, 0.02, 2.0)
+		b.dot.visible = false
 
 		if too_far and dist > 0.001:
 			var sdir: Vector3 = rel / dist
 			b.label.visible = true
 			b.label.position = sdir * eph.sky_impostor_km(dist) + Vector3(0.0, 12.0, 0.0)
-			b.label.text = "%s\n%s" % [b.name, _fmt_star_dist(dist)]
+			b.label.text = "%s\n%s" % [b.name, _fmt_dist_km(dist)]
 			var lc: Color = b.label.modulate
 			lc.a = 0.85
 			b.label.modulate = lc
 		else:
-			var label_range := maxf(vrad * 130.0, 500.0)
+			var label_range := maxf(rad * 130.0, 500.0)
 			var la := clampf((label_range - dist) / (label_range * 0.3), 0.0, 1.0)
 			b.label.visible = la > 0.02
 			b.label.text = b.name
@@ -723,8 +578,8 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 				lc2.a = la
 				b.label.modulate = lc2
 
-	# Named stars: floating-origin destinations. Far -> a labelled sky point in the
-	# right direction (clamped); near -> a growing emissive sphere. Live distance.
+	# Named catalogue stars: sky points in their real direction (clamped to the sky
+	# shell), labelled with their real distance.
 	for st in _stars:
 		# Interstellar scale (~1e13 km): the ship's own magnitude is a rounding
 		# error against it, so the anchor buys nothing here and the sky point's
@@ -732,25 +587,10 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var srel: Vector3 = st.true_pos - ship_pos
 		var sdist := srel.length()
 		_rel[st.name] = srel
-		# A star's gravity well — strong up close, so a near pass bends your trajectory.
-		if STAR_GRAVITY_ENABLED and sdist > 0.001 and sdist < STAR_GRAVITY_RANGE:
-			var sa := minf(STAR_GRAVITY_K / (sdist * sdist), STAR_GRAVITY_MAX)
-			gravity += (srel / sdist) * sa
 		if sdist < nearest_dist:
 			nearest_dist = sdist
 			nearest_name = st.name
 			nearest_radius = st.radius
-		# Nearest star you could fly-arrive into (must be a real travel destination).
-		if st.get("id", "") != "" and sdist < hub_star_dist:
-			hub_star_dist = sdist
-			hub_star_id = str(st.id)
-			hub_star_rel = srel
-		# Force-slow safe-zone around the star (no pull) — this is what eases you out
-		# of warp as you arrive, scaled by the star's mass.
-		var szone: float = st.radius * STAR_ZONE_MULT
-		if sdist < szone:
-			# Higher floor (STAR_ZONE_FLOOR) than planets so you fly THROUGH the star, not crawl.
-			speed_limit = minf(speed_limit, lerpf(STAR_ZONE_FLOOR, STAR_EDGE_SPEED, sdist / szone))
 		var sdir: Vector3 = srel.normalized()
 		if sdist < STAR_NEAR:
 			var exposure := StarRecipe.exposure(st.recipe,sdist,st.radius)
@@ -768,22 +608,18 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			st.dot.position = sdir * rd
 			st.dot.pixel_size = clampf(rd * 0.00000002, 1.5, 7.0)
 			st.label.position = sdir * rd + Vector3(0.0, 14.0, 0.0)
-		st.label.text = "%s\n%s" % [st.name, _fmt_star_dist(sdist)]
+		st.label.text = "%s\n%s" % [st.name, _fmt_dist_km(sdist)]
 
-	# speed_limit was accumulated above from each body's force-slow zone (min cap).
-	# Direction toward the nearest body (for the warp arrival ease-out).
 	nearest_dir = _rel.get(nearest_name, Vector3.ZERO).normalized()
-	# The nearest body's recipe and truth flag, picked up here so the skin band
-	# below can be driven by the same row the tape reports.
+	# The nearest body's recipe, picked up here so the skin band below can be
+	# driven by the same row the tape reports.
 	var near_recipe := {}
-	var near_physical := false
 	for b in _bodies:
 		if str(b.name) != nearest_name:
 			continue
 		var rec: Dictionary = b.get("recipe", {})
 		near_recipe = rec
-		near_physical = b.get("physical", false)
-		var path := "sky" if (b.get("physical", false) and eph.physical_too_far(nearest_dist, float(b.radius))) else "mesh"
+		var path := "sky" if eph.physical_too_far(nearest_dist, float(b.radius)) else "mesh"
 		cook_look = "%s  %s  %s  %s" % [
 			str(b.name), path, str(rec.get("source", "?")), str(rec.get("kind", "?"))]
 		break
@@ -791,8 +627,6 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 	# Skin band: ONE local ground tile, nearest body only, alive between that body's
 	# kill line and its own terrain-derived ceiling. Everything it paints comes from
 	# `near_recipe`, so the Moon gets lunar crust and not Earth's continents.
-	# `near_physical` is load-bearing: an arcade system's "altitude" is in 0.01-AU
-	# units, and a tile must never pop out there (see SurfacePatch.should_show).
 	if _surface != null:
 		var sampler := terrain_sampler_for(nearest_name)
 		var ceiling: float = PlanetGenerator.band_ceiling_km(sampler)
@@ -803,7 +637,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var salt: float = nearest_dist - nearest_radius
 		var body_basis := surface_basis(nearest_name)
 		var from_centre: Vector3 = body_basis.inverse() * -_rel.get(nearest_name, Vector3.ZERO)
-		if sampler != null and near_physical and from_centre.length() > 0.001:
+		if sampler != null and from_centre.length() > 0.001:
 			salt = sampler.alt_above_ground_km(from_centre, nearest_radius)
 		# Player decision 2026-09-08: no hard speed cap in air at all. Sol
 		# speed is Newton + drag only - see NEEDS-YOUR-EYES.md. The band
@@ -814,7 +648,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			- (ship_off + _rel.get(nearest_name, Vector3.ZERO))
 		_surface.set_sun_direction(to_star)
 		var vel_body: Vector3 = body_basis.inverse() * ship_vel
-		_surface.update_for(from_centre, nearest_name, near_physical, nearest_radius,
+		_surface.update_for(from_centre, nearest_name, nearest_radius,
 			salt, eph.surface_kill_km(nearest_name), ceiling, near_recipe, sampler, vel_body)
 		# The coarse globe has a different displacement and pokes through
 		# valleys — z-fight flicker, worst as you close in. Hide it when the
@@ -833,36 +667,27 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var deck_recipe: Dictionary = _cloud_recipe(near_recipe)
 		if _cloud_layer != null:
 			_cloud_layer.update_for(_rel.get(nearest_name, Vector3.ZERO), nearest_name,
-				near_physical, nearest_radius, salt, eph.surface_kill_km(nearest_name),
+				nearest_radius, salt, eph.surface_kill_km(nearest_name),
 				ceiling, deck_recipe, to_star, _cloud_time_s, body_basis)
-		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, near_physical, from_centre)
+		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, from_centre)
 
 
-# A body's render-space offset from the ship. Sol's live physical worlds go
-# through Ephemeris.rel_km (64-bit); everything else is small and stays direct.
+# A body's render-space offset from the ship. Worlds go through Ephemeris.rel_km
+# (64-bit); drifting craft stay direct.
 func _rel_to_ship(b: Dictionary, anchored: bool, anchor: String, ship_off: Vector3,
 		bpos: Vector3, ship_pos: Vector3) -> Vector3:
-	if anchored and b.get("physical", false) and b.get("live", false) \
-			and not b.get("craft", false) and eph.has_pos(str(b.name)):
+	if anchored and not b.craft and eph.has_pos(str(b.name)):
 		return eph.rel_km(str(b.name), anchor) - ship_off
 	return bpos - ship_pos
 
 
 func surface_basis(body: String) -> Basis:
-	for b in _bodies:
-		if str(b.name) == body:
-			if b.get("physical", false):
-				return eph.surface_basis(body)
-			return b.sphere.basis.orthonormalized() if b.sphere != null else Basis.IDENTITY
-	return Basis.IDENTITY
+	return eph.surface_basis(body) if has_body(body) else Basis.IDENTITY
 
 
-# NAN when the frame is not a pure spin about scene Y (arcade spheres).
+# NAN for a name that is not one of this system's bodies (a catalogue sky star).
 func surface_angle(body: String) -> float:
-	for b in _bodies:
-		if str(b.name) == body and b.get("physical", false):
-			return eph.surface_angle(body)
-	return NAN
+	return eph.surface_angle(body) if has_body(body) else NAN
 
 
 func ground_altitude_km(body: String) -> float:
@@ -915,7 +740,7 @@ func _cloud_recipe(recipe: Dictionary) -> Dictionary:
 # vector the globe's own material gets, so the tile's terminator and the globe's
 # cannot drift apart at the tile's edge.
 func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
-		recipe: Dictionary, body: String, physical: bool, from_centre: Vector3) -> void:
+		recipe: Dictionary, body: String, from_centre: Vector3) -> void:
 	if _surface != null and _surface.has_method("set_view"):
 		# Haze follows the AIR, not the band ceiling: at 30 km there is almost
 		# nothing to scatter in, so distant ground has to go clear.
@@ -923,10 +748,8 @@ func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 	if _air_shell == null:
 		return
 	var air_top: float = eph.atmo_top_km(body)
-	var opacity := 0.0
-	if physical:
-		opacity = PlanetGenerator.air_shell_opacity(
-			alt_km, air_top, float(recipe.get("air_amount", 0.0)))
+	var opacity: float = PlanetGenerator.air_shell_opacity(
+		alt_km, air_top, float(recipe.get("air_amount", 0.0)))
 	if opacity <= 0.001:
 		_air_shell.visible = false
 		return
@@ -948,7 +771,7 @@ func _update_air(sun_dir: Vector3, alt_km: float, ceiling_km: float,
 	# the ramp starts at the true edge, and zeroes a short distance outside it -
 	# "1 km below the base" now measures fog == 0, matching the reference (air
 	# under a deck is clear; only INSIDE the deck does it go white).
-	if physical and _cloud_layer != null and CloudLayerScript.has_clouds(recipe) \
+	if _cloud_layer != null and CloudLayerScript.has_clouds(recipe) \
 			and from_centre.length_squared() > 0.0001:
 		var calt: float = CloudLayerScript.cloud_alt_km(recipe)
 		var half: float = maxf(CloudLayerScript.cloud_thickness_km(recipe), 0.001) * 0.5
@@ -997,12 +820,6 @@ func hush_surface() -> void:
 
 
 func _star_true() -> Vector3:
-	for b in _bodies:
-		if not b.get("star", false):
-			continue
-		if b.live:
-			return eph.scene_pos(b.name)
-		return b.pos
 	return eph.scene_pos(eph.primary_star)
 
 
@@ -1049,66 +866,34 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 			_sun_corona.look_at(Vector3.ZERO, up)
 
 
-# Adaptive distance label for a star: light-years when genuinely far, but AU once you're
-# in-system so the number actually CHANGES as you move closer/away (instead of "0.00 ly").
-# (1 unit = 0.01 AU; Ephemeris.UNITS_PER_LY converts to light-years.)
-func _fmt_star_dist(units: float) -> String:
-	var ly := units / Ephemeris.UNITS_PER_LY
+# Distance label: light-years when genuinely far, AU in-system, km up close.
+func _fmt_dist_km(km: float) -> String:
+	var ly := km / Ephemeris.UNITS_PER_LY
 	if ly >= 0.05:
 		return "%.2f ly" % ly
-	var au := units / Ephemeris.AU_TO_UNITS
+	var au := km / Ephemeris.AU_TO_UNITS
 	if au >= 10.0:
 		return "%.1f AU" % au
 	if au >= 0.01:
 		return "%.2f AU" % au
-	return "%.0f km" % units
+	return "%.0f km" % km
 
 
-# Slowest speed cap a body imposes at its centre, from its mass (Earth=1): heavier =>
-# slower. log() keeps the enormous mass range (Mercury 0.05 → Sun 333000) sensible.
-func _slow_min(mass: float) -> float:
-	return clampf(ZONE_EDGE_SPEED / (1.0 + log(1.0 + maxf(mass, 0.0)) * 0.42), ZONE_FLOOR, ZONE_EDGE_SPEED)
-
-
-# Gravitational acceleration at an arbitrary true-space position, summed over every
-# planet and star. Used by combat.gd so bullets curve through gravity wells too.
+# Newton pull at an anchor-frame position, summed over every body with mass.
+# combat.gd uses it so bolts curve through gravity wells too.
 func gravity_at(pos_off: Vector3, anchor := "") -> Vector3:
 	var g := Vector3.ZERO
 	var anchored := anchor != ""
 	var pos: Vector3 = _AF.absolute(eph.pos64(anchor), pos_off) if anchored else pos_off
-	var frame_pos := {}   # parent render positions this call (planets precede moons in _sol)
 	for b in _bodies:
-		var bpos: Vector3
-		if b.parent != "":
-			var oa: float = b.orbit_a
-			var off: Vector3 = Vector3(cos(oa), 0.18 * sin(oa * 0.5), sin(oa)) * float(b.orbit_r) * VISUAL_SCALE
-			bpos = frame_pos.get(b.parent, eph.scene_pos(b.parent)) + off
-		elif b.live:
-			bpos = eph.scene_pos(b.name)
-			if ORBIT_ENABLED and not b.star and not b.fixed and not b.get("physical", false):
-				var sunp: Vector3 = eph.scene_pos("Sun")
-				var h: Vector3 = bpos - sunp
-				if h.length() > 0.01:
-					bpos = sunp + h.rotated(Vector3.UP, b.orbit_a)   # read-only (refresh advances the phase)
-		else:
-			bpos = b.pos * (1.0 if b.star else VISUAL_SCALE)   # match refresh's authored-system spread
-		frame_pos[b.name] = bpos
+		var mu: float = float(b.get("mu", 0.0))
+		if mu <= 0.0:
+			continue
+		var bpos: Vector3 = b.pos if b.craft else eph.scene_pos(b.name)
 		var rel: Vector3 = _rel_to_ship(b, anchored, anchor, pos_off, bpos, pos)
 		var d := rel.length()
-		var mu: float = float(b.get("mu", 0.0))
-		if mu > 0.0 and d > 0.001:
+		if d > 0.001:
 			g += (rel / d) * (mu / (d * d))
-		elif GRAVITY_ENABLED and d > 0.001 and d < float(b.radius) * GRAVITY_RANGE_MULT:
-			var a := minf(GRAV_G * float(b.mass) / (d * d), GRAVITY_MAX_ACCEL)
-			g += (rel / d) * a
-	if not GRAVITY_ENABLED:
-		return g
-	for st in _stars:
-		var rel: Vector3 = st.true_pos - pos
-		var d := rel.length()
-		if d > 0.001 and d < STAR_GRAVITY_RANGE:
-			var a := minf(STAR_GRAVITY_K / (d * d), STAR_GRAVITY_MAX)
-			g += (rel / d) * a
 	return g
 
 

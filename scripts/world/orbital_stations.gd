@@ -11,7 +11,7 @@ func state_for(id: String) -> Dictionary:
 
 func update_for(ship: Ship, delta: float) -> void:
 	unix_s += maxf(0,delta)
-	visible = ship.newton
+	visible = Ephemeris.system_id == Ephemeris.SOL_ID   # ISS/Tiangong orbit Earth
 	if not visible: return
 	for row in catalogue.rows:
 		var state: Dictionary = state_for(row.id)

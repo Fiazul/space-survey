@@ -49,7 +49,6 @@ func _ready() -> void:
 	main.ship = ship
 	main.planets = planets
 	main.hud = hud
-	ship.newton = true
 	ship.nearest_name = "Earth"
 	ship.true_pos = Vector3.RIGHT * 6371.0
 	planets.refresh(ship.true_pos, 0.0)
@@ -104,22 +103,20 @@ func _ready() -> void:
 	main.call("_update_skin_kill", 0.016)
 	check("teleport_does_not_sweep_through_planet", ship.anchor_off.distance_to(teleport_target) < 0.01)
 	# The spin angle main hands the ship must build the same basis it renders
-	# with, and must be NAN where the frame is not a pure spin (arcade spheres).
+	# with. arcade_surface_angle_is_nan deleted 2026-09-29: no arcade spheres remain;
+	# every generated world is an ephemeris spin, checked below on a HYG system.
 	var earth_angle := planets.surface_angle("Earth")
 	check("physical_surface_angle_matches_basis", is_finite(earth_angle) \
 		and Basis(Vector3.UP, earth_angle).is_equal_approx(planets.surface_basis("Earth")))
 	check("unknown_body_surface_angle_is_nan", is_nan(planets.surface_angle("NoSuchBody")))
-	var arcade_checked := false
-	for id in SystemDB.all():
-		if id == SystemDB.SOL or id == SystemDB.INTERSTELLAR or SystemDB.is_physical(id): continue
-		planets.load_system(SystemDB.bodies(id))
-		for spec in SystemDB.bodies(id):
-			if not planets.is_physical(str(spec.name)):
-				check("arcade_surface_angle_is_nan", is_nan(planets.surface_angle(str(spec.name))))
-				arcade_checked = true
-				break
-		break
-	check("arcade_surface_angle_checked", arcade_checked)
+	Ephemeris.switch_system("tau_ceti")
+	planets.load_system(SystemDB.bodies("tau_ceti"))
+	var world := Ephemeris.spawn_body()
+	var world_angle := planets.surface_angle(world)
+	check("generated_surface_angle_matches_basis", is_finite(world_angle) \
+		and Basis(Vector3.UP, world_angle).is_equal_approx(planets.surface_basis(world)))
+	Ephemeris.switch_system(SystemDB.SOL)
+	planets.load_system(SystemDB.bodies(SystemDB.SOL))
 	main.free()
 	flash.free()
 	hud.free()

@@ -16,7 +16,7 @@ func _initialize() -> void:
 
 	# Cold build of all four rings.
 	var t0 := Time.get_ticks_usec()
-	patch.update_for(pos, "Earth", true, 6371.0, 15.0, 0.02, ceiling, earth, s)
+	patch.update_for(pos, "Earth", 6371.0, 15.0, 0.02, ceiling, earth, s)
 	var all_ms := float(Time.get_ticks_usec() - t0) / 1000.0
 	print("probe_ring_cost: cold build of 4 rings = %.1f ms" % all_ms)
 
@@ -26,7 +26,7 @@ func _initialize() -> void:
 	var moves := 5
 	for i in moves:
 		var p: Vector3 = (dir + Vector3(0.0, float(i + 1) * quad * 1.2 / 6371.0, 0.0)).normalized() * (6371.0 + 15.0)
-		patch.update_for(p, "Earth", true, 6371.0, 15.0, 0.02, ceiling, earth, s)
+		patch.update_for(p, "Earth", 6371.0, 15.0, 0.02, ceiling, earth, s)
 	var per_ms := float(Time.get_ticks_usec() - t1) / 1000.0 / float(moves)
 	print("probe_ring_cost: %.1f ms per ring-0 refresh (moving 60 m each step)" % per_ms)
 	print("probe_ring_cost: that alone is %.1f fps if it happens once a frame" % (1000.0 / maxf(per_ms, 0.001)))

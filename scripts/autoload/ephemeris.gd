@@ -92,7 +92,6 @@ var _sol: _SOL = _SOL.new()
 var _sys: _SYS = _sol
 var _systems := { SOL_ID: _sol }
 var system_id := SOL_ID
-var _physical := true
 var primary_star: String:
 	get:
 		return _sys.primary_star
@@ -116,20 +115,15 @@ func _system_db():
 	return load("res://scripts/autoload/system_db.gd")
 
 
-func is_physical_system(id: String = "") -> bool:
-	if id == "":
-		return _physical
-	return id == SOL_ID or _system_db().is_physical(id)
-
-
-# The ephemeris for a physical system, built once per session from its star row.
-# Authored arcade systems have none of their own and answer with Sol.
+# The ephemeris for a star system, built once per session from its star row.
+# An id with no catalogue row (the deep-space hub) answers with Sol.
 func system_for(id: String) -> _SYS:
 	if _systems.has(id):
 		return _systems[id]
-	if not is_physical_system(id):
+	var row: Dictionary = _system_db().star_row(id)
+	if row.is_empty():
 		return _sol
-	var e: _SYS = _GEN.build(id, _system_db().star_row(id), rotation_clock.unix_s)
+	var e: _SYS = _GEN.build(id, row, rotation_clock.unix_s)
 	_systems[id] = e
 	return e
 
@@ -137,7 +131,6 @@ func system_for(id: String) -> _SYS:
 func switch_system(id: String) -> void:
 	var changed := id != system_id
 	system_id = id
-	_physical = is_physical_system(id)
 	_sys = system_for(id)
 	if changed and _sys is _GEN:
 		(_sys as _GEN).place_at(rotation_clock.unix_s)

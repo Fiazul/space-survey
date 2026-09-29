@@ -12,7 +12,6 @@ func _ready() -> void:
 	var ship := Ship.new()
 	add_child(ship)
 	ship._set_capture(false)
-	ship.newton = true
 	ship.dev_speed = false
 	ship.nearest_name = "Earth"
 	ship.nearest_radius = 6371

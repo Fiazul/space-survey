@@ -20,7 +20,6 @@ func _ready() -> void:
 	controller.ship = ship
 	controller.add_child(ship)
 	ship.set_physics_process(false)
-	ship.newton = true
 	ship._set_capture(false)
 	var planets := SunWorld.new()
 	controller.planets = planets

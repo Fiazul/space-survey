@@ -176,7 +176,7 @@ func nearest_portal(flyer: Ship) -> Dictionary:
 
 # Harbour speed-cap as you near a wormhole — the same "ease down so you don't blast past"
 # feel as a station/platform, so you can line up and dive in. INF when clear of all
-# portals; eases to WH_MIN_SPEED right at the ring. main folds this into ship.struct_limit.
+# portals; eases to WH_MIN_SPEED right at the ring. Unread since 2026-09-29 (one physics); slice 3 deletes wormholes.
 const WH_SLOW_RANGE := 750.0   # start easing down within this of the nearest portal
 const WH_EDGE_SPEED := 850.0   # cap as you enter the slow zone (drops you out of warp)
 const WH_MIN_SPEED := 40.0     # gentle crawl right at the mouth — easy to settle + press F

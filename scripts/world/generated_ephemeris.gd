@@ -11,8 +11,10 @@ const GM_SUN := 132712440018.0
 const GM_EARTH := 398600.4418
 const EARTH_RADIUS_KM := 6371.0
 const DAY_S := 86400.0
-const GEO_OVER_RADIUS := 42157.0 / 6371.0
-const SPAWN_MIN_RADII := 1.5
+# Spawn park, in radii of the spawn world. Ship._newton_g works in the anchor's
+# free-falling frame, so only the star's tidal residue reaches the ship; at 2 R it
+# is well under 1 % of the world's pull for every generated orbit.
+const SPAWN_RADII := 2.0
 const LETTERS := "bcdefg"
 # Chen & Kipping 2017 (ApJ 834:17) mass-radius power laws, Earth units.
 const TERRAN_EXP := 0.279
@@ -151,13 +153,5 @@ func place_at(unix_s: float) -> void:
 			a * cos(th), a * sin(th) * sin(float(o.inc)), a * sin(th) * cos(float(o.inc))])
 
 
-# Earth's GEO-to-radius ratio frames the world like Sol's start, pulled in to
-# where the world's pull is 4x the star's. Ship._newton_g sums every body's
-# pull in the anchor frame without cancelling the anchor's own fall toward the
-# star, so past that radius a close-in M-dwarf world would lose the ship.
 func spawn_park_km() -> float:
-	var r := body_radius_km(spawn_body)
-	var d := rel_km(primary_star, spawn_body).length()
-	var star_pull := gm(primary_star) / maxf(d * d, 1.0)
-	var dominant := 0.5 * sqrt(gm(spawn_body) / maxf(star_pull, 1.0e-30))
-	return clampf(dominant, r * SPAWN_MIN_RADII, r * GEO_OVER_RADIUS)
+	return body_radius_km(spawn_body) * SPAWN_RADII

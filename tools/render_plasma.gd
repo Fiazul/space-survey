@@ -41,7 +41,6 @@ func _ready() -> void:
 	var ship := Ship.new()
 	add_child(ship)
 	ship._set_capture(false)
-	ship.newton = true
 	ship.anchor_off = Vector3.UP*6372
 	var rotating := OS.get_environment("PLASMA_ROTATING") == "1"
 	if rotating:

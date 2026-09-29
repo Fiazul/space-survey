@@ -99,7 +99,7 @@ func _ready() -> void:
 	_proxima()
 	Ephemeris.switch_system(SolEphemeris.new().id)
 	check("switch_back_same_instance", Ephemeris.current() == sol_instance)
-	check("switch_back_physical", Ephemeris.is_physical_system())
+	check("switch_back_system_id", Ephemeris.system_id == "sol")   # is_physical_system retired 2026-09-29: every system is physical
 	check("switch_back_primary_sun", Ephemeris.primary_star == "Sun")
 	check("switch_back_spawn_earth", Ephemeris.spawn_body() == "Earth")
 	check("switch_back_proxima_gone", not Ephemeris.is_anchorable("Proxima b"))
@@ -132,7 +132,7 @@ func _sol_matches_snapshot() -> void:
 
 func _proxima() -> void:
 	Ephemeris.switch_system(PROXIMA)
-	check("proxima_physical", Ephemeris.is_physical_system())
+	check("proxima_system_id", Ephemeris.system_id == PROXIMA)   # is_physical_system retired 2026-09-29
 	var star := Ephemeris.primary_star
 	check("proxima_primary", star == "Proxima Centauri")
 	var worlds := Ephemeris.live_worlds()
@@ -159,7 +159,7 @@ func _proxima() -> void:
 	var home := Ephemeris.spawn_body()
 	check("spawn_is_a_world", home != "" and home != star and Ephemeris.has_pos(home))
 	var bodies := SystemDB.bodies(PROXIMA)
-	check("systemdb_specs_physical", bodies.size() == worlds.size() and bodies.all(func(b): return b.physical and b.live))
+	check("systemdb_specs_physical", bodies.size() == worlds.size() and bodies.all(func(b): return b.physical))   # "live" spec key retired 2026-09-29: every body reads its ephemeris
 	_anchored(home, star)
 	_skin_and_spin(home)
 	_newton_falls(home, star)
@@ -168,7 +168,6 @@ func _proxima() -> void:
 func _anchored(home: String, star: String) -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	ship.set_anchor(home)
 	check("ship_anchors_generated_world", ship.anchor_name == home)
 	var off := Vector3(1.0, 0.2, -0.4).normalized() * (Ephemeris.body_radius_km(home) + 5.0)
@@ -224,7 +223,6 @@ func _skin_and_spin(home: String) -> void:
 func _newton_falls(home: String, star: String) -> void:
 	var ship := ShipScript.new()
 	add_child(ship)
-	ship.newton = true
 	ship.set_anchor(home)
 	var to_star := Ephemeris.rel_km(star, home).normalized()
 	var side := to_star.cross(Vector3.UP).normalized()

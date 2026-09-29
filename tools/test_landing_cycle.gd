@@ -13,7 +13,7 @@ class RisingGround extends TerrainSampler:
 class StubPlanets extends PlanetSystem:
 	var ship_ref: Ship
 	var sampler_ref: TerrainSampler
-	func is_physical(body: String) -> bool:
+	func has_body(body: String) -> bool:
 		return body == "Earth"
 	func terrain_sampler_for(_body: String) -> TerrainSampler:
 		return sampler_ref
@@ -53,7 +53,6 @@ func _ready() -> void:
 	ship = Ship.new()
 	add_child(ship)
 	ship._set_capture(false)
-	ship.newton = true
 	ship.dev_speed = false
 	planets = StubPlanets.new()
 	planets.ship_ref = ship

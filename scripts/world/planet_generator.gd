@@ -577,17 +577,22 @@ static func paint(spec: Dictionary, radius: float) -> Dictionary:
 	if recipe.has("stellar"):
 		var corona := MeshInstance3D.new()
 		var quad := QuadMesh.new()
-		quad.size = Vector2.ONE*radius*3.0
+		quad.size = Vector2.ONE*radius*2.0*float(recipe.stellar.corona_extent)
 		corona.mesh = quad
 		var halo := ShaderMaterial.new()
 		halo.shader = preload("res://shaders/stellar_corona.gdshader")
 		var tint: Color = recipe.color_a
 		halo.set_shader_parameter("tint", Vector3(tint.r,tint.g,tint.b))
-		halo.set_shader_parameter("strength", float(recipe.stellar.brightness)*(.12+float(recipe.stellar.activity)*.6))
+		halo.set_shader_parameter("strength", recipe.stellar.corona_strength)
+		halo.set_shader_parameter("extent", recipe.stellar.corona_extent)
+		halo.set_shader_parameter("falloff", recipe.stellar.corona_falloff)
+		halo.set_shader_parameter("star_radius", radius)
 		halo.set_shader_parameter("seed", recipe.seed)
 		halo.set_shader_parameter("pulse", 1.0 if recipe.stellar.type in ["pulsar", "magnetar"] else 0.0)
 		corona.material_override = halo
 		corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		# The billboard moves from the centre toward the silhouette's tangent plane.
+		corona.extra_cull_margin = radius*(float(recipe.stellar.corona_extent)+1.0)
 		mi.add_child(corona)
 	mi.visible = false
 	if physical:
@@ -1014,7 +1019,7 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
 	if recipe.has("stellar"):
 		var stellar: Dictionary = recipe.stellar
-		for key in ["mode", "cells", "spots", "activity", "brightness"]:
+		for key in ["mode", "cells", "spots", "activity", "brightness", "limb_floor", "detail_contrast"]:
 			mat.set_shader_parameter("stellar_"+key, stellar[key])
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)

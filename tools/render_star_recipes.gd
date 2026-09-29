@@ -54,6 +54,12 @@ func _ready() -> void:
 		layer.add_child(label)
 	for i in 4: await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	get_viewport().get_texture().get_image().save_png("/tmp/star-recipes.png")
-	print("stellar render: /tmp/star-recipes.png")
+	var output := OS.get_environment("STAR_RECIPE_SHOT")
+	if output.is_empty(): output = "/tmp/star-recipes.png"
+	var result := get_viewport().get_texture().get_image().save_png(output)
+	if result != OK:
+		push_error("Stellar capture failed: "+output)
+		get_tree().quit(1)
+		return
+	print("stellar render: ", output)
 	get_tree().quit()

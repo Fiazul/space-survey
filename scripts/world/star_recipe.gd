@@ -4,6 +4,8 @@ extends RefCounted
 ## Calibration and approximation limits: docs/STAR_RECIPES.md.
 const SOLAR_RADIUS_KM := 695700.0
 const SIGMA := 5.670374419e-8
+# Sun surface + corona: 1.0 = original look, 2.0 = twice the render intensity.
+const SUN_BRIGHTNESS_MULTIPLIER := 6
 # Representative dwarf anchors: Teff K, radius / Sun, mass / Sun.
 const DWARFS := {
 	"O": [44000.0, 13.0, 58.0], "B": [31000.0, 7.2, 17.7],
@@ -87,12 +89,26 @@ static func resolve(spec: Dictionary) -> Dictionary:
 	mass = _positive(overrides.get("mass_solar", mass), mass)
 	activity = clampf(float(overrides.get("activity", activity)), 0, 1)
 	var color := color_at(temperature)
+	# Authored HDR display response, independent of the physical flux/hazard model.
+	# The extended glow represents camera glare as well as the much fainter corona.
+	var brightness := clampf(7.0*pow(temperature/5772.0, .65), 2.5, 14.0)
+	if mode == 0:
+		brightness = clampf(.82*pow(temperature/5772.0, .25), .65, 1.3)
+	if mode == 1:
+		brightness = clampf(pow(temperature/5772.0, 1.2), .015, 1.4)
+	if solar:
+		brightness *= maxf(SUN_BRIGHTNESS_MULTIPLIER, 0.0)
 	var stellar := {
 		"type": family, "spectral": sp, "temperature_k": temperature,
 		"radius_solar": radius, "radius_km": radius*SOLAR_RADIUS_KM, "mass_solar": mass,
 		"luminosity_solar": radius*radius*pow(temperature/5772.0, 4),
 		"activity": activity, "mode": mode, "cells": cells, "spots": spots,
-		"brightness": clampf(pow(temperature/5772.0, 1.2), .015, 1.4),
+		"brightness": brightness,
+		"limb_floor": .35 if mode == 1 else (.48 if mode == 0 else .72),
+		"detail_contrast": .85 if mode == 0 else .20,
+		"corona_strength": brightness*((.11+activity*.16) if mode == 0 else (.12+activity*.22)),
+		"corona_extent": 2.8,
+		"corona_falloff": 7.0 if mode == 1 else 3.8,
 		"estimated": not solar, "composition": ["hydrogen", "helium"],
 	}
 	if family == "white_dwarf": stellar.composition = ["degenerate_carbon_oxygen", "hydrogen_or_helium_envelope"]

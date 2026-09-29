@@ -296,7 +296,7 @@ const NEWTON_STRAFE := 0.014715    # 1.5 g — 50% faster acceleration
 # boosted at sea level under the old hand-picked 0.005) — see FlightMode.air_ballistic
 # and FlightMode.AIR_TERMINAL_KMS for the target this solves for.
 static var NEWTON_BALLISTIC: float = _FM.air_ballistic(NEWTON_THRUST, BOOST_MULT, Ephemeris.RHO0)
-const DEV_THRUST_MULT := 100000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
+const DEV_THRUST_MULT := 10000000.0   # F9: ~20 s GEO→skin if you burn. Dies in air.
 # Entry handshake (2026-09-09): the shell crossing itself is softened, not flight
 # speed in general — "no hard cap in flight" stays true once you're inside the air.
 const ENTRY_SPEED_MAX_KMS := 3.0

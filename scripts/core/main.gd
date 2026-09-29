@@ -689,15 +689,15 @@ func star_state(id: String) -> String:
 const NOT_REACHED_TEXT := "Not yet reached — needs the interstellar drive"
 
 # Until the drive exists a star is reachable only once visited (teleport), or with
-# ASTRYX_DEV_TRAVEL=1 for development.
-func can_travel_to(id: String) -> bool:
+# ASTRYX_DEV_TRAVEL=1 / dev=true (the Ctrl+P panel) for development.
+func can_travel_to(id: String, dev: bool = false) -> bool:
 	if id == "" or id == current_system or SystemDB.star_row(id).is_empty():
 		return false
-	return SystemDB.is_teleport_platform(id) or OS.get_environment("ASTRYX_DEV_TRAVEL") == "1"
+	return dev or SystemDB.is_teleport_platform(id) or OS.get_environment("ASTRYX_DEV_TRAVEL") == "1"
 
 # The one gate every system change goes through. Returns false (and says why) if refused.
-func travel_to(id: String) -> bool:
-	if not can_travel_to(id):
+func travel_to(id: String, dev: bool = false) -> bool:
+	if not can_travel_to(id, dev):
 		if hud != null and id != current_system:
 			hud.toast = "%s  ·  %s" % [SystemDB.display_name(id), NOT_REACHED_TEXT]
 			hud.toast_t = 3.0

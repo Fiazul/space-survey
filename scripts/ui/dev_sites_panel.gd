@@ -6,8 +6,8 @@ extends CanvasLayer
 # restores capture. main.gd owns the Ctrl+P key; this class only exposes toggle().
 #
 # Dev tool: no separate flag gate, same as F6/F7/F9 on Ship (always available).
-# Sol only — DevSites names Sol bodies, so in any other system the list is left
-# empty with a note.
+# STAR SYSTEMS rows jump to any SystemDB star (dev travel bypass); the Sol
+# site rows are hidden outside Sol — DevSites names Sol bodies only.
 
 const DS := preload("res://scripts/world/dev_sites.gd")
 
@@ -67,13 +67,13 @@ func _close() -> void:
 # ---------------------------------------------------------------------------
 func _refresh() -> void:
 	var in_sol := ship != null and Ephemeris.system_id == Ephemeris.SOL_ID
-	_title.text = "TELEPORT — SOL" if in_sol \
-		else "TELEPORT — return to Sol first"
+	_title.text = "TELEPORT — %s" % SystemDB.display_name(Ephemeris.system_id).to_upper()
 	for c in _list.get_children():
 		c.queue_free()
+	var needle := _filter.text.to_lower()
+	_add_systems(needle)
 	if not in_sol:
 		return
-	var needle := _filter.text.to_lower()
 	var by_body := {}
 	var order: Array = []
 	for site in DS.sites():
@@ -87,26 +87,69 @@ func _refresh() -> void:
 		by_body[body].append(site)
 	order.sort()
 	for body in order:
-		var head := Label.new()
-		head.text = body
-		head.add_theme_font_size_override("font_size", 18)
-		head.add_theme_color_override("font_color", Color(0.6, 1.0, 0.95))
-		_list.add_child(head)
+		_add_head(body)
 		for site in by_body[body]:
-			var row := Button.new()
-			row.focus_mode = Control.FOCUS_NONE
-			row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			row.flat = true
-			row.custom_minimum_size.y = 52
-			row.add_theme_font_size_override("font_size", 16)
-			row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-			row.text = "    %s   —  %s" % [str(site.name), str(site.get("note", ""))]
+			var row := _row("    %s   —  %s" % [str(site.name), str(site.get("note", ""))])
 			if site.body == "Earth" and site.get("mode", "surface") == "surface":
 				var solar := Ephemeris.solar_state("Earth", DS.dir_for(site.lat_deg,site.lon_deg))
 				var minutes := int(solar.hour*60) % 1440
 				row.text += "  ·  %02d:%02d solar / %s" % [minutes/60,minutes%60,solar.phase]
 			row.pressed.connect(_pick.bind(site))
 			_list.add_child(row)
+
+
+func _add_head(text: String) -> void:
+	var head := Label.new()
+	head.text = text
+	head.add_theme_font_size_override("font_size", 18)
+	head.add_theme_color_override("font_color", Color(0.6, 1.0, 0.95))
+	_list.add_child(head)
+
+
+func _row(text: String) -> Button:
+	var row := Button.new()
+	row.focus_mode = Control.FOCUS_NONE
+	row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	row.flat = true
+	row.custom_minimum_size.y = 52
+	row.add_theme_font_size_override("font_size", 16)
+	row.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	row.text = text
+	return row
+
+
+func system_ids() -> Array:
+	var ids := SystemDB.all()
+	ids.erase(SystemDB.SOL)
+	ids.sort_custom(func(a, b): return SystemDB.light_years(a) < SystemDB.light_years(b))
+	return [SystemDB.SOL] + ids
+
+
+func _add_systems(needle: String) -> void:
+	var added := false
+	for id in system_ids():
+		var label := SystemDB.display_name(id)
+		if not needle.is_empty() and not ("%s %s star system" % [label, id]).to_lower().contains(needle):
+			continue
+		if not added:
+			_add_head("STAR SYSTEMS")
+			added = true
+		var ly := SystemDB.light_years(id)
+		var row := _row("    %s   —  %s" % [label, "%.2f ly" % ly if ly > 0.0 else "home"])
+		row.disabled = id == Ephemeris.system_id
+		row.pressed.connect(_pick_system.bind(id))
+		_list.add_child(row)
+
+
+func _pick_system(id: String) -> void:
+	_close()
+	go_system(id)
+
+
+func go_system(id: String) -> bool:
+	if main == null:
+		return false
+	return main.travel_to(id, true)
 
 
 func _pick(site: Dictionary) -> void:
@@ -127,7 +170,7 @@ func _on_filter_changed(_text: String) -> void:
 # scripts/flight/ship.gd — reusing their public API, not duplicating their
 # internals (ship.gd is out of this file's ownership).
 func go(site: Dictionary) -> void:
-	if ship == null or main == null:
+	if ship == null or main == null or Ephemeris.system_id != Ephemeris.SOL_ID:
 		return
 	var body: String = site.body
 	main._anchor_ship(body)
@@ -214,7 +257,7 @@ func _build() -> void:
 	header.add_child(_close_button)
 
 	_filter = LineEdit.new()
-	_filter.placeholder_text = "Search planets and landmarks…"
+	_filter.placeholder_text = "Search star systems, planets and landmarks…"
 	_filter.custom_minimum_size.y = 48
 	_filter.text_changed.connect(_on_filter_changed)
 	col.add_child(_filter)

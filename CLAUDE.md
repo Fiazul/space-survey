@@ -93,7 +93,7 @@ per file so a hang doesn't stall the whole loop):
 for f in tools/test_*.gd; do
   case "$f" in
     tools/test_anchor_frame.gd|tools/test_chase_rig.gd|tools/test_dem_calibration.gd|\
-    tools/test_dev_sites_scene.gd|tools/test_docking.gd|tools/test_landing_support.gd|\
+    tools/test_dev_sites_scene.gd|tools/test_dev_sites_systems.gd|tools/test_docking.gd|tools/test_landing_support.gd|\
     tools/test_music_director_scene.gd|tools/test_plasma.gd|tools/test_plasma_frame.gd|\
     tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
     tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\

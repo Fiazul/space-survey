@@ -6,6 +6,7 @@ func check(label: String, ok: bool) -> void:
 	if not ok:
 		failures += 1
 func _ready() -> void:
+	ProfileDir.isolate("test_docking")
 	var main := preload("res://scripts/core/main.gd").new()
 	add_child(main)
 	main.set_process(false)

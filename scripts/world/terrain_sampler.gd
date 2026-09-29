@@ -553,6 +553,19 @@ func normal_at(position: Vector3, radius: float) -> Vector3:
 	return result if result.length_squared() > 0.5 else up
 
 
+# Displacement from `to` to the snapped contact point, in double precision.
+# The snapped position itself is a float32 Earth-radius vector (0.49 m grid);
+# callers that move an anchored hull apply this small delta instead.
+static func _snap_delta(from: Vector3, to: Vector3, t: float, target_r: float) -> Vector3:
+	var back := 1.0 - t
+	var cx := float(to.x) + (float(from.x)-float(to.x))*back
+	var cy := float(to.y) + (float(from.y)-float(to.y))*back
+	var cz := float(to.z) + (float(from.z)-float(to.z))*back
+	var length := sqrt(cx*cx + cy*cy + cz*cz)
+	var push := (target_r - length) / length
+	return Vector3(cx-float(to.x) + cx*push, cy-float(to.y) + cy*push, cz-float(to.z) + cz*push)
+
+
 func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		radius: float, clearance: float) -> Dictionary:
 	var terrain_result := _resolve_terrain_motion(from, to, velocity, radius, clearance)
@@ -560,7 +573,10 @@ func resolve_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		return terrain_result
 	var structure_result := resolve_structure_hull(from, terrain_result.position,
 		velocity, radius, clearance, Basis.IDENTITY, Vector3.ZERO)
-	return structure_result if structure_result.hit or structure_result.budget_limited else terrain_result
+	if structure_result.hit or structure_result.budget_limited:
+		structure_result["delta"] = structure_result.position - to
+		return structure_result
+	return terrain_result
 
 
 func resolve_structure_hull(from: Vector3, to: Vector3, velocity: Vector3,
@@ -574,7 +590,7 @@ func resolve_structure_hull(from: Vector3, to: Vector3, velocity: Vector3,
 func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
 		radius: float, clearance: float, slop: float = CONTACT_SLOP_KM) -> Dictionary:
 	var result := {"hit": false, "position": to, "velocity": velocity,
-		"normal": Vector3.ZERO, "budget_limited": false}
+		"normal": Vector3.ZERO, "budget_limited": false, "delta": Vector3.ZERO}
 	if not bool(surface.get("solid", false)) or radius <= 0.0:
 		return result
 	# Support a resting hull inside the numerical contact margin before gravity
@@ -603,6 +619,7 @@ func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
 	var count := maxi(1, int(ceil(travel * (end-begin) / CONTACT_STEP_KM)))
 	var last := begin
 	var contact_pos := to
+	var contact_t := 1.0
 	for i in range(mini(count, CONTACT_SAMPLE_BUDGET) + 1):
 		var t := lerpf(begin, end, float(i) / float(count))
 		var pos := from.lerp(to, t)
@@ -616,6 +633,7 @@ func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
 				else:
 					lo = mid
 			contact_pos = from.lerp(to, lo)
+			contact_t = lo
 			result.hit = true
 			break
 		last = t
@@ -624,9 +642,16 @@ func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
 			# Never increase spacing and silently tunnel at extreme speed/timewarp.
 			# Stop at the last verified safe point and resume next simulation step.
 			result.position = from.lerp(to, last)
+			result.delta = (from-to)*(1.0-last)
 			result.velocity = Vector3.ZERO
 			result.budget_limited = true
 		return result
+	# A settling hull is projected from where it ends, not backed along a sweep
+	# that is shorter than the float32 grid: that back-off is rounding, and it
+	# walked resting hulls sideways by metres.
+	if velocity.length() < CONTACT_SETTLE_KMS:
+		contact_pos = to
+		contact_t = 1.0
 	var up := contact_pos.normalized()
 	if up.length_squared() < 0.5:
 		up = Vector3.UP
@@ -634,6 +659,7 @@ func _resolve_terrain_motion(from: Vector3, to: Vector3, velocity: Vector3,
 	# Radial clearance must grow on slopes to accommodate the hull's sphere.
 	var separation := (clearance + slop) / maxf(normal.dot(up), 0.15)
 	result.position = up * (ground_radius_km(up, radius) + separation)
+	result.delta = _snap_delta(from, to, contact_t, ground_radius_km(up, radius) + separation)
 	result.normal = normal
 	var inward := velocity.dot(normal)
 	if inward < 0.0:

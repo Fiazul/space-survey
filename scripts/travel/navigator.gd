@@ -8,6 +8,7 @@ extends Control
 
 const COL := Color(0.62, 1.0, 0.82)   # light silvery-teal (normal/Tab waypoint)
 const LOCK_COL := Color(1.0, 0.6, 0.15)   # orange — a LOCKED map waypoint
+const HOME_COL := Color(0.55, 0.85, 1.0)   # sky blue — the home pad, always on in Sol
 const MARKER_FONT := 12               # smaller, designed marker label
 const EDGE_MARGIN := 46.0
 const GIZMO_POS := Vector2(1208, 486)

@@ -257,6 +257,9 @@ func _sky() -> int:
 		shell_src.find("zenith_floor") >= 0)
 	failed += _check("shell_scales_by_air_mass",
 		shell_src.find("* airmass *") >= 0)
+	# Alpha-blended, not additive: a sunlit sky must hide the stars behind it.
+	failed += _check("shell_is_alpha_blended_over_stars",
+		_strip_comments(shell_src).find("blend_mix") >= 0 and _strip_comments(shell_src).find("blend_add") < 0)
 	# NOTE ON LIMITS: a shader's arithmetic cannot be evaluated headlessly. The
 	# curve above is the contract; the shader mirrors it; a shader that fails to
 	# compile shows up as SHADER ERROR in the boot log, not here.

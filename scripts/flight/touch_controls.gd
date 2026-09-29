@@ -12,7 +12,7 @@ const GAP := 12.0
 const FONT := 19
 const JOY_ZONE_FRACTION := 0.45
 const RING_R := 64.0
-const ACTIONS := ["HOME", "MAP", "ARMS", "INTERACT", "GEAR", "CAP", "BOOST", "UP", "DOWN", "ZOOM−", "ZOOM+", "TELEPORT", "SYSTEMS", "DEV"]
+const ACTIONS := ["HOME", "MAP", "ARMS", "INTERACT", "GEAR", "BOOST", "UP", "DOWN", "ZOOM−", "ZOOM+", "TELEPORT", "SYSTEMS", "DEV"]
 enum { CRUISE, HOLD_KEY, FIRE, TAP_KEY, PITCH, ZOOM, TELEPORT, SYSTEMS, DEV, MENU }
 var _use_mouse := not OS.has_feature("mobile")
 var _buttons: Array = []
@@ -46,7 +46,6 @@ func _build() -> void:
 	_add("ARMS", TAP_KEY, KEY_R, true)
 	_add("INTERACT", TAP_KEY, KEY_F, true)
 	_add("GEAR", TAP_KEY, KEY_B, true)
-	_add("CAP", HOLD_KEY, KEY_V, true)
 	_add("BOOST", HOLD_KEY, KEY_SHIFT, true)
 	_add("UP", PITCH, -1, true)
 	_add("DOWN", PITCH, 1, true)

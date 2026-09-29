@@ -10,8 +10,6 @@ extends Node
 var main   # set by main right after construction
 
 var _ob_done_toast := false   # so the "quest complete" toast fires only once
-var _ob_kills_base := 0       # combat.kills snapshot when (re)started → "clear swarm"
-var _ob_boss_base := 0        # guardian-bosses-beaten snapshot when (re)started → "beat a guardian"
 var _map_seen := false        # latched when the star map is first opened
 var _log_seen := false        # latched when the mission log is first opened
 
@@ -19,40 +17,38 @@ var _log_seen := false        # latched when the mission log is first opened
 var _onboard := [
 	{ "id": "thrust", "title": "Take the helm",
 		"tip": "Hold  W  to thrust  ·  steer with the mouse, A/D strafe, Space/Ctrl up·down" },
-	{ "id": "scan", "title": "Scan a world",
-		"tip": "Aim at a planet or star and hold  V  to survey it" },
-	{ "id": "claim", "title": "Claim your coins",
-		"tip": "Press  G  to claim your reward coins" },
-	{ "id": "map", "title": "Read the star map",
-		"tip": "Press  M  for the Star Map — the wormhole network · pick a star, Navigate" },
+	{ "id": "scan", "title": "Survey a world",
+		"tip": "Fly close to a planet or moon — it is surveyed into the Codex (L) automatically" },
 	{ "id": "log", "title": "Open the mission log",
 		"tip": "Press  J  for the MISSION LOG — every star, planet & moon is a mission" },
-	{ "id": "wormhole", "title": "Ride a wormhole",
-		"tip": "Fly into a glowing  wormhole  and press  F  — it links to a neighbouring star" },
 	{ "id": "dock", "title": "Dock at a station",
 		"tip": "Approach a platform/station and press  F  to dock (swap & customise ships)" },
 	{ "id": "teleport_net", "title": "Use the teleport network",
 		"tip": "While docked, open the  TELEPORT NETWORK  (bottom-centre) to fast-travel" },
 	{ "id": "fire", "title": "Open fire",
 		"tip": "Left-click to fire — line a hostile up in the crosshair" },
-	{ "id": "swarm", "title": "Clear the hostiles",
-		"tip": "Destroy enemy ships — thin out a swarm (3 kills)" },
-	{ "id": "boss", "title": "Beat a guardian",
-		"tip": "A guarded world's boss is SHIELDED until its swarm is dead — clear them, then beat the boss to capture the world" },
 ]
 
 
-# Spawned after the profile is loaded (GameState is populated by then): if the quest was already
-# finished, pre-arm the toast latch so the "complete" toast doesn't re-fire on boot.
+# Spawned after the profile is loaded. The saved step is an index into whatever list shipped
+# when it was written, so re-derive it from the id set before anything reads it; a finished
+# quest pre-arms the toast latch so "complete" doesn't re-fire on boot.
 func _ready() -> void:
-	_ob_done_toast = GameState.onboarding_done.has("boss")
+	GameState.onboarding_step = resume_step()
+	_ob_done_toast = GameState.onboarding_step >= _onboard.size()
+
+
+func resume_step() -> int:
+	for i in _onboard.size():
+		if not GameState.onboarding_done.get(_onboard[i].id, false):
+			return i
+	return _onboard.size()
 
 
 # Called by StarMap when the map is first opened (the map pauses the tree, so main._process
 # can't observe map._open itself — the map notifies us instead).
 func notify_map_opened() -> void:
 	_map_seen = true
-	note("map")
 
 # Latched by QuestLog the first time the mission log is opened (drives the final onboarding tip).
 func notify_log_opened() -> void:
@@ -70,8 +66,6 @@ func restart() -> void:
 	GameState.onboarding_done.clear()
 	GameState.onboarding_step = 0
 	_ob_done_toast = false
-	_ob_kills_base = main.combat.kills
-	_ob_boss_base = main.combat.guardian_bosses_beaten
 	main._save_profile()
 	main.hud.toast = "✦  GETTING STARTED — quest restarted."
 	main.hud.toast_t = 2.5
@@ -89,7 +83,7 @@ func state() -> Dictionary:
 
 
 # The id of the step currently being asked of the player ("" once complete). Read by main's
-# objective arrow so the final "ride a wormhole" step can point straight at the gate.
+# objective arrow.
 func current_step_id() -> String:
 	if GameState.onboarding_step < _onboard.size():
 		return _onboard[GameState.onboarding_step].id
@@ -99,7 +93,6 @@ func current_step_id() -> String:
 # Driven from main._process: latch action-counted steps, advance past completed ones, show the tip.
 func update() -> void:
 	var ship = main.ship
-	var combat = main.combat
 	var hud = main.hud
 	if ship.transiting:
 		hud.set_tip("")
@@ -107,10 +100,6 @@ func update() -> void:
 	# Live latches for the action-counted steps (re-armed on restart via the baselines).
 	if ship.velocity.length() > 30.0:
 		note("thrust")
-	if combat.kills - _ob_kills_base >= 3:
-		note("swarm")
-	if combat.guardian_bosses_beaten - _ob_boss_base >= 1:
-		note("boss")
 	# Advance past every completed step (persist as it moves).
 	var advanced := false
 	while GameState.onboarding_step < _onboard.size() and GameState.onboarding_done.get(_onboard[GameState.onboarding_step].id, false):

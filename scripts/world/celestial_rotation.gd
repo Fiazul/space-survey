@@ -5,7 +5,7 @@ extends RefCounted
 const J2000_UNIX := 946728000.0 # 2000-01-01 12:00 UTC
 const DAY := 86400.0
 const EARTH_ROTATION_DAY := DAY / 1.0027379
-const DEFAULT_CYCLE_MINUTES := 8.0
+const DEFAULT_CYCLE_MINUTES := EARTH_ROTATION_DAY / 60.0 # one sidereal day (player decision 2026-09-29; was 8 min)
 var cycle_minutes := DEFAULT_CYCLE_MINUTES:
 	set(value):
 		cycle_minutes = value if is_finite(value) and value > 0.0 else DEFAULT_CYCLE_MINUTES
@@ -46,8 +46,13 @@ static func earth_angle(unix_time: float) -> float:
 	return fposmod(gmst, 24.0)*TAU/24.0
 
 static func basis_at(body: String, spin: float, unix_time: float) -> Basis:
+	return Basis(Vector3.UP, angle_at(body, spin, unix_time))
+
+# Signed rotation about scene Y, in double precision. Ship physics advances this
+# same angle so its surface frame is bit-identical to the rendered one.
+static func angle_at(body: String, spin: float, unix_time: float) -> float:
 	var angle := earth_angle(unix_time) if body == "Earth" else fposmod(spin*(unix_time-J2000_UNIX), TAU)
 	# ICRS (x,y,z) -> scene (x,z,y) reverses handedness. East is +longitude
 	# (+Z at Greenwich), therefore prograde rotation is NEGATIVE about scene Y.
 	# Other bodies retain the existing Y-pole approximation, with a stable epoch.
-	return Basis(Vector3.UP, -angle)
+	return -angle

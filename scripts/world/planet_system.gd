@@ -834,6 +834,14 @@ func surface_basis(body: String) -> Basis:
 	return Basis.IDENTITY
 
 
+# NAN when the frame is not a pure spin about scene Y (arcade spheres).
+func surface_angle(body: String) -> float:
+	for b in _bodies:
+		if str(b.name) == body and b.get("physical", false):
+			return eph.surface_angle(body)
+	return NAN
+
+
 func ground_altitude_km(body: String) -> float:
 	var sampler := terrain_sampler_for(body)
 	for b in _bodies:

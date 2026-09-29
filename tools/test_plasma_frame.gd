@@ -21,7 +21,7 @@ func _ready() -> void:
 			combat.plasma.speed_multiplier = speed
 			ship.anchor_off = Vector3.RIGHT*6372
 			ship.velocity = Vector3.ZERO
-			ship.terrain_basis = Basis.IDENTITY
+			ship.set_terrain_frame(Basis.IDENTITY)
 			ship.transform.basis = Basis.looking_at(Vector3.FORWARD.rotated(Vector3.RIGHT,deg_to_rad(heading)),Vector3.RIGHT)
 			ship.systems.weapons_target = true
 			ship.systems.step(1)
@@ -50,7 +50,7 @@ func _ready() -> void:
 	# free-aim endpoint must not choose the faster, backwards-facing intercept.
 	combat.reset()
 	ship.anchor_off = Vector3.RIGHT*6372
-	ship.terrain_basis = Basis.IDENTITY
+	ship.set_terrain_frame(Basis.IDENTITY)
 	ship.transform.basis = Basis.IDENTITY
 	ship.velocity = Vector3.BACK*200
 	combat.plasma.speed_multiplier = 32.0

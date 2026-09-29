@@ -192,11 +192,12 @@ static func collide(sampler, from: Vector3, to: Vector3, velocity: Vector3,
 				if item.is_empty():
 					continue
 				var xf: Transform3D = item.transform
-				var inv := xf.affine_inverse()
-				var local_from := inv * from
-				var local_to := inv * to
+				# Origin first: exact at Earth radius, unlike affine_inverse()*point.
+				var inv_basis := xf.basis.inverse()
+				var local_from := inv_basis * (from - xf.origin)
+				var local_to := inv_basis * (to - xf.origin)
 				var scales := xf.basis.get_scale()
-				var relative_basis := inv.basis * hull_basis
+				var relative_basis := inv_basis * hull_basis
 				var padding := Vector3.ONE * clearance / scales + relative_basis.x.abs() * hull_half.x + relative_basis.y.abs() * hull_half.y + relative_basis.z.abs() * hull_half.z
 				for part in parts(item.variant):
 					var expanded := AABB(part.position - padding, part.size + padding * 2.0)

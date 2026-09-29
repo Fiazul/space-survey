@@ -2,8 +2,6 @@ class_name MapChart
 extends Control
 # The interactive star-chart canvas (the heart of the Star Map). A real, zoomable, pannable
 # map drawn entirely in _draw() — no per-star Button nodes, so it stays crisp at any zoom:
-#   • LANES      — known wormhole links between systems (cyan).
-#   • WORMHOLES  — a ◌ swirl icon at each known link's midpoint (animated).
 #   • STARS      — a star icon per system, core tinted by spectral colour, ringed by travel
 #                  state (here / discovered / nav / locked).
 #   • PLANETS    — the selected system's worlds, as tiny dots ringed around its node.
@@ -12,7 +10,7 @@ extends Control
 # Each layer is toggleable (see `filters`, driven by StarMap's filter chips). Wheel zooms about
 # the cursor; left-drag pans; a click (no drag) selects the nearest star → `star_clicked`.
 # Hovering a star floats its name/state/distance. process_mode is ALWAYS (the map pauses the
-# tree) so the player pulse + wormhole swirl animate live while you read the chart.
+# tree) so the player pulse animates live while you read the chart.
 
 signal star_clicked(id: String)
 
@@ -24,7 +22,7 @@ const PLANET_RING := 17.0           # px radius of the planet ring around a sele
 
 var main: Node
 var view_system := ""               # which system is selected (its planets + label show)
-var filters := { "stars": true, "wormholes": true, "planets": true, "lanes": true, "platforms": true }
+var filters := { "stars": true, "planets": true, "platforms": true }
 
 var _zoom := 16.0                   # px per light-year
 var _zoom_min := 1.5
@@ -73,9 +71,6 @@ func _draw() -> void:
 	var font := ThemeDB.fallback_font
 	var ids: Array = SystemDB.all()
 
-	if filters.lanes or filters.wormholes:
-		_draw_lanes()
-
 	# Planets of the selected system (tiny dots ringed around its node).
 	if filters.planets and view_system != "":
 		_draw_planets(view_system)
@@ -99,29 +94,6 @@ func _draw() -> void:
 	# Hover read-out (only when not dragging).
 	if not _dragging:
 		_draw_hover(font)
-
-
-func _draw_lanes() -> void:
-	for e in SystemDB.wh_edges():
-		var a: String = e[0]
-		var b: String = e[1]
-		if a == SystemDB.INTERSTELLAR or b == SystemDB.INTERSTELLAR:
-			continue
-		if not main.is_edge_known(a, b):
-			continue
-		var pa := _project(SystemDB.galaxy_pos(a))
-		var pb := _project(SystemDB.galaxy_pos(b))
-		if filters.lanes:
-			draw_line(pa, pb, Color(0.45, 0.85, 1.0, 0.25), 1.5, true)
-		if filters.wormholes:
-			_draw_wormhole((pa + pb) * 0.5)
-
-
-# A small animated wormhole swirl ◌.
-func _draw_wormhole(p: Vector2) -> void:
-	var pulse: float = 0.5 + 0.5 * sin(_t * 3.0)
-	draw_arc(p, 5.0, 0, TAU, 18, Color(0.6, 0.5, 1.0, 0.5 + 0.4 * pulse), 1.5, true)
-	draw_arc(p, 2.4, _t * 2.0, _t * 2.0 + TAU * 0.7, 12, Color(0.85, 0.7, 1.0, 0.9), 1.5, true)
 
 
 func _draw_star(font: Font, id: String) -> void:
@@ -211,7 +183,7 @@ func _draw_hover(font: Font) -> void:
 	var st: String = main.star_state(id)
 	var head := "%s — %s · %.1f ly" % [SystemDB.display_name(id), SystemDB.spectral(id), SystemDB.light_years(id)]
 	var sub: String = { "here": "you are here", "discovered": "discovered · click to browse",
-		"nav": "wormhole known · click to browse", "locked": "locked · click to browse" }.get(st, "")
+		"nav": "known · click to browse", "locked": "locked · click to browse" }.get(st, "")
 	var p := _project(SystemDB.galaxy_pos(id)) + Vector2(10, -34)
 	var w: float = maxf(font.get_string_size(head, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x,
 		font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x) + 14.0

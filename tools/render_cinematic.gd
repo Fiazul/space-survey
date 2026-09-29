@@ -49,6 +49,7 @@ var _sub := 0
 
 
 func _ready() -> void:
+	ProfileDir.isolate("render_cinematic")
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	process_priority = 1000
 	get_viewport().transparent_bg = false

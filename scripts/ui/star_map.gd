@@ -1,9 +1,9 @@
 class_name StarMap
 extends CanvasLayer
 # Star map overlay (M). A real, zoomable/pannable chart (see MapChart) of the ~50-star
-# catalogue laid out by real sky position, with toggleable layers (stars / wormholes /
-# planets / lanes), a live player cursor, and hover read-outs. The right column lists the
-# SELECTED system's bodies with Navigate / Chart-lane actions. The map NEVER moves the ship —
+# catalogue laid out by real sky position, with toggleable layers (stars / planets /
+# platforms), a live player cursor, and hover read-outs. The right column lists the
+# SELECTED system's bodies. The map NEVER moves the ship —
 # it's a chart you read. Pauses flight + frees the cursor; process_mode = ALWAYS so M keeps
 # working (and the chart keeps animating) while the tree is paused.
 
@@ -147,7 +147,7 @@ func _build() -> void:
 	_root.add_child(_title)
 
 	var hint := Label.new()
-	hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   ◌ wormhole · 🪐 planet · ⌖ you   ·   M / Esc / click-outside to close"
+	hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   🪐 planet · ⌖ you   ·   M / Esc / click-outside to close"
 	hint.position = PANEL_POS + Vector2(0, 40)
 	hint.size = Vector2(PANEL.x, 18)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -159,9 +159,7 @@ func _build() -> void:
 	var fx := PANEL_POS.x + CHART_OFF.x
 	var fy := PANEL_POS.y + 62.0
 	fx = _chip("✦ Stars", "stars", fx, fy, Color(1.0, 0.84, 0.4))
-	fx = _chip("◌ Wormholes", "wormholes", fx, fy, Color(0.7, 0.6, 1.0))
 	fx = _chip("🪐 Planets", "planets", fx, fy, Color(0.6, 0.85, 1.0))
-	fx = _chip("⧓ Lanes", "lanes", fx, fy, Color(0.45, 0.85, 1.0))
 	fx = _chip("⬡ Platforms", "platforms", fx, fy, Color(0.35, 1.0, 0.85))
 
 	# The chart canvas.
@@ -295,7 +293,7 @@ func _refresh_system_list() -> void:
 		_sys_list.add_child(b)
 
 
-# Top of the right panel: what this place is + how to reach it (Navigate / Chart-lane).
+# Top of the right panel: what this place is.
 func _add_travel_action(sys: String, here: bool) -> void:
 	if _sys_list == null or main == null:
 		return
@@ -320,37 +318,10 @@ func _add_travel_action(sys: String, here: bool) -> void:
 		_sys_list.add_child(info)
 		_sys_list.add_child(_spacer())
 		return
-	if main.is_wormhole_known(sys):
-		var discovered: bool = main.star_state(sys) == "discovered"
-		var route: String = "Fly to its wormhole and enter it." if main.current_system == SystemDB.INTERSTELLAR \
-			else "Take the exit wormhole to the hub, then its wormhole."
-		info.text = ("✦  Discovered.  " if discovered else "◇  Wormhole known.  ") + route
-		info.add_theme_color_override("font_color", Color(1.0, 0.84, 0.4) if discovered else Color(0.45, 0.85, 1.0))
-		_sys_list.add_child(info)
-		var nav := Button.new()
-		nav.text = "»   NAVIGATE  HERE"
-		nav.focus_mode = Control.FOCUS_NONE
-		nav.add_theme_font_size_override("font_size", 13)
-		nav.add_theme_color_override("font_color", Color(1.0, 0.72, 0.32))
-		nav.pressed.connect(func():
-			_click_fx(nav)
-			main.navigate_to(sys)
-			_close())
-		_sys_list.add_child(nav)
-	else:
-		info.text = "🔒  Wormhole unknown — chart a lane, or fly the frontier to discover it."
-		info.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
-		_sys_list.add_child(info)
-		var pay := Button.new()
-		pay.text = "◇   CHART LANE   —   %d coins" % main.nav_cost(sys)
-		pay.focus_mode = Control.FOCUS_NONE
-		pay.add_theme_font_size_override("font_size", 13)
-		pay.add_theme_color_override("font_color", Color(0.7, 0.95, 1.0))
-		pay.pressed.connect(func():
-			_click_fx(pay)
-			if main.unlock_nav(sys):
-				_refresh())
-		_sys_list.add_child(pay)
+	var discovered: bool = main.star_state(sys) == "discovered"
+	info.text = "✦  Discovered." if discovered else "◇  Not yet reached."
+	info.add_theme_color_override("font_color", Color(1.0, 0.84, 0.4) if discovered else Color(0.7, 0.78, 0.9))
+	_sys_list.add_child(info)
 	_sys_list.add_child(_spacer())
 
 

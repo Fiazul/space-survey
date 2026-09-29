@@ -40,6 +40,9 @@ const NAV_UNLOCK_PER_LY := 9   # …plus this per light-year of real distance (f
 # Ship tier t (1-based) unlocks once this many distinct systems beyond Sol are reached.
 const SHIP_UNLOCK := [0, 1, 2, 4, 6, 9, 12]
 
+func profile_path() -> String:
+	return ProfileDir.path("profile.cfg")
+
 func systems_reached() -> int:
 	return visited.size() - (1 if visited.has(SystemDB.SOL) else 0)
 

@@ -95,3 +95,54 @@ get interactive caretaker bots and jobs. This replaces the original prohibition 
 pre-existing infrastructure; Earth remains an abandoned, scrap-only destination.
 
 Implementation sequence and current gaps: [spaceports and caretakers](plans/2026-09-24-spaceports-and-caretakers.md).
+
+## September 29 direction: one physics, speed, transitions (must-have)
+
+Decided by the player 2026-09-28/29 after a combat review. These sit ABOVE the visual
+rows: none of the gameplay beats can be judged until they land. Source for the time
+budget and early rewards: the storyboard "Astryx #1: The Last Launch" (2026-09-24,
+GAMEPLAY footers per page); repo spine is `docs/specs/2026-09-12-astryx-gameplay-layer-spec.md` §1.
+
+Decisions (record as ADR when the first slice starts):
+- **One physics, one unit.** 1 scene unit = 1 km and Newton gravity everywhere. The
+  arcade flight model (0.01 AU scale, `VISUAL_SCALE`, 550 cap, warp spool, drift damping,
+  `GRAVITY_ENABLED=false`) is removed, not kept "until we say otherwise". Supersedes
+  `docs/specs/2026-08-17-sol-speed-end-goal.md` "other systems stay arcade".
+- **Speed is time compression, never a fake engine.** In-system travel = Newton at real
+  speed with a faster clock. Compression must stay engaged during burns (the clock is not
+  the ship) so Earth→Sun is ~1 min and a departure is not a 17-minute burn. No caps, no
+  fake gravity, no fake air. Allowed compromises: infinite fuel, hull never breaks, heat is
+  visual only.
+- **Air terminal speed is derived, not chosen.** `AIR_TERMINAL_KMS` 50 km/s was a test
+  value during the build (player, 2026-09-28), not a design call. Derive the ballistic
+  coefficient from a plausible drag coefficient and hull area; expect ~0.3–1 km/s at sea
+  level rising with altitude. Hypersonic only where the air is thin.
+- **Star-to-star: drive first, teleport after.** No wormholes. The first visit to a system
+  is by the crafted interstellar drive (storyboard p.6, beat 8 payoff); after a first
+  visit the system unlocks for teleport (Genshin-style). Teleport never handles the first hop.
+- **Combat has a role or it is cut.** Storyboard p.4: optional, pulled by distress calls,
+  in atmosphere, pays in rare parts, never mandatory. Alien boss waves / capture-for-coins
+  leave the README. No bullet work until the combat envelope exists (co-moving enemies,
+  reduced thrust authority while engaged, bullets tuned in ratios: bolt speed / ship
+  delta-v, engagement radius / speed, seconds of flight).
+- **Vertical slice before breadth.** Beats 1–3 (minutes 0–15: Earth falls, launch, orbit,
+  return) get finished to a level a stranger can play, before any new system starts.
+
+| # | Item | Why it matters | Acceptance (in-game) | Size |
+|---|---|---|---|---|
+| S.1 | Landing is its OWN session (player, 2026-09-29: "not a toy"): a designed sequence — mark the pad, approach, position, touch down — with its own spec before any build. The 2026-09-29 contact pass (`tools/test_landing_cycle.tscn`, 8 defect classes, review found 2 float32 sub-ULP blockers in `SurfaceFacility.seat` and the pad hold) only makes the current mechanics correct; it is not the landing feature | beats 1–3 cannot be played if the first landing breaks | a stranger can mark LC-39A, fly the approach, position, and land, all seven hulls, without reading anything | L — spec first; contact pass in fix round |
+| S.2 | Earth sites as world content: more real launch pads (Baikonur, Wenchang, Jiuquan, Starbase, Tanegashima, Kourou), ruin districts (NASA HQ, SpaceX Hawthorne, CNSA), one orbital station on the LC-39A facility contract | it is what the player sees in minutes 0–15 | each site loads at its real coordinates, pad lock works, ruins read as ruins from 200 m | M |
+| S.3 | One physics: rip the arcade model, Newton + km everywhere; per-system ephemeris at real scale from HYG mass/luminosity + seed; re-tune every non-Sol constant (spawn radii, guard ranges, arrival positions) in km | foundation for travel, combat, and the kids/education version; the two-physics split is the root of the "soggy" feel | a non-Sol system flies exactly like Sol; no `VISUAL_SCALE`, no 550, no spool; `speed_zones`/arcade paths deleted | L — on a branch, after S.1/S.2 |
+| S.4 | Cruise autopilot under compression: "go to X" plans burn, coast, flip, brake; compression stays on during burns; HUD names the frame ("×840 compression", never "velocity") | the only thing that keeps Sol to 2 hours; Navigator today only draws markers | Earth→Moon in ~2 min real, Earth→Sun ~1 min, no dev engines; drop to 1× only at the exclusion zone | M |
+| S.5 | Derived drag constant; atmospheres on Mars and the giants through the recipe, not per-body branches | air combat and gas skimming happen at a few hundred m/s only if drag is honest | sea-level terminal ~0.3–1 km/s on Earth; hypersonic reachable above ~30 km; Mars/Jupiter air load reads on the HUD | S |
+| S.6 | Transition architecture: every regime change is one event with a 2-second feel spec (camera, sound, HUD) driven by `FlightMode.air_load` and body proximity — cloud entry/exit, skin entry, hypersonic onset, gas-giant descent, exclusion-zone DROP, compression engage/disengage. One system, one table, no per-case hacks | today each transition is a first pass with no design, which is why they all feel "soggy"; G.8 entry-heat is one row of this table | each transition has a written spec row and a render/audio capture; a dive from 100 km to sea level reads as a continuous change, not a set of switches | M |
+| S.7 | Planet doctor: `tools/planet_doctor` runs contract checks (every recipe cooks, `crust_height` == shader `sample_height` at sampled points, ring seams continuous, no NaN), perf probes (ring rebuild ms per body, close-map load ms, frame time along a fixed flight path at 20 km / 7 km / 200 m) and look checks (the 19 `TERRAIN_SHOTS` under xvfb diffed against golden PNGs with a perceptual threshold → "human should look") into one green/red table | "so we always know something broke, lags, or doesn't render well" (player); llvmpipe can't judge beauty, so reds hand PNG paths to a human | one command, one table; a deliberate height change turns a row red | M |
+| S.8 | Combat envelope (after S.3/S.4): co-moving enemy spawn, thrust authority cap while engaged, ratio-tuned bullets (~1.5 km/s, 3–4 km, ~2 s flight, exact crosshair = actual bolt kinematics incl. ship velocity), visible tracers with a min pixel size, hit feedback | only meaningful once one physics exists; the 2026-09-28 bullet brief is parked until then | a fight at 30 km/s orbital speed feels identical to one at rest; the lead marker is where the bolt lands | M |
+
+Order: S.1 → S.2 → S.3 (branch) → S.4 → S.5 → S.6 → S.7 alongside → S.8 last. Probes,
+inventory, mining, drive (beats 4–8) resume after S.4.
+
+Open decisions for the player, not yet written down anywhere: (a) support jets gear-down
+only (roadmap) vs terrain avoidance also gear-up (code + tests) — recommend updating this
+roadmap to the code; (b) whether a bare-ground touchdown is ever allowed or the 35 m
+gear-down hover stays the rule (current rule: locks only on pads).

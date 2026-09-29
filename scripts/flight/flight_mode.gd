@@ -17,18 +17,14 @@ const AIRLESS_EZ_KM := 10.0            # dump before the skin; vacuum has no 25%
 const AIR_TERMINAL_KMS := 50.0
 
 const SPEED_OF_SOUND_KMS := 0.34
-# Fraction of the [0,1] air_load curve FlightMode targets AT boosted sea-level
-# equilibrium (AIR_TERMINAL_KMS). Not fully saturated: a genuinely harder dive
-# above equilibrium (a designed high-thrust entry, DEV tools, etc.) should still
-# read as MORE load, so the curve needs headroom above the speed ordinary
-# controlled flight actually reaches. air_load_q_ref derives the curve's knee
-# (q_ref) from this instead of q_ref being a separately hand-picked magic number.
-# 2026-09-12: the old q_ref=5.0 was picked when boosted equilibrium topped out at
-# q~=0.02 at sea level (the pre-rescale ballistic, docs/ROADMAP.md L.3); under the
-# rescaled drag, equilibrium q is 176.4 (rho0 * AIR_TERMINAL_KMS^2), and the old
-# knee saturated air_load to 1.0 at every altitude reachable in ordinary flight —
-# see the HUD's Load readout, which pinned at 100% permanently.
+# Fraction of the [0,1] air_load curve reached at AIR_LOAD_REF_KMS at sea level. Not
+# fully saturated, so a harder dive (DEV thrust, FASTAIR) still reads as MORE load.
 const AIR_LOAD_TARGET_FRAC := 0.9
+# Sea-level speed where air_load reaches AIR_LOAD_TARGET_FRAC. Decoupled from
+# AIR_TERMINAL_KMS on 2026-09-29 (player decision): a 50 km/s knee put every
+# survivable dive (<= ~0.6 q under a 9 g brake) at load 0.0004, so HUD and air audio
+# never moved. At 1.5 km/s a hard, survivable re-entry reads ~0.3-0.4.
+const AIR_LOAD_REF_KMS := 1.5
 # Onset floor on dynamic pressure (kg/m^3 * km^2/s^2). Below this q, air_load is
 # HARD zero — not just numerically tiny. Without it, alt=90-100 km (where rho is
 # ~1e-5..1e-6 of sea level) still returns a nonzero-but-imperceptible air_load for
@@ -47,12 +43,11 @@ const AIR_LOAD_Q_FLOOR := 0.0013
 # is a second, independent curve (sky-opacity scale height, not drag's); mixing it
 # in here would let the glow and the deceleration disagree.
 # Solves air_load's own curve (1 - exp(-q/q_ref) == AIR_LOAD_TARGET_FRAC) for q_ref at
-# q = rho0 * AIR_TERMINAL_KMS^2 (dynamic pressure at boosted sea-level equilibrium), so
-# the curve's knee tracks AIR_TERMINAL_KMS instead of being a second hand-picked number.
+# q = rho0 * AIR_LOAD_REF_KMS^2. air_load feeds HUD and audio only; drag never reads it.
 # Takes rho0 as an arg (not Ephemeris.RHO0 directly), same autoload-free reason as
 # air_ballistic.
 static func air_load_q_ref(rho0: float) -> float:
-	var q := rho0 * AIR_TERMINAL_KMS * AIR_TERMINAL_KMS
+	var q := rho0 * AIR_LOAD_REF_KMS * AIR_LOAD_REF_KMS
 	return q / -log(1.0 - AIR_LOAD_TARGET_FRAC)
 
 

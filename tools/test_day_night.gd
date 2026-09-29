@@ -48,9 +48,10 @@ func _ready() -> void:
 	clock.cycle_minutes = 24.0
 	check("cycle duration is configurable without moving the phase", is_equal_approx(clock.rate*3,short_rate) and absf(angle_difference(start,CelestialRotation.earth_angle(clock.unix_s))) < .00001)
 	clock.cycle_minutes = -1.0
-	check("invalid duration falls back to eight minutes", clock.cycle_minutes == 8.0)
+	check("invalid duration falls back to a sidereal day", clock.cycle_minutes == CelestialRotation.DEFAULT_CYCLE_MINUTES and is_equal_approx(CelestialRotation.DEFAULT_CYCLE_MINUTES, CelestialRotation.EARTH_ROTATION_DAY/60.0))
 	clock.cycle_minutes = NAN
-	check("nonfinite duration falls back to eight minutes", clock.cycle_minutes == 8.0)
+	check("nonfinite duration falls back to a sidereal day", clock.cycle_minutes == CelestialRotation.DEFAULT_CYCLE_MINUTES)
+	check("project default is one sidereal day", is_equal_approx(CelestialRotation.new().cycle_minutes, CelestialRotation.EARTH_ROTATION_DAY/60.0))
 	clock.advance(6*3600)
 	var cfg := ConfigFile.new()
 	clock.save_into(cfg,utc+100)

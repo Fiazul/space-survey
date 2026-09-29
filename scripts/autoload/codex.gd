@@ -4,7 +4,7 @@ extends Node
 # user://codex.json so progress survives restarts. The Details panel reveals full
 # NASA data only once a body is discovered, giving exploration a payoff.
 
-const PATH := "user://codex.json"
+const FILE := "codex.json"
 
 var _found := {}      # body name -> true
 
@@ -55,9 +55,9 @@ func entries() -> Array:
 
 
 func _load() -> void:
-	if not FileAccess.file_exists(PATH):
+	if not FileAccess.file_exists(ProfileDir.path(FILE)):
 		return
-	var f := FileAccess.open(PATH, FileAccess.READ)
+	var f := FileAccess.open(ProfileDir.path(FILE), FileAccess.READ)
 	if f == null:
 		return
 	var data = JSON.parse_string(f.get_as_text())
@@ -65,6 +65,6 @@ func _load() -> void:
 		_found = data
 
 func _save() -> void:
-	var f := FileAccess.open(PATH, FileAccess.WRITE)
+	var f := FileAccess.open(ProfileDir.path(FILE), FileAccess.WRITE)
 	if f != null:
 		f.store_string(JSON.stringify(_found))

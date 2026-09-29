@@ -10,6 +10,7 @@ var last_frame_us := 0
 var hide := OS.get_environment("PROFILE_HIDE")
 
 func _ready() -> void:
+	ProfileDir.isolate("profile_world_flight")
 	mode = OS.get_environment("PROFILE_CASE") if OS.has_environment("PROFILE_CASE") else "forest"
 	main = preload("res://scripts/core/main.gd").new()
 	add_child(main)
@@ -26,7 +27,7 @@ func _ready() -> void:
 	main.ship.anchor_off = up * (sampler.ground_radius_km(dir, 6371.0) + altitude)
 	main.ship.velocity = up * 15.0 if mode == "exit" else up.cross(Vector3.UP).normalized() * 0.3
 	main.ship.terrain = sampler
-	main.ship.terrain_basis = main.planets.surface_basis("Earth")
+	main.ship.set_terrain_frame(main.planets.surface_basis("Earth"))
 	main.ship.nearest_name = "Earth"
 	main.ship.nearest_radius = 6371.0
 	main._prev_body = ""

@@ -8,7 +8,7 @@ extends CanvasLayer
 var planets: PlanetSystem
 var ship: Ship
 @onready var codex := Codex   # autoload; gate facts behind discovery
-var main: Node              # for the capture-reward Claim button
+var main: Node
 
 var _root: Control
 var _title: Label
@@ -129,28 +129,6 @@ func _populate(name: String, f: Dictionary) -> void:
 		blurb.add_theme_font_size_override("font_size", 20)
 		blurb.add_theme_color_override("font_color", Color(0.8, 0.9, 1.0))
 		_body.add_child(blurb)
-
-	# Capture reward: a one-time Claim button (the coins are NOT auto-given on capture).
-	if main != null and main.has_method("can_claim") and main.can_claim(name):
-		_body.add_child(HSeparator.new())
-		var claim := Button.new()
-		claim.text = "◈  CLAIM  %d coins" % MissionDB.reward(name)
-		claim.focus_mode = Control.FOCUS_NONE
-		claim.add_theme_font_size_override("font_size", 22)
-		claim.add_theme_color_override("font_color", Color(1.0, 0.9, 0.5))
-		claim.pressed.connect(_on_claim.bind(name, claim))
-		_body.add_child(claim)
-
-
-func _on_claim(name: String, btn: Button) -> void:
-	if main == null:
-		return
-	if main.audio != null:
-		main.audio.play_click()
-	var got: int = main.claim_reward(name)
-	if got > 0:
-		btn.text = "✓  CLAIMED  +%d coins" % got
-		btn.disabled = true
 
 
 func _row_if(f: Dictionary, key: String, label: String) -> void:

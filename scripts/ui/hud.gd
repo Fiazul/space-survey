@@ -34,14 +34,9 @@ signal open_teleport_map()   # clicked the dock's "TELEPORT NETWORK" button -> o
 var ship: Ship
 var planets: PlanetSystem
 var combat: Combat           # for HP / kills readout
-var coins := 0               # player currency, shown beside KILLS (set by main)
 @onready var codex := Codex   # autoload; discovery progress
 var origin_name := "Earth"   # what the distance readout measures from (per system)
 
-# Scan/discovery state, fed by main each frame.
-var scan_progress := 0.0     # 0..1 while scanning the nearest body
-var scan_name := ""          # which body is being scanned
-var scan_hint := ""          # "hold V to scan X" prompt when in range
 var toast := ""              # transient "✓ discovered" message
 var toast_t := 0.0
 
@@ -51,7 +46,7 @@ var _speed_label: Label
 var _tape_label: Label
 var _near_label: Label
 var _prompt: Label    # "Press F to dock" near the station
-var _menu: Label      # centered overlay text (wormhole-transit countdown)
+var _menu: Label      # centered overlay text (teleport / death)
 var _flash: ColorRect # full-screen colour flash (core damage / death kick); alpha eased down
 var _death: ColorRect # skin-kill overlay — must be obvious, not a silent hitch
 var _death_label: Label
@@ -72,7 +67,6 @@ var _hangar_color_key := ""
 var _color_picker: ColorPickerButton
 var _color_swatch_buttons: Array[Button] = []
 var _combat_label: Label
-var _boss_label: Label
 var _hull_label: Label       # "HULL  170 / 220" sitting over the hull bar
 var _hull_fill: ColorRect    # the coloured fill of the player hull bar (top-left)
 var _hull_bar_w := 0.0       # inner (fillable) width of the hull bar
@@ -80,20 +74,13 @@ var _energy_fill: ColorRect  # weapon-energy bar fill (shooting)
 var _energy_bar_w := 0.0
 var _boost_fill: ColorRect   # boost-energy bar fill (Shift)
 var _boost_bar_w := 0.0
-var _boss_bar: Control       # red boss HP bar (top-center, shown only while a boss lives)
-var _boss_fill: ColorRect
-var _boss_bar_w := 0.0
 var _reticle: Control   # dynamic crosshair (crosshair.gd)
 var _lock_ring: Control # radial progress arc drawn around the crosshair while holding X
 var _lock_frac := 0.0   # 0..1 hold progress (set by main from the X-hold timer)
-var _capture_ring: Control  # big centred radial that fills while capturing a body
-var _capture_label: Label   # "◎ CAPTURING …" centred under the ring
-var _guardian_label: Label  # guardian-fight banner: "WAVE 2/3 · capture locked/ready"
 var firing := false     # set by main each frame — fire-control activity tick
 var _hitmarker: Label   # flashes on the crosshair when a shot lands
 var _codex_label: Label # "Discovered N/M"
 var _objective_label: Label # "→ <star> <dist>" — the Survey guide line
-var _scan_label: Label  # scan prompt / progress (center-lower)
 var _toast_label: Label # "✓ X discovered" pop
 var _controls: PanelContainer   # the controls cheat-sheet menu (toggled by ?)
 var teleport_sites_button: Button
@@ -115,7 +102,7 @@ var _detail_range := 600.0    # show the Details button within this of a body (�
 # Each movable widget is tracked by a stable id; positions are saved to disk and
 # re-applied on launch. Edit mode (opened from Settings) lets you drag them.
 # Versioned layout: preserve the old file, never reinterpret its overlapping positions.
-const LAYOUT_PATH := "user://hud_layout_v3.cfg"
+const LAYOUT_FILE := "hud_layout_v3.cfg"
 # The shipped DEFAULT layout (the hand-tuned "best" arrangement). Used as each
 # widget's built-in position/scale, so fresh installs and Reset land here. A saved
 # user layout still overrides it.
@@ -197,9 +184,6 @@ func _ready() -> void:
 	var rx := 1000.0
 	var feed_font := 16 if _touch else 14
 	var feed_align := HORIZONTAL_ALIGNMENT_CENTER if _touch else HORIZONTAL_ALIGNMENT_LEFT
-	_scan_label = _make_label(Vector2(rx, 510), feed_font, C_GREEN)
-	_scan_label.size = Vector2(288, 22)
-	_scan_label.horizontal_alignment = feed_align
 	_toast_label = _make_label(Vector2(rx, 450), feed_font, C_GREEN)
 	_toast_label.size = Vector2(288, 60)
 	_toast_label.horizontal_alignment = feed_align
@@ -212,7 +196,7 @@ func _ready() -> void:
 	_prompt.horizontal_alignment = feed_align
 	_prompt.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 
-	# Centered overlay text — used for the wormhole-transit countdown.
+	# Centered overlay text — teleport ritual and death screen.
 	_menu = _make_label(Vector2(0, 210), 15, C_TEXT)
 	_menu.size = Vector2(1280, 300)
 	_menu.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -302,19 +286,6 @@ func _ready() -> void:
 	# top-right box keeps just the kill count. Draggable/resizable in the HUD editor.
 	_build_hull_bar(_canvas)
 
-	# Boss banner (top-center) — only shows while Vortex is alive — with a red HP bar.
-	_boss_label = _make_label(Vector2(0, 64), 13, C_WARN)
-	_boss_label.size = Vector2(1280, 24)
-	_boss_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_build_boss_bar(_canvas)
-
-	# Guardian fight banner (top-centre, under the boss bar): always-visible wave count +
-	# capture status during a guardian fight, so you can see "WAVE 2/3" and whether you can grab it.
-	_guardian_label = _make_label(Vector2(0, 102), 15, Color(1.0, 0.55, 0.4))
-	_guardian_label.size = Vector2(1280, 24)
-	_guardian_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_guardian_label.visible = false
-
 	# Fire-control pipper: actual shot path, target lead and confirmed hits.
 	_reticle = load("res://scripts/ui/crosshair.gd").new()
 	_reticle.size = Vector2(80, 80)
@@ -327,18 +298,6 @@ func _ready() -> void:
 	_lock_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_lock_ring.draw.connect(_draw_lock_ring)
 	_canvas.add_child(_lock_ring)
-
-	# Capture ring — a big, centred, semi-transparent radial that FILLS while you survey/capture
-	# a body, so the player sees and enjoys the progress. Driven from the scan block each frame.
-	_capture_ring = Control.new()
-	_capture_ring.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_capture_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_capture_ring.draw.connect(_draw_capture_ring)
-	_canvas.add_child(_capture_ring)
-	_capture_label = _make_label(Vector2(0, 446), 16, C_GREEN)
-	_capture_label.size = Vector2(1280, 24)
-	_capture_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_capture_label.visible = false
 
 	# Hitmarker — a bright ✕ that pops over the crosshair when a shot connects.
 	_hitmarker = _make_label(Vector2(0, 344), 23, Color(1, 1, 1, 0))
@@ -387,13 +346,12 @@ func _touch_layout() -> void:
 	for item in _movable:
 		_dock_movable(item, size, ins)
 	_dist_label.position = _base_pos(_dist_label) + Vector2(ins.left, ins.top)
-	for l in [_tip, _quest_label, _debug_label, _boss_label, _guardian_label]:
+	for l in [_tip, _quest_label, _debug_label]:
 		l.position = Vector2(0.0, _base_pos(l).y + ins.top)
 		l.size.x = size.x
-	for l in [_menu, _capture_label, _hitmarker]:
+	for l in [_menu, _hitmarker]:
 		l.position = Vector2(0.0, _base_pos(l).y + dy)
 		l.size.x = size.x
-	_boss_bar.position = Vector2(cx - _boss_bar.size.x * 0.5, _base_pos(_boss_bar).y + ins.top)
 	_lore.position = Vector2(cx - _lore.size.x * 0.5, _base_pos(_lore).y + ins.top)
 	tp_cancel_button.position = Vector2(cx - tp_cancel_button.size.x * 0.5, _base_pos(tp_cancel_button).y + dy)
 	_edit_banner.size.x = size.x
@@ -403,8 +361,6 @@ func _touch_layout() -> void:
 	var feed_x := cx - feed_w * 0.5
 	_toast_label.position = Vector2(feed_x, 132.0 + ins.top)
 	_toast_label.size = Vector2(feed_w, 60)
-	_scan_label.position = Vector2(feed_x, 196.0 + ins.top)
-	_scan_label.size = Vector2(feed_w, 22)
 	_prompt.position = Vector2(feed_x, 222.0 + ins.top)
 	_prompt.size = Vector2(feed_w, 44)
 
@@ -570,36 +526,7 @@ func _build_hull_bar(canvas: CanvasLayer) -> void:
 	_track("hull", holder)
 
 
-# Boss HP bar (top-center) — a wide red bar under the boss banner.
-func _build_boss_bar(canvas: CanvasLayer) -> void:
-	_boss_bar = Control.new()
-	_boss_bar.position = Vector2(640 - 170, 84)
-	_boss_bar.size = Vector2(340, 12)
-	_boss_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bar := _build_bar(340, 12, C_WARN)
-	_boss_bar.add_child(bar.root)
-	_boss_fill = bar.fill
-	_boss_bar_w = bar.inner_w
-	_boss_bar.visible = false
-	canvas.add_child(_boss_bar)
-
-
 # Styled top-right control bar: open the map / codex / controls / settings by click.
-# Tiny bold instruction line, bottom-centre — a quick reminder of the core verbs.
-func _build_guide(canvas: CanvasLayer) -> void:
-	var g := Label.new()
-	g.text = "W warp · Shift boost · grab ⚡ cells & ✦ probes to refuel · M map · G claim coins · L-click fire / R-click laser"
-	g.position = Vector2(0, SCREEN.y - 22)
-	g.size = Vector2(SCREEN.x, 18)
-	g.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	g.add_theme_font_size_override("font_size", 11)
-	g.add_theme_color_override("font_color", Color(0.78, 0.86, 1.0, 0.85))
-	g.add_theme_color_override("font_shadow_color", Color(0, 0, 0, 0.9))
-	g.add_theme_constant_override("shadow_offset_y", 1)
-	g.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	canvas.add_child(g)
-
-
 func _build_button_bar(canvas: CanvasLayer) -> void:
 	var systems_layer := CanvasLayer.new()
 	systems_layer.layer = 100
@@ -765,7 +692,7 @@ const HUD_SCALE_MAX := 1.4
 
 func _load_layout() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(LAYOUT_PATH) != OK:
+	if cfg.load(ProfileDir.path(LAYOUT_FILE)) != OK:
 		return
 	if cfg.has_section("layout"):
 		for id in cfg.get_section_keys("layout"):
@@ -781,7 +708,7 @@ func _save_layout() -> void:
 		cfg.set_value("scale", item.id, item.node.scale.x)
 		_saved[item.id] = item.node.position       # keep the cancel-baseline in sync
 		_saved_scale[item.id] = item.node.scale.x
-	cfg.save(LAYOUT_PATH)
+	cfg.save(ProfileDir.path(LAYOUT_FILE))
 
 func _reset_layout() -> void:
 	for item in _movable:
@@ -790,7 +717,7 @@ func _reset_layout() -> void:
 	_saved.clear()
 	_saved_scale.clear()
 	var cfg := ConfigFile.new()   # write an empty file so the reset persists
-	cfg.save(LAYOUT_PATH)
+	cfg.save(ProfileDir.path(LAYOUT_FILE))
 	if _touch:
 		_touch_layout()
 
@@ -1019,7 +946,6 @@ const CONTROLS := [
 	["Q / E", "Roll"],
 	["Spc/Ctrl", "Climb / dive"],
 	["Shift", "Boost"],
-	["W hold", "Spool warp (open space)"],
 	["Num Lk", "Auto-cruise toggle"],
 	["L-Click", "Fire weapons"],
 	["B", "Landing gear"],
@@ -1027,14 +953,12 @@ const CONTROLS := [
 	["T / RMB", "Free-look (hold)"],
 	["Tab", "Cycle target"],
 	["X hold", "Lock nav target"],
-	["W + C", "Drift-flip leap (escape)"],
 	["N", "Stop / resume nav"],
-	["V", "Scan / capture"],
 	["G", "Planet details"],
 	["L", "Codex log"],
 	["J", "Mission log"],
 	["M", "Star map"],
-	["F", "Dock / wormhole"],
+	["F", "Dock"],
 	["1–5", "Swap ship (docked)"],
 	["H", "Teleport home"],
 	["F11", "Fullscreen"],
@@ -1046,18 +970,16 @@ const CONTROLS := [
 const GUIDE := [
 	["TAB TARGETING",
 	 "Aim down the crosshair and press Tab to lock the object your aim ray passes nearest to. Tab steps through the up-to-4 closest (1st → 2nd → 3rd → 4th → loop); move the cursor to re-rank. Unscanned objects read \"Unknown\" until you scan them. Hold X for 1s to LOCK the target as an orange waypoint — it sticks through aim changes and further Tabs until you press ✖ Cancel Nav."],
-	["WORMHOLES",
-	 "Glowing rings are wormholes to neighbouring systems. Fly close and press F to dive through — a dark tunnel carries you across the light-years (longer hops take longer). Known lanes show on the map (M) and the corner radar; the network links every system within a few hops of home."],
 	["TELEPORT  (H)",
-	 "Press H anywhere for an emergency jump straight home to Earth: a light-ball wraps the ship, shrinks to a bead, and you arrive. It is the rare, theatrical exception — ordinary travel between stars is always flown through wormholes."],
+	 "Press H anywhere for an emergency jump straight home to Earth: a light-ball wraps the ship, shrinks to a bead, and you arrive."],
 	["PLATFORMS & STATIONS",
 	 "Every charted system has a dockable platform; Earth has the home station. Press F nearby to dock, then swap among the five ships (1–5) and open the TELEPORT NETWORK. From the network you can jump to any platform you have already reached and arrive right beside it. All platforms share the same ship roster and the same network."],
 	["LANDING & HARDPOINTS",
 	 "After five seconds without flight input, the ship assistant slowly levels the hull with the planet; steering, thrust, Q/E, and touch input stop it. Terrain protection stays automatic. Press B to lower the landing gear. Approach a designated pad slowly; Ctrl descends and Space lifts. PAD LOCKED requires supported feet on the pad. Ordinary ground never grants a pad lock. Lift off before retracting the gear. Inside atmosphere, R deploys or stows the weapon mounts; holding fire also deploys them. Firing waits for full deployment. Gear down or leaving atmosphere locks weapons; atmosphere exit automatically stows them. On touch screens use GEAR and ARMS; UP/DOWN provides vertical thrust with gear down."],
-	["WARP & FLIGHT",
-	 "WASD thrusts, Shift boosts (drains the boost bar), Q/E roll, Space/Ctrl climb and dive. Hold W in open space to spool the warp drive and cross light-years; near stars and planets you are held to sublight. Num Lock toggles hands-free auto-cruise. Hold W and tap C for a drift-flip LEAP — a quick boost with a slow, wide cinematic barrel roll (A/D picks the side). The leap punches through a star/planet slow-zone, so it's how you break free when gravity is holding you in."],
+	["FLIGHT",
+	 "WASD thrusts, Shift boosts (drains the boost bar), Q/E roll, Space/Ctrl climb and dive. Num Lock toggles hands-free auto-cruise."],
 	["COMBAT & DISCOVERY",
-	 "Hold left-click inside atmosphere to fire short plasma pulses from deployed weapons. Shots take time to travel and stop on terrain and buildings. Press V near a body to scan/capture it — that fills the Codex (L), the details panel (G), and completes its survey mission. A guarded body's boss is SHIELDED until you clear its summoned swarm — kill the minions first, then burn the boss down to capture the body."],
+	 "Hold left-click inside atmosphere to fire short plasma pulses from deployed weapons. Shots take time to travel and stop on terrain and buildings. Flying close to a body surveys it automatically — that fills the Codex (L), the details panel (G), and completes its survey mission."],
 ]
 
 func _build_controls_menu(canvas: CanvasLayer) -> void:
@@ -1116,7 +1038,7 @@ func _build_controls_menu(canvas: CanvasLayer) -> void:
 		desc.custom_minimum_size = Vector2(150, 0)
 		grid.add_child(desc)
 
-	# System explainers: how targeting / wormholes / teleport / platforms / combat work.
+	# System explainers: how targeting / teleport / platforms / combat work.
 	for sec in GUIDE:
 		var sh := _new_label(13, C_ACCENT)
 		sh.text = "◈  " + sec[0]
@@ -1144,16 +1066,6 @@ func _build_controls_menu(canvas: CanvasLayer) -> void:
 func toggle_controls() -> void:
 	_controls.visible = not _controls.visible
 
-
-# Guardian-fight banner: pass the wave/capture text and whether the body is capturable now.
-# Empty text hides it. Green when capture is ready, hot-amber while the waves are locking it.
-func set_guardian(text: String, ready := false) -> void:
-	if _guardian_label == null:
-		return
-	_guardian_label.visible = text != ""
-	_guardian_label.text = text
-	_guardian_label.add_theme_color_override("font_color",
-		Color(0.5, 1.0, 0.65) if ready else Color(1.0, 0.55, 0.4))
 
 # A little dark "keycap" chip with a glowing edge — the key you press.
 func _keycap(text: String) -> PanelContainer:
@@ -1715,29 +1627,6 @@ func _draw_lock_ring() -> void:
 		_lock_ring.draw_arc(c, r, 0.0, TAU, 48, Color(1.0, 0.85, 0.4, 1.0), 5.0, true)
 
 
-# Big centred capture ring: a soft semi-transparent disc with a filling arc + breathing glow,
-# so surveying a world feels like a ritual you can watch. Driven by scan_progress each frame.
-func _draw_capture_ring() -> void:
-	if scan_progress <= 0.0 or scan_name == "":
-		return
-	var c := get_viewport().get_visible_rect().size * 0.5 if _touch else Vector2(640.0, 360.0)
-	var f := clampf(scan_progress, 0.0, 1.0)
-	var r := 84.0
-	var t := Time.get_ticks_msec() * 0.001
-	var pulse := 0.5 + 0.5 * sin(t * 4.0)
-	# Soft translucent disc — the "circle" the player sees fill with light.
-	_capture_ring.draw_circle(c, r, Color(0.20, 1.0, 0.75, 0.06 + 0.05 * pulse))
-	_capture_ring.draw_circle(c, r * f, Color(0.30, 1.0, 0.80, 0.10 + 0.06 * pulse))   # inner fill grows
-	# Faint full track, then the bright filling arc from the top (clockwise).
-	_capture_ring.draw_arc(c, r, 0.0, TAU, 72, Color(0.5, 1.0, 0.8, 0.22), 3.0, true)
-	_capture_ring.draw_arc(c, r, -PI * 0.5, -PI * 0.5 + TAU * f, 72, Color(0.6, 1.0, 0.85, 0.95), 5.0, true)
-	# Spinning lead dot riding the arc tip, and a complete-flash when full.
-	var tip := c + Vector2(cos(-PI * 0.5 + TAU * f), sin(-PI * 0.5 + TAU * f)) * r
-	_capture_ring.draw_circle(tip, 4.0 + 2.0 * pulse, Color(0.85, 1.0, 0.92, 0.9))
-	if f >= 1.0:
-		_capture_ring.draw_arc(c, r, 0.0, TAU, 72, Color(0.9, 1.0, 0.95, 1.0), 7.0, true)
-
-
 # Punch the screen with a colour flash (0..1). The core uses a steady low value for the
 # damage-zone pulse and a hard 1.0 for the death kick; it eases back down on its own.
 func flash(amount: float, col: Color = Color(1.0, 0.12, 0.10)) -> void:
@@ -1750,9 +1639,7 @@ func refresh() -> void:
 	# Ease the core flash back toward zero (set fresh each frame by main while in the danger zone).
 	_flash_a = maxf(_flash_a - 2.0 * get_process_delta_time(), 0.0)
 	_flash.color.a = _flash_a * 0.55
-	# Hide the crosshair when Vela is hypersonic — combat is disabled then.
-	var hyper := ship.is_hypersonic()
-	var weapons_visible := not hyper and not ship.frozen and not ship.transiting and ship.systems != null \
+	var weapons_visible := not ship.frozen and not ship.transiting and ship.systems != null \
 		and (ship.systems.weapons_target or ship.systems.weapons_fraction > .01)
 	_reticle.visible = weapons_visible
 	_hitmarker.visible = false # hit confirmation is drawn by fire control itself
@@ -1767,7 +1654,7 @@ func refresh() -> void:
 	_flight_vector.queue_redraw()
 	_dist_label.text = "%s  /  %s" % ["SOL" if ship.newton else origin_name.to_upper(), ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
 	var spd := ship.velocity.length()
-	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED" if ship.newton else "LOCAL FLIGHT"
+	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED" if ship.newton else ""
 	_speed_label.text = _fmt_speed(spd)
 	_tape_label.visible = true
 	if ship.newton:
@@ -1787,6 +1674,8 @@ func refresh() -> void:
 				_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
 		elif agl < 100.0:
 			_tape_label.text = "AGL  %s   /   V/S  %s%s\nGRAVITY  %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
+			if ship.mach_number > .05:
+				_tape_label.text += "\nMACH  %.1f   /   AIR LOAD  %s" % [ship.mach_number, _fmt_percent(ship.air_load)]
 		else:
 			_tape_label.text = "ALT  %s\nRADIAL  %s%s   /   %.2f g" % [altitude, "+" if vertical >= 0.0 else "−", _fmt_speed(absf(vertical)), g]
 		if ship.drop_flash > 0.0:
@@ -1798,12 +1687,7 @@ func refresh() -> void:
 			toast_t = 2.2
 			ship.debug_toast = ""
 	else:
-		_tape_label.text = "THRUST / COAST\n[M] Navigation chart"
-		if ship.galactic_cruising():
-			_mode_label.text = "GALACTIC TRANSIT / TRAVEL RATE"
-			_speed_label.text = "%.1f ly/s" % absf(ship.galactic_loom_rate())
-		elif ship.warp_ready():
-			_mode_label.text = "SUPERCRUISE READY"
+		_tape_label.text = ""
 	if ship.systems != null:
 		if not ship.landing_site.is_empty():
 			_mode_label.text = "%s / PAD LOCKED · %s LIFT" % [ship.landing_site, "UP" if ship.touch_active else "SPACE"]
@@ -1811,14 +1695,16 @@ func refresh() -> void:
 			_mode_label.text = "GEAR DOWN" if ship.systems.gear_fraction >= .999 else ("GEAR LOWERING" if ship.systems.gear_target else "GEAR RETRACTING")
 			if ship.support_active:
 				_mode_label.text += " / SHIP ASSISTANT"
+			var lift_g := ship.jet_accel.dot(ship.anchor_off.normalized())/0.00980665
+			if absf(lift_g) > .01:
+				_tape_label.text += "\nLIFT JETS  %+.2f g" % lift_g
 			if ship.newton and ship.terrain != null and ship.anchor_name == ship.nearest_name:
-				var body_inverse := ship.terrain_basis.inverse()
+				var body_position := ship.terrain_local(ship.anchor_off, true)
 				for site in ship.terrain.facilities:
-					var inverse: Transform3D = site.transform.affine_inverse()
-					var center: Vector3 = inverse*(body_inverse*ship.anchor_off)
+					var center := SurfaceFacility.to_site(site, body_position)
 					if center.length() > .6: continue
 					var clearance := center.y
-					var pose: Basis = inverse.basis*body_inverse*ship.transform.basis
+					var pose: Basis = site.transform.basis.inverse()*ship.terrain_basis.inverse()*ship.transform.basis
 					for foot in ship.systems.foot_points():
 						clearance = minf(clearance,(center+pose*foot).y)
 					_tape_label.text += "\nPAD 01  %.0f m CLEAR / %.0f m OFFSET" % [maxf(0,clearance*1000),Vector2(center.x,center.z).length()*1000]
@@ -1833,11 +1719,11 @@ func refresh() -> void:
 		var stellar: Dictionary = planets.stellar_hazard
 		if int(stellar.level) > 0:
 			_tape_label.text += "\n%s  /  %.0f kW/m²" % [stellar.state, float(stellar.flux_w_m2)/1000.0]
-	_combat_panel.visible = _edit or ship.combat_lock or firing
+	_combat_panel.visible = _edit or firing
 
 	if combat != null:
 		# Top-right box keeps just the kill count; the hull bar (top-left) is the HP gauge.
-		_combat_label.text = "KILLS  %d      ◈ %d" % [combat.kills, coins]
+		_combat_label.text = "KILLS  %d" % combat.kills
 		var hp_ratio: float = clampf(float(combat.player_hp) / maxf(float(combat.player_max), 1.0), 0.0, 1.0)
 		_hull_label.text = "HULL  %d%%    /    PWR · BOOST" % int(100.0 * hp_ratio)
 		_hull_fill.size.x = _hull_bar_w * hp_ratio
@@ -1855,32 +1741,10 @@ func refresh() -> void:
 		# Hitmarker flash (alpha tracks the combat hit timer).
 		var hm: float = clampf(combat.hitmarker / 0.18, 0.0, 1.0)
 		_hitmarker.modulate = Color(1.0, 0.95, 0.55, hm)
-		var bs: Dictionary = combat.target_state()
-		_boss_bar.visible = bs.alive
-		if bs.alive:
-			var br: float = clampf(float(bs.hp) / maxf(float(bs.max), 1.0), 0.0, 1.0)
-			if bs.get("shielded", false):
-				_boss_label.text = "◼  %s   ⛨ SHIELDED · clear the swarm" % String(bs.get("name", "VORTEX")).to_upper()
-			else:
-				_boss_label.text = "◼  %s   %d%%" % [String(bs.get("name", "VORTEX")).to_upper(), int(round(100.0 * br))]
-			_boss_fill.size.x = _boss_bar_w * br
-		else:
-			_boss_label.text = ""
 
-	# Discovery progress + scan prompt / progress + toast.
+	# Discovery progress + toast.
 	if codex != null:
 		_codex_label.text = "SURVEY   %d / %d" % [codex.count(), codex.total()]
-	if scan_progress > 0.0 and scan_name != "":
-		_scan_label.text = "Capturing  %s …  %d%%" % [scan_name, int(scan_progress * 100.0)]
-		_capture_label.text = "◎  CAPTURING  %s   %d%%" % [scan_name, int(scan_progress * 100.0)]
-		_capture_label.visible = true
-		_capture_label.modulate = Color(0.6, 1.0, 0.82, 0.85)
-		_capture_ring.queue_redraw()          # animate the ring each frame while capturing
-	else:
-		_scan_label.text = scan_hint
-		if _capture_label.visible:
-			_capture_label.visible = false
-			_capture_ring.queue_redraw()      # clear the ring once capture ends
 	if toast_t > 0.0:
 		_toast_label.text = toast
 		_toast_label.modulate = Color(0.5, 1.0, 0.7, clampf(toast_t, 0.0, 1.0))
@@ -1964,3 +1828,11 @@ func _add_line(body: VBoxContainer, font_size: int, color: Color) -> Label:
 	var label := _new_label(font_size, color)
 	body.add_child(label)
 	return label
+
+
+# One decimal from 1% up; below that one significant figure, so a real load never reads 0.0%.
+static func _fmt_percent(fraction: float) -> String:
+	var pct := fraction*100.0
+	if pct <= 0.0: return "0%"
+	if pct >= 1.0: return "%.1f%%" % pct
+	return ("%." + str(clampi(ceili(-log(pct)/log(10.0)), 1, 9)) + "f%%") % pct

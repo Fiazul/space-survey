@@ -96,7 +96,7 @@ These are tuned to numbers I derived, not to a look. Each has a named lever.
 |---|---|---|
 | **Haze distance.** Does the far ground dissolve like kilometres of air, or like a grey fog a few hundred metres out? | too much / too little depth | `PlanetGenerator.HAZE_KM` (70.0). Higher = clearer. Measured: 95% at ring 3's 205 km rim, 25% at 20 km, 3% at 2 km (historical — rings are horizon-following now; `tools/test_terrain_light.gd` currently reports 100% at ring 3's 1311 km rim, 25% at 20 km, 3% at 2 km) |
 | **Terminator curve.** Do ridges read, or does the lit/dark transition crush them into flat black and flat white? | ridges vanish near the terminator | `TERMINATOR_LO` / `TERMINATOR_HI` (−0.04, 0.28). Widen the gap for a softer roll-off. **Changing these changes the globe too — that sharing is deliberate** |
-| **Air shell.** Is it a sky, or a blue wash over everything? | reads as a filter, not air | `air_shell_opacity()`'s `pow(depth, 1.5)`. Measured 0.78 at 15 km, 0.09 at 80 km |
+| **Air shell.** Is it a sky, or a blue wash over everything? | reads as a filter, not air | `air_shell_opacity()`'s `pow(depth, 1.5)`. Measured 0.78 at 15 km, 0.09 at 80 km. Alpha-blended since 2026-09-29 (`veil` in `air_shell.gdshader`): noon sea-level sky hides the stars, thin air at ~80 km lets them through |
 
 Also worth a glance: **the night side.** `NIGHT_FILL` is 0.06, so the dark
 hemisphere is 6% lit rather than pure black — pure black loses the horizon and

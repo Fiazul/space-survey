@@ -66,6 +66,9 @@ func _ready() -> void:
 	var smat := ShaderMaterial.new()
 	smat.shader = sh
 	smat.set_shader_parameter("star_gain", STAR_GAIN)
+	# First of the transparent pass: the alpha-blended air shell sits at the same
+	# sort depth (both centred on the origin) and must draw over the stars.
+	smat.render_priority = Material.RENDER_PRIORITY_MIN
 	material_override = smat
 	# Baked on a 6000-unit shell; sit behind planet/sun impostors so they occlude.
 	var baked_r := 6000.0

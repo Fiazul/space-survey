@@ -5,11 +5,13 @@ shader_type spatial;
 // From 15 km up there was nothing at all: black space and stars, which left the
 // terrain's haze with nothing to fade into. This is that something.
 //
-// An inward-facing sphere centred on the ship. `blend_add` over the starfield on
-// purpose, so stars stay faintly visible through a thin sky the way they do in
-// the reference frame; `depth_draw_never` with depth TEST still on, so terrain
-// and the planet's own globe occlude it and it only paints where sky is visible.
-render_mode unshaded, blend_add, depth_draw_never, cull_front, shadows_disabled, fog_disabled;
+// An inward-facing sphere centred on the ship, alpha-blended over the starfield:
+// a sunlit sky outshines the stars, so dense air hides them and only thin/high
+// air (or the night side) lets them through, the way the reference frame shows
+// them. It was `blend_add` until 2026-09-29, which kept stars in the noon sky.
+// `depth_draw_never` with depth TEST still on, so terrain and the planet's own
+// globe occlude it and it only paints where sky is visible.
+render_mode unshaded, blend_mix, depth_draw_never, cull_front, shadows_disabled, fog_disabled;
 
 // How much sky there is. PlanetGenerator.air_shell_opacity(): depth^1.5 x
 // air_amount, so 0.78 at 15 km of Earth's 100 km column and 0.09 at 80 km —
@@ -30,6 +32,9 @@ uniform float term_hi = 0.28;
 // far longer slant of it, which is why a horizon band exists at all and why
 // looking OUT past the limb from altitude has to go dark rather than stay blue.
 uniform float zenith_floor = 0.12;
+// How fast sky light swamps starlight: coverage = 1 - exp(-veil * light). 25 puts
+// the sea-level zenith (light 0.12) at 95% cover and the 80 km zenith (0.011) at 24%.
+uniform float veil = 25.0;
 
 varying vec3 v_dir;
 
@@ -75,6 +80,10 @@ void fragment() {
 	// paint under it when the ground is missing.
 	float below = smoothstep(-0.12, 0.02, up);
 
-	ALBEDO = col * opacity * airmass * sunlit * below * on;
-	ALPHA = 1.0;
+	// Same sky light the additive shell painted; coverage saturates with it, and the
+	// colour is unpremultiplied so coverage x colour still equals that light.
+	float light = opacity * airmass * sunlit * below * on;
+	float cover = 1.0 - exp(-veil * light);
+	ALBEDO = col * (light / max(cover, 1e-4));
+	ALPHA = cover;
 }

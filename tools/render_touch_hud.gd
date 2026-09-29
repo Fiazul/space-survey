@@ -29,6 +29,7 @@ var _menu_requested := false
 
 
 func _ready() -> void:
+	ProfileDir.isolate("render_touch_hud")
 	process_mode = Node.PROCESS_MODE_ALWAYS
 	if OS.has_environment("SHOT_W") and OS.has_environment("SHOT_H"):
 		var width := int(OS.get_environment("SHOT_W"))
@@ -61,9 +62,8 @@ func _process(_dt: float) -> void:
 		get_node("Main")._set_docked(true)
 	var frames := int(OS.get_environment("SHOT_FRAMES")) if OS.has_environment("SHOT_FRAMES") else OUT_WAIT
 	if _wait == frames - 5 and OS.get_environment("SHOT_TOAST") == "1":
-		get_node("Main").hud.toast = "✓ Moon discovered · +50 coins · survey 3 / 40"
+		get_node("Main").hud.toast = "Codex  ·  Moon surveyed"
 		get_node("Main").hud.toast_t = 3.0
-		get_node("Main").hud.scan_hint = "Hold CAP to capture Moon"
 	if _wait < frames:
 		return
 	_saved = true

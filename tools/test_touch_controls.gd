@@ -26,7 +26,7 @@ func _initialize() -> void:
 	failed += _check("flight_has_only_fire_thrust_menu", TC.visible_flight_buttons() == PackedStringArray(["FIRE", "THRUST", "MENU"]))
 	failed += _check("menu_toggles_open", TC.toggled_menu(false) and not TC.toggled_menu(true))
 	var menu_actions := TC.menu_action_names()
-	for action in ["HOME", "MAP", "ARMS", "INTERACT", "GEAR", "CAP", "BOOST", "UP", "DOWN", "ZOOM−", "ZOOM+", "TELEPORT", "SYSTEMS", "DEV"]:
+	for action in ["HOME", "MAP", "ARMS", "INTERACT", "GEAR", "BOOST", "UP", "DOWN", "ZOOM−", "ZOOM+", "TELEPORT", "SYSTEMS", "DEV"]:
 		failed += _check("menu_contains_%s" % action, menu_actions.has(action))
 
 	var dead := TC.stick_to_cmd(Vector2(0.1, 0.1))

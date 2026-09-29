@@ -138,19 +138,18 @@ func go(site: Dictionary) -> void:
 	match mode:
 		"station":
 			if station.is_empty(): return
-			ship.anchor_off = station.position+station.position.normalized()*.4
+			ship.relocate(station.position+station.position.normalized()*.4)
 		"geo":
-			ship.anchor_off = Ephemeris.geo_start_pos()
+			ship.relocate(Ephemeris.geo_start_pos())
 		"park":
-			ship.anchor_off = Ephemeris.sweet_spot_off(body)
+			ship.relocate(Ephemeris.sweet_spot_off(body))
 		_:
 			var dir := DS.dir_for(float(site.lat_deg), float(site.lon_deg))
 			var radius := Ephemeris.body_radius_km(body)
 			var sampler: TerrainSampler = main.planets.terrain_sampler_for(body) \
 				if main.planets != null else null
 			var ground_r := sampler.ground_radius_km(dir, radius) if sampler != null else radius
-			ship.anchor_off = body_basis * DS.surface_anchor_off(dir, ground_r, float(site.alt_km))
-	ship.surface_position_revision += 1
+			ship.relocate(body_basis * DS.surface_anchor_off(dir, ground_r, float(site.alt_km)))
 	ship.velocity = station.velocity if mode == "station" else Vector3.ZERO
 	ship.reset_mesh_pose()
 	if mode == "station":
@@ -180,7 +179,7 @@ func go(site: Dictionary) -> void:
 		ship.nearest_radius = planets.nearest_radius
 		ship.nearest_dir = planets.nearest_dir
 		ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
-		ship.terrain_basis = planets.surface_basis(planets.nearest_name)
+		ship.set_terrain_frame(planets.surface_basis(planets.nearest_name), planets.surface_angle(planets.nearest_name))
 		ship.speed_limit = planets.speed_limit
 		ship.gravity = planets.gravity
 		ship.last_newton_g = ship._newton_g()

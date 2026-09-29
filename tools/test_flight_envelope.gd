@@ -68,13 +68,13 @@ func _initialize() -> void:
 		var load_boost: float = FM.air_load(alt, spd_boost, EARTH_ATMO_TOP_KM)
 		print("flight_envelope: alt %5.1f km  cruise %8.4f km/s (load %.4f)  boost %8.4f km/s (load %.4f)"
 			% [alt, spd_cruise, load_cruise, spd_boost, load_boost])
-		# rho*v^2 at equilibrium is a constant set only by thrust_acc/(500*ballistic) -
-		# independent of altitude - so air_load at boosted equilibrium is the SAME at
-		# every altitude, and by construction (FlightMode.air_load_q_ref) it lands at
-		# FlightMode.AIR_LOAD_TARGET_FRAC, not saturated to 1.0 - unlike the
-		# pre-2026-09-12 unreachable regime this file used to assert against.
-		failed += _check("air_load_boost_near_target_frac_at_%.0fkm" % alt,
-			absf(load_boost - FM.AIR_LOAD_TARGET_FRAC) < 0.01)
+		# rho*v^2 at equilibrium is fixed by thrust_acc/(500*ballistic), independent of
+		# altitude, so equilibrium load is the same everywhere. Since 2026-09-29 the load
+		# knee (AIR_LOAD_REF_KMS) sits far below drag's 50 km/s terminal, so a sustained
+		# boosted equilibrium — reachable only with DEV thrust in practice — reads past
+		# the target, and cruise equilibrium never reads above boost.
+		failed += _check("air_load_boost_past_target_frac_at_%.0fkm" % alt,
+			load_boost > FM.AIR_LOAD_TARGET_FRAC and load_boost <= 1.0 and load_cruise <= load_boost)
 
 	# Sea-level boosted equilibrium speed must match FlightMode.AIR_TERMINAL_KMS
 	# within 1% - the whole point of the 2026-09-12 rescale (docs/ROADMAP.md L.3).

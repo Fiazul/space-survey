@@ -477,6 +477,9 @@ func body_radius_km(body_name: String) -> float:
 func surface_basis(body_name: String) -> Basis:
 	return _ROT.basis_at(body_name, spin_rad_s(body_name), rotation_clock.unix_s)
 
+func surface_angle(body_name: String) -> float:
+	return _ROT.angle_at(body_name, spin_rad_s(body_name), rotation_clock.unix_s)
+
 func solar_state(body_name: String, local_direction: Vector3) -> Dictionary:
 	var sun := surface_basis(body_name).inverse()*rel_km("Sun",body_name).normalized()
 	var longitude := atan2(local_direction.z,local_direction.x)

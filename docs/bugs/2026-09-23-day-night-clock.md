@@ -13,7 +13,7 @@ in-game pause stops it. Earth uses the [USNO GMST approximation](https://aa.usno
 with UTC approximating UT1. Eastward rotation is negative about scene Y because
 ICRS `(x,y,z)` maps to scene `(x,z,y)`.
 
-The configurable `world/day_night/cycle_minutes` defaults to **8 minutes** for one
+The configurable `world/day_night/cycle_minutes` defaulted to **8 minutes** (1436.07 min = one sidereal day, since 2026-09-29: above the air an 8-minute day swept LC-39A away at ~73 km/s) for one
 complete Earth day/night cycle at 1×. It scales only the rotation clock and its
 surface-frame transport, not gravity/thrust integration, weapon timing or engine
 time scale. The reference duration uses a full sidereal rotation against the

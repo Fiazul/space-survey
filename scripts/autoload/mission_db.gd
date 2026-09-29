@@ -2,9 +2,9 @@ class_name MissionDB
 extends RefCounted
 # The MISSION / QUEST log. Every body you can fly to and survey — every star, planet, and
 # moon in SystemDB.bodies() — is its own mission. The objective is always the same simple
-# loop the game already has: fly to the body's system, aim at it, hold V to survey it
-# (codex.discover) → mission COMPLETE → claim the bounty (G). This file is just the STORY
-# and BOUNTY layer over that: a title + a (crude, savage, mostly-true) blurb + a coin reward,
+# loop the game already has: fly close to the body and it is surveyed automatically
+# (codex.discover) → mission COMPLETE. This file is just the STORY layer over that: a title +
+# a (crude, savage, mostly-true) blurb (+ a legacy coin value no UI shows any more),
 # keyed by the EXACT body name SystemDB/codex use.
 #
 # Tone: the Survey's mission board is written by a bitter, foul-mouthed dispatcher who hates
@@ -347,5 +347,5 @@ static func _generated(body: String) -> Dictionary:
 			"story": "A %s star %.1f light-years out with no fame, no planets worth a headline, and\nno reason to exist except to be a dot on the Survey's map. Go put it on the\nbooks anyway. The dispatcher doesn't care; the dispatcher just wants it logged." % [sp, ly],
 			"reward": 220 }
 	return { "title": "Survey %s" % body,
-		"story": "Just another rock the Survey wants on file. No legend, no headline, no excuse —\nfly out, point your scanner, and tag it. Coins are coins, pilot.",
+		"story": "Just another rock the Survey wants on file. No legend, no headline, no excuse —\nfly out, point your scanner, and tag it.",
 		"reward": DEFAULT_REWARD }

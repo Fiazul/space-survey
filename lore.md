@@ -72,12 +72,6 @@ the good pilots learn its rhythms:
   and keeps an arrow on it; follow the arrow and the distance counts down. Cycle it to
   aim elsewhere whenever you like.
 
-- **Warp / FTL** — the long-haul gift. Every Survey hull can spool its authored drive
-  toward light-year cruise and then back down. While she's screaming across the void,
-  the guns go quiet — there's no fighting at that speed, only arriving. As you fall
-  toward your mark she eases *out* of warp on her own, so you arrive instead of blowing
-  straight past into the dark.
-
 - **Free-look** — take your eye off the road. Hold the look and the view drifts off
   the tail to drink in the sky; let go and it snaps back behind her where it belongs.
 

@@ -69,27 +69,42 @@ static func occupied(sites: Array, dir: Vector3, radius: float) -> bool:
 			return true
 	return false
 
+# Site-local coordinates of a body-frame point. Subtract the site origin first:
+# both are ~6371 km float32 vectors, so the difference is exact, while
+# affine_inverse()*point adds two rounded Earth-radius terms (a 0.5 m error).
+static func to_site(site: Dictionary, point: Vector3) -> Vector3:
+	var xf: Transform3D = site.transform
+	return xf.basis.inverse()*(point-xf.origin)
+
 static func pad_at(sites: Array, center: Vector3, pose: Basis, feet: PackedVector3Array) -> Dictionary:
 	var site := approach_at(sites,center,pose,feet)
 	if site.is_empty(): return {}
-	var inv: Transform3D = site.transform.affine_inverse()
 	for foot in feet:
-		var point := inv*(center+pose*foot)
+		var point := to_site(site, center+pose*foot)
 		if point.y < -.002 or point.y > .0025: return {}
 	return site
+
+# Contact may be confirmed across a small support gap; the berth holds the feet
+# on the deck instead. Returns the body-frame move: it is sub-metre, so callers
+# apply it as a displacement, never by rebuilding an Earth-radius position.
+static func seat_offset(site: Dictionary, center: Vector3, pose: Basis, feet: PackedVector3Array, skin: float) -> Vector3:
+	var xf: Transform3D = site.transform
+	var lowest := INF
+	for foot in feet:
+		lowest = minf(lowest, to_site(site, center+pose*foot).y)
+	return Vector3.ZERO if lowest == INF else xf.basis.y.normalized()*(skin-lowest)
 
 # This checks lateral fit and level attitude only. Assistance can allow a
 # controlled descent here, but this is never evidence of actual touchdown.
 static func approach_at(sites: Array, center: Vector3, pose: Basis, feet: PackedVector3Array) -> Dictionary:
 	if feet.is_empty(): return {}
 	for site in sites:
-		var inv: Transform3D = site.transform.affine_inverse()
-		var p := inv*center
+		var p := to_site(site, center)
 		if absf(p.x) > .2 or absf(p.z) > .2 or p.y < 0 or p.y > .5: continue
-		if (inv.basis*pose).y.dot(Vector3.UP) < .97: continue
+		if (site.transform.basis.inverse()*pose).y.dot(Vector3.UP) < .97: continue
 		var fits := true
 		for foot in feet:
-			var point := inv*(center+pose*foot)
+			var point := to_site(site, center+pose*foot)
 			if absf(point.x) > .125 or absf(point.z) > .125:
 				fits = false
 		if fits: return site
@@ -101,10 +116,9 @@ static func collide(sites: Array, from: Vector3, to: Vector3, velocity: Vector3,
 	var first := 2.0
 	for site in sites:
 		var xf: Transform3D = site.transform
-		var inv := xf.affine_inverse()
-		var a := inv*from
-		var b := inv*to
-		var basis := inv.basis*hull_basis
+		var a := to_site(site, from)
+		var b := to_site(site, to)
+		var basis := xf.basis.inverse()*hull_basis
 		var padding := Vector3.ONE*skin + basis.x.abs()*half.x + basis.y.abs()*half.y + basis.z.abs()*half.z
 		var broad := AABB(Vector3(-.8,-.1,-.8)-padding,Vector3(1.6,.3,1.6)+padding*2)
 		if SurfaceSettlement.box_contact(a,b,broad).is_empty(): continue

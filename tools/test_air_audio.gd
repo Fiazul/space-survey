@@ -75,6 +75,14 @@ func _initialize() -> void:
 	check("wind_at_light_cruise_is_quiet", GA.wind_db_for(GA.AIR_WIND_ONSET_LOAD) <= -36.0)
 	check("wind_at_real_boost_is_at_or_under_dive_cap",
 		GA.wind_db_for(GA.AIR_WIND_FULL_LOAD) <= GA.AIR_WIND_MAX_DB + 0.001)
+	# The hardest dive a 9 g brake survives (v^2 = 2*8g*h at 8 km) must be clearly
+	# heard: the playable-minute re-entry lives here, not at DEV equilibrium.
+	var FM := preload("res://scripts/flight/flight_mode.gd")
+	var dive_v := sqrt(2.0*8.0*0.00980665*8.0)
+	var dive_load: float = FM.air_load(8.0, dive_v, 100.0)
+	check("onset_is_a_light_cruise", GA.AIR_WIND_ONSET_LOAD < 0.1)
+	check("survivable_dive_wind_well_above_onset", GA.wind_db_for(dive_load) > GA.wind_db_for(GA.AIR_WIND_ONSET_LOAD)+6.0)
+	check("survivable_dive_rumble_audible", GA.rumble_db_for(dive_load, FM.mach(dive_v)) > GA.AIR_RUMBLE_ONSET_DB)
 
 	# pitch_scale's mach mapping (task 3) — mach_frac itself is already clamped 0..1
 	# in update_air, but confirm the lerp result never leaves [0.85, 1.35] even for

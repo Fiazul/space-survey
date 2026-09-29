@@ -75,6 +75,13 @@ that touches an autoload (`GameState`/`Ephemeris`/`Codex`/`PlanetData`/`GameAudi
 positive of the check, not a real bug (autoloads aren't registered outside a running
 project). Only autoload-free scripts parse clean this way (e.g. `surface_recipe.gd`).
 
+Player state (profile.cfg, codex.json, HUD layout) lives under `ASTRYX_PROFILE_DIR=<path>`
+when set, else `user://` (`scripts/core/profile_dir.gd`). Every tool that boots the real
+main calls `ProfileDir.isolate("<tool>")` first, defaulting to `/tmp/astryx_profile_<tool>`,
+so a bare test run never writes the live save. New tools that boot main must do the same;
+`tools/test_profile_dir.tscn` checks the override. `ASTRYX_START=pad` boots any profile
+gear-down on LC-39A (new profiles start there anyway).
+
 Headless unit tests — most `tools/test_*.gd` `extends SceneTree`:
 ```
 godot --headless --script tools/test_surface_recipes.gd
@@ -90,7 +97,7 @@ for f in tools/test_*.gd; do
     tools/test_music_director_scene.gd|tools/test_plasma.gd|tools/test_plasma_frame.gd|\
     tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
     tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\
-    tools/test_weapon_aim.gd) continue ;;
+    tools/test_weapon_aim.gd|tools/test_landing_cycle.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -114,7 +121,10 @@ godot --headless tools/test_surface_integration.tscn
 Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_chase_rig.tscn`,
 `test_dem_calibration.tscn`, `test_music_director_scene.tscn`, `test_ship_modules.tscn`,
 `test_landing_support.tscn`, `test_surface_facility.tscn`, `test_ship_systems.tscn`,
-`test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`.
+`test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`,
+`test_landing_cycle.tscn` (all seven hulls at 60 and 20 fps over rotating Earth; ~30 s;
+`LANDING_VERBOSE=1` prints measurements, `LANDING_CLOCK=<unix_s>|wall` sets the rotation phase, `LANDING_HULLS=1,6` limits hulls,
+`LANDING_TRACE=descend|hold|depart|open|rest|press|slope` prints a 4 Hz trace).
 
 Visual review renders (offscreen captures, for a human/agent to look at, not pass/fail).
 **Plain `--headless` captures nothing** — no GL context, so `get_viewport().get_texture()`
@@ -212,7 +222,7 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 | `WORMHOLE_NETWORK.png` | `tools/export_wh_graph.gd` (dumps `/tmp/wh_graph.json`) → `tools/draw_wh_network.py` |
 | `TAB_TARGETING.png` | `tools/draw_tab_target.py` |
 | `assets/fx/exhaust_noise.png` | `tools/gen_exhaust_noise.py` |
-| `assets/{sfx_fire,laser_loop,notify,reward,teleport}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,reward,teleport,engine}_audio.py`, `tools/gen_booster.py` |
+| `assets/{sfx_fire,laser_loop,notify,teleport}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,teleport,engine}_audio.py`, `tools/gen_booster.py` |
 | `assets/ui_click.wav` | `tools/gen_ui_click.py` |
 | `tools/data/` | `tools/parse_tycho.py` (raw Tycho-2 catalogue, ~340MB, gitignored) |
 | `builds/` | `build.sh` export output, gitignored |

@@ -1,6 +1,7 @@
 extends Node3D
 var failures := 0
 func _ready() -> void:
+	ProfileDir.isolate("test_station_scene")
 	var main := (load("res://scenes/Main.tscn") as PackedScene).instantiate()
 	add_child(main)
 	main.set_process(false)

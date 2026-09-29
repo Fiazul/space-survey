@@ -71,13 +71,11 @@ const AIR_WIND_OFF_DB := -60.0        # inaudible floor (matches ENGINE_OFF_DB's
 # becoming noticeable here. AIR_WIND_ONSET_LOAD is FlightMode.air_load at this speed,
 # sea level — a static var (not const) because it calls a function, computed once at
 # script load.
-const AIR_WIND_ONSET_KMS := 1.0
+const AIR_WIND_ONSET_KMS := 0.3   # a fifth of FlightMode.AIR_LOAD_REF_KMS since 2026-09-29
 static var AIR_WIND_ONSET_LOAD: float = _FM.load_at_sea_level(AIR_WIND_ONSET_KMS, _RHO0)
 const AIR_WIND_ONSET_DB := -40.0      # "just audible" hint of wind, not a wash
-# Dive reference: boosted sea-level equilibrium. FlightMode.air_load lands EXACTLY at
-# AIR_LOAD_TARGET_FRAC there BY CONSTRUCTION (air_load_q_ref is solved for that), so this
-# is not a second number to re-derive — it's the loudest air_load an ordinary
-# Shift-boost dive settles into, without any DEV tool.
+# Dive reference: FlightMode.air_load reaches AIR_LOAD_TARGET_FRAC at AIR_LOAD_REF_KMS
+# (1.5 km/s) at sea level by construction — a hard dive, still above what a 9 g brake survives.
 const AIR_WIND_FULL_LOAD := _FM.AIR_LOAD_TARGET_FRAC
 # The engine's own loudest moment is ENGINE_LOOP_DB + ENGINE_BOOST_DB = -16 dB (boosting,
 # see the engine block above). Wind must stay >=6 dB under that so the engine roar always
@@ -112,7 +110,6 @@ var _laser_on := false
 var _click: AudioStreamPlayer
 var _teleport: AudioStreamPlayer  # teleport "voooouuu" whoosh
 var _notify: AudioStreamPlayer    # tutorial notification "ting-tong"
-var _reward: AudioStreamPlayer    # capture-reward "happy" fanfare
 var _pickup: AudioStreamPlayer   # short low blip for grabbing an energy cell
 
 var _eng_loop: AudioStreamPlayer
@@ -186,12 +183,6 @@ func _ready() -> void:
 	_notify.stream = load("res://assets/notify.wav") as AudioStream
 	_notify.volume_db = CLICK_DB
 	add_child(_notify)
-
-	# Capture-reward fanfare ("happy" rising arpeggio).
-	_reward = AudioStreamPlayer.new()
-	_reward.stream = load("res://assets/reward.wav") as AudioStream
-	_reward.volume_db = -4.0
-	add_child(_reward)
 
 	# Energy-cell grab: a tiny synthesized blip (low, short) — no asset needed.
 	_pickup = AudioStreamPlayer.new()
@@ -345,12 +336,6 @@ func stop_teleport() -> void:
 func play_notify() -> void:
 	if _notify != null:
 		_notify.play()
-
-
-# Happy rising fanfare when you capture a body.
-func play_reward() -> void:
-	if _reward != null:
-		_reward.play()
 
 
 # Short, low "blip" for grabbing an energy cell — quieter and deeper than the UI click.

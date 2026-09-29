@@ -2,7 +2,7 @@ class_name MiniMap
 extends Control
 # Corner radar / navigator assistant. Ship-relative top-down blips (heading = up):
 # every body in the system, plus Earth/home (green), the nearest body (cyan ring)
-# and the wormhole (gold). Far blips clamp to the rim, so each blip is also a
+# and surveyed bodies (gold). Far blips clamp to the rim, so each blip is also a
 # "which way to turn" arrow. main feeds it ship basis + blip data each frame.
 
 const R := 86.0
@@ -11,10 +11,9 @@ const DIST_SCALE := 0.072       # units -> radar px (then clamped to the rim) â€
 
 # roles
 const BODY := 0
-const CAPTURED := 4   # a body you've captured (beacon planted) â€” shown gold with a ring
+const SURVEYED := 4
 const HOME := 1
 const NEAREST := 2
-const WORMHOLE := 3
 
 var _blips := []                # [{ local: Vector3, dist: float, role: int, name: String }]
 
@@ -57,11 +56,8 @@ func _draw() -> void:
 			NEAREST:
 				draw_arc(p, 6.0, 0, TAU, 14, Color(0.5, 1.0, 1.0), 2.0)
 				draw_string(font, p + Vector2(8, 4), blip.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 13, Color(0.6, 1.0, 1.0))
-			WORMHOLE:
-				draw_arc(p, 5.5, 0, TAU, 14, Color(0.75, 0.55, 1.0, 0.9), 1.5)   # swirl ring
-				draw_circle(p, 2.6, Color(0.9, 0.7, 1.0))                          # core
-			CAPTURED:
-				draw_circle(p, 3.5, Color(1.0, 0.84, 0.3))                 # gold beacon
+			SURVEYED:
+				draw_circle(p, 3.5, Color(1.0, 0.84, 0.3))
 				draw_arc(p, 5.5, 0, TAU, 12, Color(1.0, 0.84, 0.3, 0.7), 1.5)
 			_:
 				draw_circle(p, 3.0, Color(0.8, 0.85, 0.95, 0.85))

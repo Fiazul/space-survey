@@ -24,7 +24,11 @@ static func correction(clearance: float, normal: Vector3, relative_velocity: Vec
 			acceleration -= normal*relative_velocity.dot(normal)*1.8
 	else:
 		var desired := clampf((SAFE_CLEARANCE-clearance)*1.5,0.0,.025)
-		acceleration += normal*maxf(0.0,(desired-outward)*2.5)
+		var hold := (desired-outward)*2.5
+		# Without vertical intent the hold works both ways. Push-only output just
+		# cancels gravity, so the hull coasts out of the band, drops and bobs.
+		if absf(pilot_accel.dot(normal)) >= .0001: hold = maxf(0.0,hold)
+		acceleration += normal*hold
 		# A held descend command cannot push through unapproved ground.
 		acceleration -= normal*minf(0.0,pilot_accel.dot(normal))
 	var drift := relative_velocity.slide(normal)

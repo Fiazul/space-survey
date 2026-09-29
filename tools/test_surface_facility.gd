@@ -25,7 +25,7 @@ func _ready() -> void:
 	ship.nearest_dist = 6371
 	for index in ship.ship_count():
 		ship.swap_ship(index)
-		ship.terrain_basis = Basis.IDENTITY
+		ship.set_terrain_frame(Basis.IDENTITY)
 		ship.transform.basis = xf.basis
 		ship.reset_mesh_pose()
 		ship.systems.gear_target = true
@@ -70,7 +70,7 @@ func _ready() -> void:
 		# A saved attachment is validated against the current pad and gear at
 		# a different planetary angle, rather than trusting a stale world point.
 		ship.landing_site = ""
-		ship.terrain_basis = Basis(Vector3.UP,.6)
+		ship.set_terrain_frame(Basis(Vector3.UP,.6))
 		ship.anchor_off = ship.terrain_basis*parked
 		ship.transform.basis = ship.terrain_basis*attitude
 		check("restores berth after offline rotation",ship.restore_facility_attachment(site.id,sampler,ship.terrain_basis))

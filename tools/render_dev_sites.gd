@@ -17,6 +17,7 @@ var _t := 0
 
 
 func _ready() -> void:
+	ProfileDir.isolate("render_dev_sites")
 	# Opening the panel pauses the tree (SettingsMenu/CodexPanel house pattern) —
 	# this capture driver has to keep ticking through that pause to take the
 	# "panel open" shot and then fire the teleport.

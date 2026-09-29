@@ -4,6 +4,13 @@ extends RefCounted
 ## the rig's footpad corners. Buildings use the full projected hull volume.
 const SKIN := .00025
 const SLOP := .0001
+# The broad query measures RADIAL altitude, but a hull touches a slope along its
+# normal: a sphere of radius r reaches ground r/cos(slope) radially below it.
+# Same slope floor as TerrainSampler's contact separation.
+const BROAD_SLOPE_COS := .15
+# Stationary means below this radial speed, never an exact zero: a hull held
+# still by the support jets carries ~1e-10 km/s of rounding either way.
+const REST_KMS := .0001
 
 static func hull_points(box: AABB) -> PackedVector3Array:
 	var points := PackedVector3Array()
@@ -26,12 +33,14 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 		bound = maxf(bound, point.length())
 	for point in feet:
 		bound = maxf(bound, point.length())
-	var broad := sampler.resolve_motion(from, to, velocity, radius, bound + SKIN)
+	var broad := sampler.resolve_motion(from, to, velocity, radius, bound/BROAD_SLOPE_COS + SKIN)
 	if not broad.hit:
 		broad["gear_hit"] = false
 		return broad
+	# `delta` is the double-precision move from `to`; `position` is only the
+	# float32 base for the next query (see TerrainSampler._snap_delta).
 	var result := {"hit": false, "position": to, "velocity": velocity,
-		"normal": Vector3.ZERO, "budget_limited": false, "gear_hit": false}
+		"normal": Vector3.ZERO, "budget_limited": false, "gear_hit": false, "delta": Vector3.ZERO}
 	var points := hull_probes.duplicate()
 	points.append_array(feet)
 	# Project onto all touched supports; footpad points are never substituted by
@@ -47,7 +56,8 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 		var hit := sampler._resolve_terrain_motion(probe_from, result.position + offset,
 			result.velocity, radius, SKIN, SLOP)
 		if hit.hit or hit.budget_limited:
-			result.position = hit.position - offset
+			result.delta = ((result.position as Vector3) - to) + (hit.delta as Vector3)
+			result.position = to + (result.delta as Vector3)
 			result.velocity = hit.velocity
 			result.hit = result.hit or hit.hit
 			result.budget_limited = result.budget_limited or hit.budget_limited
@@ -61,6 +71,7 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 		result.velocity, radius, SKIN, basis, box.size*.5)
 	if wall.hit or wall.budget_limited:
 		result.position = wall.position - center
+		result.delta = (result.position as Vector3) - to
 		result.velocity = wall.velocity
 		result.hit = result.hit or wall.hit
 		result.normal = wall.normal
@@ -71,6 +82,7 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 			result.velocity, radius, SKIN, basis, Vector3.ZERO)
 		if hit.hit or hit.budget_limited:
 			result.position = hit.position - offset
+			result.delta = (result.position as Vector3) - to
 			result.velocity = hit.velocity
 			result.hit = result.hit or hit.hit
 			result.normal = hit.normal
@@ -78,7 +90,7 @@ static func resolve(sampler: TerrainSampler, from: Vector3, to: Vector3,
 			result.gear_hit = result.gear_hit or hit.hit
 	# A second, stationary query after flight is outside the separation skin.
 	# Confirm support across that tiny gap without snapping a taking-off ship back.
-	if not result.gear_hit and result.velocity.length() < .003 and velocity.dot(to.normalized()) <= 0.0:
+	if not result.gear_hit and result.velocity.length() < .003 and velocity.dot(to.normalized()) <= REST_KMS:
 		var down := -to.normalized() * .002
 		for point in feet:
 			var pad: Vector3 = result.position + basis * point

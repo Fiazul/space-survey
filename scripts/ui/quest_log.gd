@@ -2,16 +2,16 @@ class_name QuestLog
 extends CanvasLayer
 # The MISSION LOG (J). Every body in the catalogue is a mission (see MissionDB). Left column:
 # a scrollable list of every mission, grouped by system, with a status icon. Right column:
-# the selected mission's title, crude story, bounty, status, and a NAVIGATE button that sets
-# the orange guide toward its system and closes the log — you FLY there and survey it (V).
+# the selected mission's title, crude story, status, and a NAVIGATE button that sets
+# the orange guide toward its system and closes the log — you FLY there and survey it.
 # Pauses flight + frees the cursor like the Star Map; process_mode = ALWAYS so J keeps working
 # while the tree is paused.
 #
 # Status per mission (from main.star_state(system) + codex):
 #   complete  — already surveyed (green ✓)
-#   active    — it's in the system you're in, not yet surveyed (cyan ◆ — aim + hold V)
+#   active    — it's in the system you're in, not yet surveyed (cyan ◆)
 #   open      — reachable (discovered / nav / here) but you're elsewhere (◇ — navigate)
-#   locked    — no known route yet (🔒 — chart a lane from the Star Map)
+#   locked    — no known route yet (🔒)
 
 const PANEL := Vector2(1010, 560)
 const PANEL_POS := Vector2((1280 - 1010) * 0.5, (720 - 560) * 0.5)
@@ -139,7 +139,7 @@ func _build() -> void:
 	_root.add_child(_title)
 
 	var hint := Label.new()
-	hint.text = "✓ surveyed · ◆ here now (hold V) · ◇ reachable · 🔒 locked   ·   click a mission → story + Navigate   ·   J / Esc to close"
+	hint.text = "✓ surveyed · ◆ here now · ◇ reachable · 🔒 locked   ·   click a mission → story + Navigate   ·   J / Esc to close"
 	hint.position = PANEL_POS + Vector2(0, 44)
 	hint.size = Vector2(PANEL.x, 18)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -326,12 +326,11 @@ func _refresh_detail() -> void:
 	_dlabel("◇  %s   ·   %s   ·   %.1f ly" % [_sel, SystemDB.display_name(id), SystemDB.light_years(id)],
 		13, Color(0.7, 0.8, 0.95))
 
-	var stat_txt: String = { "complete": "✓  SURVEYED — bounty claimable from Details (G)",
-		"active": "◆  YOU ARE HERE — aim at it and hold V to survey",
-		"open": "◇  Reachable — navigate, fly there, survey it",
-		"locked": "🔒  No known route — chart a lane from the Star Map (M)" }.get(status, "")
+	var stat_txt: String = { "complete": "✓  SURVEYED",
+		"active": "◆  YOU ARE HERE — fly close to survey it",
+		"open": "◇  Another system",
+		"locked": "🔒  No known route" }.get(status, "")
 	_dlabel(stat_txt, 13, _status_col(status))
-	_dlabel("BOUNTY:  %d coins" % MissionDB.reward(_sel), 14, Color(0.7, 0.95, 0.7))
 
 	var sep := HSeparator.new()
 	_detail.add_child(sep)
@@ -347,14 +346,12 @@ func _refresh_detail() -> void:
 
 	_detail.add_child(_spacer(8))
 
-	# Action: track the quest (free) and let the nav arrow guide you to it — across wormholes
-	# if it's in another system, then straight to the body once you're there.
+	# Action: track the quest (free) and let the nav arrow guide you to it.
 	var tracked: bool = main != null and main.active_quest() == _sel
 	if status == "complete":
 		_dlabel("Mission accomplished. Don't get sentimental.", 12, Color(0.6, 0.8, 0.6))
-	elif status == "locked":
-		_dlabel("Open the Star Map (M) and chart a lane to %s first." % SystemDB.display_name(id),
-			12, Color(0.7, 0.78, 0.9))
+	elif status == "locked" or status == "open":
+		pass
 	elif tracked:
 		_dlabel("★  TRACKED — the nav arrow is guiding you here.", 13, Color(0.5, 1.0, 0.7))
 		var stop := _action_button("✖   STOP  TRACKING", Color(1.0, 0.6, 0.4))
@@ -363,7 +360,7 @@ func _refresh_detail() -> void:
 			main.cancel_locked_nav()
 			_refresh())
 		_detail.add_child(stop)
-	else:                                 # active (here) or open (reachable)
+	else:
 		var t := _action_button("★   TRACK  THIS  QUEST", Color(1.0, 0.72, 0.32))
 		t.pressed.connect(func():
 			_click()

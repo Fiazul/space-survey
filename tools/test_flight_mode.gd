@@ -86,14 +86,9 @@ func _initialize() -> void:
 	failed += _check("air_load_vacuum_above_top", is_equal_approx(M.air_load(150.0, 5.0, 100.0), 0.0))
 	failed += _check("air_load_zero_speed", is_equal_approx(M.air_load(10.0, 0.0, 100.0), 0.0))
 	var low_load: float = M.air_load(10.0, 1.0, 100.0)
-	# 2026-09-12: the curve's knee (air_load_q_ref) now tracks AIR_TERMINAL_KMS (boosted
-	# equilibrium lands at AIR_LOAD_TARGET_FRAC by design, not 1.0 - see flight_mode.gd),
-	# so the probe speed is a fixed MULTIPLE of AIR_TERMINAL_KMS (not a literal km/s
-	# figure tuned to one specific target) to demonstrate the curve's asymptote past that
-	# design point regardless of the current target value (2026-09-12: a literal 30 km/s
-	# was tuned to the then-12 km/s target and silently stopped proving anything once
-	# AIR_TERMINAL_KMS moved to 50).
-	var high_load: float = M.air_load(10.0, 2.5 * M.AIR_TERMINAL_KMS, 100.0)
+	# The probe is a MULTIPLE of the curve's own knee (AIR_LOAD_REF_KMS, sea level at
+	# AIR_LOAD_TARGET_FRAC), so it proves the asymptote whatever the knee is set to.
+	var high_load: float = M.air_load(10.0, 2.5 * M.AIR_LOAD_REF_KMS, 100.0)
 	failed += _check("air_load_monotonic_in_speed", high_load > low_load)
 	failed += _check("air_load_saturates", high_load < 1.0 and high_load > M.AIR_LOAD_TARGET_FRAC)
 	failed += _check("air_load_in_range", low_load >= 0.0 and low_load <= 1.0)

@@ -24,6 +24,7 @@ func _env_or(key: String, fallback: String) -> String:
 
 
 func _ready() -> void:
+	ProfileDir.isolate("probe_live_scene")
 	var env_dir := OS.get_environment("SHOT_DIR")
 	if env_dir != "":
 		_out_dir = env_dir

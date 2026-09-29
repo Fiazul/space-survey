@@ -20,7 +20,7 @@ func _ready() -> void:
 	ship.terrain = sampler
 	for index in ship.ship_count():
 		ship.swap_ship(index)
-		ship.terrain_basis = Basis.IDENTITY
+		ship.set_terrain_frame(Basis.IDENTITY)
 		ship.transform.basis = xf.basis
 		ship.anchor_off = xf*Vector3(0,.12,0)
 		ship.velocity = Vector3.ZERO
@@ -29,7 +29,10 @@ func _ready() -> void:
 		var before := ship.anchor_distance_km()
 		for frame in 180: ship.fly(1.0/60)
 		check("gravity hold hull %d" % index,absf(ship.anchor_distance_km()-before)<.0015 and ship.support_active)
-		check("one outlet per landjet socket",ship.systems.support.jets.size()==ModularHull.sockets(ship._mesh_root.get_child(0)).landjet.size() and ship.systems.support.jets.size()>=4)
+		# The authored cruiser has no modular sockets; its outlets come from the rig.
+		var modular: bool = ship.SHIP_MODELS[index].get("modular", false)
+		var sockets: int = ModularHull.sockets(ship._mesh_root.get_child(0)).landjet.size()
+		check("one outlet per landjet socket",(not modular or ship.systems.support.jets.size()==sockets) and ship.systems.support.jets.size()>=4)
 		for jet in ship.systems.support.jets:
 			check("underside angled outlets",jet.direction.y < -.9 and absf(jet.direction.x)>.2)
 			check("hover actually fires outlets",jet.power>.1)
@@ -114,7 +117,7 @@ func _ready() -> void:
 	var ridge := RisingGround.new({})
 	ridge.surface = {"solid":true}
 	ship.terrain = ridge
-	ship.terrain_basis = Basis.IDENTITY
+	ship.set_terrain_frame(Basis.IDENTITY)
 	ship.transform.basis = Basis.IDENTITY
 	ship.anchor_off = Vector3.UP*6371.2
 	ship.velocity = Vector3.RIGHT*.08

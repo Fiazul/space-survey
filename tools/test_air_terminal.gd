@@ -59,22 +59,27 @@ func _initialize() -> void:
 	print("air_terminal: drag @ 1 km/s sea level = %.6f km/s^2 (%.2f%% of boosted thrust)"
 		% [drag_at_1kms, 100.0 * drag_at_1kms / thrust_boost_acc])
 
-	# air_load table (item 1, HUD Load readout consumer): the 2026-09-12 rescale also
-	# moved FlightMode.AIR_LOAD_Q_REF's replacement (air_load_q_ref) so this curve's
-	# knee tracks AIR_TERMINAL_KMS instead of saturating to 1.0 everywhere reachable.
+	# air_load (HUD Load + air audio) has its own knee, AIR_LOAD_REF_KMS, since
+	# 2026-09-29: drag's 50 km/s terminal left every survivable dive at load ~0.0004.
 	print("air_terminal: sea-level air_load by speed —")
-	for v in [0.0, 1.0, 3.0, 7.0, FM.AIR_TERMINAL_KMS]:
+	for v in [0.0, 0.3, 1.0, FM.AIR_LOAD_REF_KMS, 3.0, FM.AIR_TERMINAL_KMS]:
 		print("  %5.1f km/s : load %.4f" % [v, FM.air_load(0.0, v, EARTH_ATMO_TOP_KM)])
-	var load_1kms: float = FM.air_load(0.0, 1.0, EARTH_ATMO_TOP_KM)
-	failed += _check("light_cruise_load_stays_low", load_1kms < 0.1)
+	failed += _check("light_cruise_load_stays_low", FM.air_load(0.0, 0.3, EARTH_ATMO_TOP_KM) < 0.1)
+	failed += _check("knee_at_reference_speed", absf(FM.air_load(0.0, FM.AIR_LOAD_REF_KMS, EARTH_ATMO_TOP_KM)-FM.AIR_LOAD_TARGET_FRAC) < 0.01)
+	# The fastest state a 9 g brake still stops before the ground: v^2 = 2*8g*h.
+	var dive_alt := 8.0
+	var dive_v := sqrt(2.0*8.0*0.00980665*dive_alt)
+	var dive_load: float = FM.air_load(dive_alt, dive_v, EARTH_ATMO_TOP_KM)
+	print("air_terminal: survivable dive %.2f km/s at %.0f km : load %.4f" % [dive_v, dive_alt, dive_load])
+	failed += _check("survivable_dive_reads_on_hud", dive_load >= 0.3 and dive_load < FM.AIR_LOAD_TARGET_FRAC)
 
 	print("air_terminal: boosted-equilibrium air_load by altitude —")
 	for alt in [0.0, 10.0, 30.0]:
 		var v_eq: float = _terminal_speed(ballistic, alt, thrust_boost_acc)
 		var load_eq: float = FM.air_load(alt, v_eq, EARTH_ATMO_TOP_KM)
 		print("  %5.1f km alt : v %8.3f km/s : load %.4f" % [alt, v_eq, load_eq])
-		failed += _check("boosted_equilibrium_load_in_target_band_at_%.0fkm" % alt,
-			load_eq >= FM.AIR_LOAD_TARGET_FRAC - 0.05 and load_eq <= FM.AIR_LOAD_TARGET_FRAC + 0.05)
+		failed += _check("boosted_equilibrium_load_saturated_at_%.0fkm" % alt,
+			load_eq > FM.AIR_LOAD_TARGET_FRAC and load_eq <= 1.0)
 
 	if failed == 0:
 		print("air_terminal: OK")

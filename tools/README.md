@@ -67,7 +67,6 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `gen_fire_audio.py` | `assets/sfx_fire.wav` laser fire zap |
 | `gen_laser_audio.py` | `assets/laser_loop.wav` beam hum |
 | `gen_notify_audio.py` | `assets/notify.wav` tutorial chime |
-| `gen_reward_audio.py` | `assets/reward.wav` capture fanfare |
 | `gen_star_catalog.py` | Prints GDScript star-catalogue rows (for `system_db.gd`) from real nearest-star data |
 | `gen_teleport_audio.py` | `assets/teleport.wav` teleport whoosh |
 | `gen_ui_click.py` | `assets/ui_click.wav` UI click |

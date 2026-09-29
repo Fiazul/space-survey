@@ -36,7 +36,6 @@ var dev_sites: DevSitesPanel   # Ctrl+P: jump straight to a Sol body/park/landma
 var map: StarMap
 var platform_tp: PlatformTeleport   # isolated platform fast-travel console (not the star map)
 var tutor: Tutor                    # new-game onboarding tip notifications
-var reward_card: RewardCard         # capture celebration card (auto-reward + fade-out)
 var _fresh_game := false            # true when there was no save → start the tutorial
 var quest_log: QuestLog
 
@@ -80,7 +79,6 @@ var _nav_goal := ""           # star the map asked to guide to (orange waypoint)
 # GameState.onboarding_step / GameState.onboarding_done.
 # GETTING STARTED beginner quest extracted to the Onboarding controller (Phase 3).
 var onboarding: Onboarding
-const PROFILE_PATH := "user://profile.cfg"
 # Economy consts moved to GameState (Phase 2a): CAPTURE_REWARD, ARRIVAL_REWARD, NAV_COST,
 # NAV_UNLOCK_BASE, NAV_UNLOCK_PER_LY — reference as GameState.NAV_COST etc.
 const WORMHOLE_RADAR := 750.0 # hub range at which your radar finds an undiscovered wormhole
@@ -114,8 +112,8 @@ var _autosave_t := 5.0            # periodic position autosave (also guards agai
 var _scan := 0.0             # scan progress 0..1 of the nearest body
 var _last_waves_cleared := 0 # last guardian wave count we announced (for the "Wave k/N" toast)
 var _scan_name := ""
-const SCAN_SECONDS := 3.0     # capture takes a beat longer so the ritual reads + feels earned
-const SCAN_RANGE := 1500.0    # how close you must be to start a capture (generous)
+const SCAN_SECONDS := 3.0     # dwell inside SCAN_RANGE before a body is surveyed
+const SCAN_RANGE := 1500.0    # km above the surface that counts as close approach
 const STAR_APPROACH_RANGE := 6000.0  # in the hub, flying within this of a real star drops you into
 									 # its LOCAL frame (small coords) so the last stretch is flyable
 const GUARD_RANGE := 2500.0   # approach a guarded body within this → its guardians activate
@@ -169,6 +167,7 @@ var music: MusicDirector
 # ~1e10 (≈1200 ly) is far above anything legitimate yet far below a corrupt ~8.7e11; a saved
 # position beyond it is discarded on load. See _restore_location.
 const MAX_SANE_POS := 1.0e10
+const HOME_PAD_ID := "kennedy_lc39a"
 
 
 func _ready() -> void:
@@ -189,7 +188,7 @@ func _ready() -> void:
 	add_child(ship)
 	ship.load_customization(GameState.customization)
 	ship.set_anchor("Earth")
-	ship.anchor_off = Ephemeris.geo_start_pos()
+	ship.relocate(Ephemeris.geo_start_pos())
 	ship.face_toward(-ship.anchor_off)   # open looking at Earth (the origin)
 	ship.newton = true                 # Sol: real pull, parked spawn falls
 
@@ -327,8 +326,6 @@ func _ready() -> void:
 	tutor = Tutor.new()
 	tutor.main = self
 	add_child(tutor)
-	reward_card = RewardCard.new()
-	add_child(reward_card)
 	hud.map_button.pressed.connect(map.toggle)
 
 	# Mission log (J): every body is a mission — browse the story + navigate to it.
@@ -379,10 +376,10 @@ func _restore_location() -> void:
 		_has_saved_pos = false
 	if _saved_anchor != "" and Ephemeris.has_pos(_saved_anchor) and _saved_off.length() < MAX_SANE_POS:
 		_anchor_ship(_saved_anchor)
-		ship.anchor_off = _saved_off
+		ship.relocate(_saved_off)
 		if _saved_surface_off is Vector3:
 			var body_basis := eph.surface_basis(_saved_anchor)
-			ship.anchor_off = body_basis*_saved_surface_off
+			ship.relocate(body_basis*_saved_surface_off)
 			if _saved_surface_basis is Basis:
 				ship.transform.basis = body_basis*_saved_surface_basis
 				ship._cam_basis = ship.transform.basis
@@ -399,7 +396,7 @@ func _restore_location() -> void:
 		var inside := r < Ephemeris.EARTH_RADIUS_KM + 200.0
 		var night_geo := r < Ephemeris.GEO_RADIUS_KM * 1.2 and sun.dot(ship.anchor_off) < 0.0
 		if inside or night_geo:
-			ship.anchor_off = Ephemeris.geo_start_pos()
+			ship.relocate(Ephemeris.geo_start_pos())
 			ship.face_toward(-ship.anchor_off)
 	if _saved_ship_index >= 0 and _saved_ship_index < ship.ship_count() \
 			and _saved_ship_index != ship.current_index():
@@ -409,7 +406,18 @@ func _restore_location() -> void:
 	_tp_active = false
 	if not _saved_landing_site.is_empty() and _saved_surface_off is Vector3:
 		ship.restore_facility_attachment(_saved_landing_site,planets.terrain_sampler_for(ship.anchor_name),eph.surface_basis(ship.anchor_name))
+	if _fresh_game or OS.get_environment("ASTRYX_START") == "pad":
+		_start_on_pad()
 	_save_profile()       # capture the exact restored position
+
+
+# New profiles start gear-down on the home pad (docs/plans/2026-09-29-playable-minute.md).
+func _start_on_pad() -> void:
+	if current_system != SystemDB.SOL:
+		_arrive(SystemDB.SOL)
+	_anchor_ship("Earth")
+	if not ship.berth_on_pad(HOME_PAD_ID, planets.terrain_sampler_for("Earth"), eph.surface_basis("Earth"), eph.surface_angle("Earth")):
+		push_warning("pad start: %s did not accept the berth" % HOME_PAD_ID)
 
 
 # Save on window close so quitting preserves your exact spot (autosave covers crashes).
@@ -478,7 +486,7 @@ func _process(delta: float) -> void:
 	# Hand the ship the SAME height function the ground rings and the contact kill
 	# read, so its substep ground clamp cannot disagree with either.
 	ship.terrain = planets.terrain_sampler_for(planets.nearest_name)
-	ship.terrain_basis = planets.surface_basis(planets.nearest_name)
+	ship.set_terrain_frame(planets.surface_basis(planets.nearest_name), planets.surface_angle(planets.nearest_name))
 	ship.nearest_dir = planets.nearest_dir   # only ease down when approaching it
 	ship.nearest_name = planets.nearest_name
 	ship.nearest_dist = planets.nearest_dist # warp ships ease out of warp on arrival
@@ -544,7 +552,6 @@ func _process(delta: float) -> void:
 	if ship.firing:
 		_ob_note("fire")
 	hud.firing = want_fire                       # blooms the dynamic crosshair
-	hud.coins = GameState.coins
 	hud.set_cancel_nav_visible(_nav_locked != "" or _nav_goal != "" or _active_quest != "" or not _marks.is_empty())
 	# Tell the player (once) when they try to boost in a slow-zone where it does nothing.
 	if ship.boost_blocked and not _was_boost_blocked:
@@ -596,7 +603,7 @@ func travel_to(id: String) -> void:
 	ship._set_capture(true)
 
 
-# --- Corner radar: ship-relative blips for bodies / Earth / nearest / wormhole ---
+# --- Corner radar: ship-relative blips for bodies / Earth / nearest ---
 func _update_minimap() -> void:
 	if minimap == null:
 		return
@@ -609,91 +616,43 @@ func _update_minimap() -> void:
 		var rel: Vector3 = planets.rel_of(bname)
 		var role := MiniMap.BODY
 		if codex.is_discovered(bname):
-			role = MiniMap.CAPTURED                  # captured → gold beacon on the radar
+			role = MiniMap.SURVEYED
 		if bname == "Earth" and current_system == SystemDB.SOL:
 			role = MiniMap.HOME
 		elif bname == planets.nearest_name:
 			role = MiniMap.NEAREST
 		blips.append({ "local": binv * rel, "dist": rel.length(), "role": role, "name": bname })
-	# All known wormholes, live (not just the nearest) — each its own gold blip on the radar.
-	for wp in wormhole.portals_rel(ship):
-		var wrel: Vector3 = wp.rel
-		blips.append({ "local": binv * wrel, "dist": wrel.length(), "role": MiniMap.WORMHOLE,
-			"name": "→ %s" % SystemDB.display_name(wp.dest) })
 	minimap.set_blips(blips)
 
 
-# --- Capture the nearest body (hold V within range). Guarded bodies (≈80%, never in
-# peaceful Sol) spawn alien guardians you must clear first. Capture = beacon + rank. ---
+# --- Survey the nearest body: close approach logs it in the Codex, no key. Guarded bodies
+# (never in Sol) stay locked until their guardians are cleared. ---
 func _update_scan(delta: float) -> void:
 	hud.toast_t = maxf(hud.toast_t - delta, 0.0)
 	if _tp_active:
-		return                       # no scanning/capturing mid-teleport
-	# Guardian LEASH: if an active guardian fight's body is now far behind us, abandon it.
-	# A parked, unreachable boss otherwise keeps summoning/firing (no distance gate in
-	# _step_boss) → in_combat() stays true → warp bleeds to sublight → you're stranded.
-	# Runs independent of the capturable check below so it fires even out in empty space.
+		return
+	# Guardian LEASH: an unreachable parked boss would keep in_combat() true forever.
 	if combat.guard_body != "":
 		var grel: Vector3 = planets.rel_of(combat.guard_body)
 		if grel != Vector3.ZERO and grel.length() > GUARD_RANGE * 2.5:
 			combat.abandon_combat()
-	# Guardian fight: always-visible WAVE/capture banner + a toast as each wave falls.
-	if combat.guard_body != "":
-		var wp: Dictionary = combat.guard_progress()
-		if wp.cleared:
-			hud.set_guardian("✓  %s  —  DEFENCES DOWN · CAPTURE READY (hold V)" % combat.guard_body, true)
-		else:
-			hud.set_guardian("⚔  GUARDIANS OF %s     WAVE  %d / %d     · capture locked ·" % [combat.guard_body, wp.wave, wp.total], false)
-		if wp.waves_cleared > _last_waves_cleared:
-			_last_waves_cleared = wp.waves_cleared
-			if wp.cleared:
-				hud.toast = "✦  %s's guardians are destroyed — capture it now!" % combat.guard_body
-			else:
-				hud.toast = "✦  Wave %d/%d cleared — brace for the next" % [wp.waves_cleared, wp.total]
-			hud.toast_t = 3.5
-			if audio != null:
-				audio.play_notify()
-	else:
-		hud.set_guardian("", false)
 	var name := planets.nearest_name
-	# Hub gate-suns (✦) and the Interstellar hub are travel markers — never captured or
-	# guarded. Skip the whole flow there (no monsters in the hub, no fake captures).
 	if not _capturable(name):
-		_scan = maxf(_scan - delta * 2.0, 0.0)
-		if _scan <= 0.0:
-			_scan_name = ""
-		hud.scan_progress = _scan
-		hud.scan_name = _scan_name
-		hud.scan_hint = ""
+		_scan = 0.0
+		_scan_name = ""
 		return
 	var captured := codex.is_discovered(name)
 	var guarded := current_system != SystemDB.SOL and _is_guarded(name)
-
-	# Approaching a guarded, un-captured body spawns its identity boss — but ONLY when
-	# there's no boss currently alive and it's a different body. Without the
-	# "not guard_boss_alive()" guard, a nearest_name that flips between two close bodies
-	# (e.g. TRAPPIST's packed planets) would re-spawn a boss GLB every frame and freeze.
 	if guarded and not captured and planets.nearest_dist < GUARD_RANGE \
 			and combat.guard_body != name and not combat.guard_boss_alive() \
 			and not ship.transiting and not docked:
-		# Bigger bodies (stars) get a tougher boss + bigger waves (power scales with radius).
 		var power: float = clampf(planets.nearest_radius / 7.0, 1.0, 3.0)
 		combat.set_guardians(ship.anchor_off + planets.rel_of(name), name, power)
-		_last_waves_cleared = 0       # fresh fight → reset the wave-announce tracker
-
-	# Capturable once ALL of THIS body's defending waves are beaten (finite — see combat).
+		_last_waves_cleared = 0
 	var clear := not guarded or combat.guardians_cleared(name)
-
-	# Capture when within reach of the body's SURFACE (range scales with its size, so a
-	# giant star/nebula is grabbable without diving to its centre).
-	var cap_range := planets.nearest_radius + SCAN_RANGE
 	var in_range := not docked and not ship.transiting and name != "" \
-		and planets.nearest_dist < cap_range \
-		and (_touch or Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED)
-	var fresh := in_range and not captured and clear
-
-	# Raptor 2 Neo auto-captures any clear body in range — no key needed.
-	if fresh and (ship.auto_capture or Input.is_physical_key_pressed(KEY_V)):
+		and planets.nearest_dist < planets.nearest_radius + SCAN_RANGE
+	if in_range and not captured and clear:
 		if name != _scan_name:
 			_scan_name = name
 			_scan = 0.0
@@ -701,34 +660,17 @@ func _update_scan(delta: float) -> void:
 		if _scan >= 1.0:
 			if codex.discover(name):
 				_ob_note("scan")
-				# Capture complete: AUTO-grant the bounty and pop the celebration card.
-				var bounty := claim_reward(name)
-				if reward_card != null:
-					reward_card.celebrate(name, MissionDB.title_for(name), bounty)
-				if audio != null:
-					audio.play_reward()
+				hud.toast = "Codex  ·  %s surveyed" % name
+				hud.toast_t = 3.0
 				if name == _active_quest:
-					_advance_quest()    # tracked quest done → guide the next unsurveyed body here
+					_advance_quest()
 				if combat.guard_body == name:
 					combat.clear_guardians()
 			_scan = 0.0
 			_scan_name = ""
 	else:
-		_scan = maxf(_scan - delta * 2.0, 0.0)
-		if _scan <= 0.0:
-			_scan_name = ""
-
-	hud.scan_progress = _scan
-	hud.scan_name = _scan_name
-	if name == "" or captured:
-		hud.scan_hint = ""
-	elif guarded and not clear:
-		var gp: Dictionary = combat.guard_progress()
-		hud.scan_hint = "⚠  GUARDIANS of %s — Wave %d/%d  ·  clear the swarm, then kill the boss (capture locked)" % [name, gp.wave, gp.total]
-	elif in_range and _scan <= 0.0:
-		hud.scan_hint = ("» auto-capturing %s «" % name) if ship.auto_capture else ("» hold V to capture %s «" % name)
-	else:
-		hud.scan_hint = ""
+		_scan = 0.0
+		_scan_name = ""
 
 
 # Open the scanner detail panel for a specific body (called by the M-map list).
@@ -739,8 +681,6 @@ func open_details_for(body_name: String) -> void:
 
 # Lock the nav waypoint to a body (orange; persists until cancelled). PAID navigator.
 func set_nav_target(body_name: String) -> void:
-	if not buy_navigator():
-		return
 	_nav_off = false
 	_active_quest = ""        # a manual waypoint supersedes quest tracking
 	_nav_locked = body_name
@@ -750,8 +690,6 @@ func set_nav_target(body_name: String) -> void:
 
 # Auto-pilot: locks the orange waypoint AND flies there hands-off. PAID navigator.
 func start_autopilot(body_name: String) -> void:
-	if not buy_navigator():
-		return
 	_nav_off = false
 	_active_quest = ""        # autopilot supersedes quest tracking
 	_nav_locked = body_name
@@ -771,7 +709,6 @@ func can_claim(body_name: String) -> bool:
 func claim_reward(body_name: String) -> int:
 	var bounty := GameState.claim_reward(body_name)
 	if bounty > 0:
-		_ob_note("claim")
 		_save_profile()
 	return bounty
 
@@ -789,11 +726,9 @@ func buy_navigator() -> bool:
 # Wipe ALL saved progress — visited systems, codex captures, coins, ship customization, and
 # HUD layout — then restart fresh from Earth. Called by the Settings "Reset Progress" button.
 func reset_progress() -> void:
-	var d := DirAccess.open("user://")
-	if d != null:
-		for f in ["profile.cfg", "codex.json", "hud_layout.cfg"]:
-			if d.file_exists(f):
-				d.remove(f)
+	for f in ["profile.cfg", "codex.json", "hud_layout_v3.cfg"]:
+		if FileAccess.file_exists(ProfileDir.path(f)):
+			DirAccess.remove_absolute(ProfileDir.path(f))
 	get_tree().paused = false
 	get_tree().reload_current_scene()   # re-runs _ready with no save → clean slate at Earth
 
@@ -801,7 +736,9 @@ func reset_progress() -> void:
 # --- Player profile (persisted to disk; will hold more than coins later) ---
 func _load_profile() -> void:
 	var cfg := ConfigFile.new()
-	if cfg.load(PROFILE_PATH) == OK:
+	var profile_path := GameState.profile_path()
+	var cfg_error := cfg.load(profile_path)
+	if cfg_error == OK:
 		eph.rotation_clock.load_from(cfg, Time.get_unix_time_from_system())
 		GameState.load_from(cfg)   # all persisted profile fields (coins/visited/onboarding/customization…)
 		_active_quest = str(cfg.get_value("player", "active_quest", ""))
@@ -821,13 +758,18 @@ func _load_profile() -> void:
 	else:
 		eph.rotation_clock.load_from(ConfigFile.new(), Time.get_unix_time_from_system())
 		GameState.reset()    # autoload survives scene reload — clear stale memory on a fresh/reset game
-		_fresh_game = true   # no save on disk → a brand-new game (drives the tutorial)
+		# Only a missing file is a new game; an unreadable one keeps the old boot, no pad start.
+		_fresh_game = not FileAccess.file_exists(profile_path)
+		if not _fresh_game:
+			var bak := "%s.bak-%d" % [profile_path, int(Time.get_unix_time_from_system())]
+			DirAccess.copy_absolute(profile_path, bak)
+			push_warning("profile %s unreadable (error %d), backed up to %s" % [profile_path, cfg_error, bak])
 	# Home (Sol) is always known — you start there, so it's instant-travel from frame one.
 	GameState.visited[SystemDB.SOL] = true
 
 func _save_profile() -> void:
 	var cfg := ConfigFile.new()
-	cfg.load(PROFILE_PATH)            # keep any other keys we add later
+	cfg.load(GameState.profile_path())            # keep any other keys we add later
 	if ship != null:
 		GameState.customization = ship.customization_state()
 	eph.rotation_clock.save_into(cfg, Time.get_unix_time_from_system())
@@ -850,9 +792,9 @@ func _save_profile() -> void:
 				cfg.erase_section_key("player", "surface_basis")
 			if ship.newton and (ship.landed or ship.anchor_distance_km()-ship.anchor_radius_km() < eph.atmo_top_km(ship.anchor_name)):
 				var inv := eph.surface_basis(ship.anchor_name).inverse()
-				cfg.set_value("player", "surface_off", inv*ship.anchor_off)
+				cfg.set_value("player", "surface_off", ship.body_local(eph.surface_basis(ship.anchor_name), ship.anchor_off, true, eph.surface_angle(ship.anchor_name)))
 				cfg.set_value("player", "surface_basis", inv*ship.transform.basis)
-	cfg.save(PROFILE_PATH)
+	cfg.save(GameState.profile_path())
 
 
 # True once the player has reached this system at least once (the map only
@@ -916,6 +858,9 @@ func is_edge_known(a: String, b: String) -> bool:
 # player has actually unlocked (visited or charted). Otherwise visiting the hub would leak the
 # whole network, since the hub itself counts as visited.
 func _known_portals(id: String) -> Array:
+	# Sol flies without gates; travel goes in docs/plans/2026-09-29-one-physics-ripout.md.
+	if id == SystemDB.SOL:
+		return []
 	var out := []
 	var hub := id == SystemDB.INTERSTELLAR
 	for p in SystemDB.portals(id):
@@ -1312,12 +1257,43 @@ func _update_navigator() -> void:
 	# --- Survey guide fallback: never leave the player lost -------------------------------
 	if markers.is_empty() and not _nav_off:
 		var obj := _current_objective()
-		if not obj.is_empty():
+		# In Sol the body you are anchored to is under you; HOME guides there instead.
+		if not obj.is_empty() and not (ship.newton and obj.name == ship.anchor_name):
 			markers.append({ "rel": obj.rel, "name": obj.name, "dist": _fmt_nav_dist(obj.rel.length()), "color": Navigator.COL })
 			objective = "→  %s   %s" % [obj.name, _fmt_nav_dist(obj.rel.length())]
 
+	var home := _home_pad_marker() if not _nav_off else {}
+	if not home.is_empty():
+		markers.append(home)
 	navigator.set_markers(ship.camera, markers)
 	hud.set_objective(objective)
+
+
+# Permanent Sol target for the home pad. The offset is taken in the body frame
+# from the double-precision ship position: both points sit ~6371 km out, so
+# subtracting two float32 scene vectors would leave metres of noise at the pad.
+func _home_pad_marker() -> Dictionary:
+	if current_system != SystemDB.SOL or not ship.newton or ship.landing_site_id == HOME_PAD_ID:
+		return {}
+	var sampler := planets.terrain_sampler_for("Earth")
+	if sampler == null:
+		return {}
+	for site in sampler.facilities:
+		if site.id != HOME_PAD_ID: continue
+		var xf: Transform3D = site.transform
+		var basis := eph.surface_basis("Earth")
+		var rel: Vector3 = planets.rel_of("Earth")+basis*xf.origin
+		var height := INF
+		if ship.anchor_name == "Earth":
+			var offset: Vector3 = ship.body_local(basis, ship.anchor_off, true, eph.surface_angle("Earth"))-xf.origin
+			rel = basis*-offset
+			height = (xf.basis.inverse()*offset).y
+		var d := rel.length()
+		var dist := "%.0f m" % (d*1000.0) if d < 1.0 else ("%.1f km" % d if d < 100.0 else _fmt_nav_dist(d))
+		if height < 5.0 and d < 10.0:
+			dist += "  ·  %.0f m ABOVE PAD" % maxf(height*1000.0, 0.0)
+		return {"rel": rel, "name": "HOME  %s" % site.name, "dist": dist, "color": Navigator.HOME_COL}
+	return {}
 
 
 # The current guidance objective:
@@ -1325,17 +1301,11 @@ func _update_navigator() -> void:
 #  • In any normal system — the nearest UN-surveyed star to fly to. Once they're all
 #    surveyed, fall back to guiding you to the exit gate so you know to move on.
 func _current_objective() -> Dictionary:
-	# Initial phase: onboarding's final step asks the player to reach the wormhole, so
-	# point the guide arrow straight at the gate (overriding nearby-star targeting) — they
-	# can't miss where to go.
-	if onboarding.current_step_id() == "wormhole":
-		return _nearest_gate_objective()
 	# The hub has no bodies — guide to the nearest gate to dive into.
 	if current_system == SystemDB.INTERSTELLAR:
 		return _nearest_gate_objective()
 	# QUEST FIRST: with nothing explicitly tracked, the arrow points at the nearest UNSURVEYED
-	# body — the next mission to finish right here. Once the system is fully surveyed it falls
-	# back to the nearest wormhole (the way onward), so the arrow's never dead.
+	# body — the next mission to finish right here.
 	var best := ""
 	var best_d := INF
 	var best_rel := Vector3.ZERO
@@ -1350,7 +1320,7 @@ func _current_objective() -> Dictionary:
 			best_rel = rel
 	if best != "":
 		return { "name": best, "rel": best_rel }
-	return _nearest_gate_objective()
+	return {}
 
 func _nearest_gate_objective() -> Dictionary:
 	if wormhole == null:
@@ -1392,8 +1362,7 @@ func _update_quests() -> void:
 	if _active_quest != "":
 		var qsys := MissionDB.system_of(_active_quest)
 		var where: String = "here — survey it" if qsys == current_system else "→ %s" % SystemDB.display_name(qsys)
-		hud.set_quest("✦  TRACKING · %s   (%s · %d coins)"
-			% [MissionDB.title_for(_active_quest), where, MissionDB.reward(_active_quest)])
+		hud.set_quest("✦  TRACKING · %s   (%s)" % [MissionDB.title_for(_active_quest), where])
 		return
 	var next_body := ""
 	var nd := INF
@@ -1405,8 +1374,7 @@ func _update_quests() -> void:
 			nd = d
 			next_body = body
 	if next_body != "":
-		hud.set_quest("✦  MISSION · %s   —  survey %s  (%d coins)"
-			% [MissionDB.title_for(next_body), next_body, MissionDB.reward(next_body)])
+		hud.set_quest("✦  MISSION · %s   —  survey %s" % [MissionDB.title_for(next_body), next_body])
 	else:
 		var total := 0
 		var done := 0
@@ -1638,7 +1606,6 @@ var _surface_position_revision := -1
 func _update_skin_kill(_delta: float) -> void:
 	# Historical name retained for callers. Surface contact is now non-lethal
 	# and independent of FlightMode.kill_allowed()/the developer death toggle.
-	ship.surface_impact = false
 	if _surface_position_revision != ship.surface_position_revision:
 		_prev_body = ""
 		_surface_position_revision = ship.surface_position_revision
@@ -1656,15 +1623,15 @@ func _update_skin_kill(_delta: float) -> void:
 	var body_basis: Basis = planets.surface_basis(body)
 	var position: Vector3 = body_basis.inverse() * -planets.rel_of(body)
 	var previous: Vector3 = _prev_from_centre if _prev_body == body else position
+	_prev_from_centre = position
+	_prev_body = body
+	if ship.surface_contact_owned(body):
+		return  # fly() already resolved this ground in its own substeps
 	var contact := ship.resolve_surface_motion(sampler, previous, position,
 		body_basis.inverse() * ship.velocity, planets.nearest_radius, body_basis)
 	var corrected: Vector3 = contact.position
-	ship.anchor_off += body_basis * (corrected - position)
-	if contact.hit or contact.budget_limited:
-		ship.velocity = body_basis * (contact.velocity as Vector3)
-	ship.surface_impact = bool(contact.hit)
+	ship.apply_surface_contact(contact, body_basis, position)
 	_prev_from_centre = corrected
-	_prev_body = body
 	if corrected.distance_squared_to(position) > 0.0000001:
 		# Update floating-origin visuals immediately, so the corrected ship cannot
 		# appear embedded for one frame. delta=0 avoids advancing orbital time twice.
@@ -1703,8 +1670,8 @@ func _skin_finish() -> void:
 	if who == "" or who == "Sun":
 		park = "Earth"
 	_anchor_ship(park)
-	ship.anchor_off = Ephemeris.geo_start_pos() if ship.anchor_name == "Earth" \
-		else Ephemeris.sweet_spot_off(ship.anchor_name)
+	ship.relocate(Ephemeris.geo_start_pos() if ship.anchor_name == "Earth" \
+		else Ephemeris.sweet_spot_off(ship.anchor_name))
 	ship.velocity = Vector3.ZERO
 	ship.face_toward(-ship.anchor_off)
 	combat.player_hp = ship.max_hp
@@ -1748,7 +1715,7 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 	# Fly-arrive passes your preserved local offset (no teleport); wormhole/map use the system's pad.
 	# Every arrival coordinate is a small LOCAL one, so the frame resets to Earth's origin.
 	ship.set_anchor("Earth")
-	ship.anchor_off = at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id)
+	ship.relocate(at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id))
 	ship.transiting = false
 	galaxy.reset_distance()                   # back in a normal system → core is ~26,000 ly away again
 	ship.face_toward(-ship.anchor_off)        # look back toward the system's star
@@ -1776,8 +1743,8 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 	# (fast-travel, teleport home) are silent — the reward is for discovery, not commuting.
 	if first_visit and system_id != SystemDB.SOL:
 		GameState.coins += GameState.ARRIVAL_REWARD
-		hud.toast = "✦  NEW SYSTEM — %s   ·   +%d coins   ·   %s (%d charted)" \
-			% [SystemDB.display_name(system_id), GameState.ARRIVAL_REWARD, survey_rank_title(), survey_rank()]
+		hud.toast = "✦  NEW SYSTEM — %s   ·   %s (%d charted)" \
+			% [SystemDB.display_name(system_id), survey_rank_title(), survey_rank()]
 		hud.toast_t = 5.0
 		var lore: String = SystemDB.lore(system_id)
 		if lore != "":
@@ -1826,13 +1793,8 @@ func _input(event: InputEvent) -> void:
 	elif key == KEY_R and not get_tree().paused:
 		ship.toggle_hardpoints()
 	elif key == KEY_F:
-		# One interact key: undock if docked, else open the wormhole if near it,
-		# else dock if near the station.
 		if docked:
 			_set_docked(false)
-		elif wormhole.in_range(ship):
-			wormhole.start_transit()
-			ship.transiting = true
 		elif _dock_in_range:
 			_set_docked(true)
 	elif key == KEY_TAB:
@@ -1845,15 +1807,6 @@ func _input(event: InputEvent) -> void:
 		hud.toast_t = 2.0
 	elif key == KEY_N:
 		toggle_nav()          # keyboard shortcut for the ⊘ NAV stop/resume button
-	elif key == KEY_C and Input.get_mouse_mode() == Input.MOUSE_MODE_CAPTURED \
-			and Input.is_physical_key_pressed(KEY_W):
-		# W + C = cinematic drift-flip. A/D picks the side (default right).
-		var fd := 1.0
-		if Input.is_physical_key_pressed(KEY_A):
-			fd = -1.0
-		elif Input.is_physical_key_pressed(KEY_D):
-			fd = 1.0
-		ship.do_flip(fd)
 	elif key == KEY_ESCAPE and not ship.transiting and not ship.frozen:
 		# Esc = release the mouse; press again to re-capture (back to flight).
 		ship._set_capture(Input.get_mouse_mode() != Input.MOUSE_MODE_CAPTURED)
@@ -1902,14 +1855,9 @@ func _update_debug(delta: float) -> void:
 func _update_dock_ui() -> void:
 	if _tp_active:
 		return                       # the teleport ritual owns the centered overlay
-	# Wormhole transit takes over the screen with its countdown.
 	if ship.transiting:
-		var rem := wormhole.transit_remaining()
 		hud.set_prompt("")
 		hud.set_hangar(false, PackedStringArray(), 0, "")
-		hud.set_menu("— WORMHOLE TRANSIT —\n\n→ %s   ·   %.0f ly\n(light would take %.0f years)\n\nArriving in  %d:%02d"
-			% [SystemDB.display_name(wormhole.dest_id), wormhole.dest_ly, wormhole.dest_ly,
-			int(rem) / 60, int(rem) % 60])
 		return
 
 	hud.set_menu("")
@@ -1945,9 +1893,6 @@ func _update_dock_ui() -> void:
 			hud.set_prompt("[F] Dock · %s" % dock_name)
 		elif props.probe_in_range:
 			hud.set_prompt(_probe_readout())   # drift up to a probe -> monster data
-		elif wormhole.in_range(ship):
-			hud.set_prompt("» Press F to enter the wormhole to %s  (%.0f ly) «"
-				% [SystemDB.display_name(wormhole.dest_id), wormhole.dest_ly])
 		else:
 			hud.set_prompt("")
 
@@ -1960,9 +1905,6 @@ func _probe_readout() -> String:
 	if int(t.total) <= 0:
 		return out + "No hostiles detected in this sector."
 	out += "Hostiles: %d / %d active\n" % [t.alive, t.total]
-	var boss: Dictionary = t.boss
-	if boss.alive:
-		out += "⚠ %s present — %d/%d HP\n" % [String(boss.get("name", "VORTEX")).to_upper(), boss.hp, boss.max]
 	return out + "Confirmed kills: %d" % t.kills
 
 

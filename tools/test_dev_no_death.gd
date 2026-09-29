@@ -42,7 +42,7 @@ func _initialize() -> void:
 	failed += _check("skin_kill_and_core_hazard_found", skin_kill_at >= 0 and core_hazard_at >= 0)
 	var contact_src := main_src.substr(skin_kill_at, main_src.find("func _skin_begin(") - skin_kill_at)
 	failed += _check("contact_is_not_death_gated", contact_src.find("if not FlightMode.kill_allowed()") < 0)
-	failed += _check("contact_resolves_motion", contact_src.find("resolve_motion") >= 0)
+	failed += _check("contact_resolves_motion", contact_src.find("resolve_surface_motion(") >= 0)
 
 	failed += _check("core_hazard_checks_kill_allowed",
 		main_src.find("FlightMode.kill_allowed()", core_hazard_at) >= 0 \

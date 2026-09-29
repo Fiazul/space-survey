@@ -228,14 +228,25 @@ var true_pos: Vector3:
 	get:
 		return _AF.absolute(anchor64(), anchor_off)
 	set(value):
-		anchor_off = _AF.decompose(value, anchor64())
-		surface_position_revision += 1
+		relocate(_AF.decompose(value, anchor64()))
 var speed_limit := INF         # set by main from PlanetSystem; eases us down near a body
 # The nearest body's shared height function, assigned by main each frame. The SAME
 # instance the ground rings and the contact kill use - three readers, one function.
 var terrain: TerrainSampler
-var terrain_basis := Basis.IDENTITY
+var terrain_basis := Basis.IDENTITY:
+	set(value):
+		terrain_basis = value
+		_terrain_angle = NAN
+# The ephemeris spin angle terrain_basis was built from, when it is a pure Y
+# spin. Co-rotation advances this double instead of multiplying float32 bases,
+# so physics and the rendered ground never disagree by a metre per frame.
+var _terrain_angle := NAN
 var surface_impact := false
+# Body and revision whose ground this frame's fly() resolved (or whose pad it
+# held), so main's pass never re-resolves that contact in a second, float-offset
+# frame. A relocation or a nearest-body change hands the contact back to main.
+var _surface_owned_revision := -1
+var _surface_owned_body := ""
 var nearest_dir := Vector3.ZERO  # toward nearest body; we only ease down when approaching it
 var nearest_name := ""           # body F10 / tape use (Sun when you're at the Sun)
 var nearest_dist := INF        # distance to nearest body; set by main (warp arrival ease-out)
@@ -383,6 +394,18 @@ func anchor64() -> PackedFloat64Array:
 	return Ephemeris.pos64(anchor_name)   # Earth's own pos64 is already ZERO64
 
 
+# Every discontinuous move (boot, teleport, respawn, arrival, dev jump) comes
+# through here, so no sweep spans the jump and no pad lock or landed state
+# survives it to snap the ship back.
+func relocate(offset: Vector3) -> void:
+	anchor_off = offset
+	surface_position_revision += 1
+	landed = false
+	landing_site = ""
+	landing_site_id = ""
+	_pad_release = 0.0
+
+
 # Move the physical state onto another body without moving the ship. Returns the
 # frame shift (new anchor minus old) so main can carry combat's entities with it;
 # Vector3.ZERO means nothing changed. Craft (Voyager 1/2) are never anchorable —
@@ -439,8 +462,7 @@ func _debug_circularize() -> void:
 
 func _debug_geo_park() -> void:
 	pending_frame_shift += set_anchor("Earth")
-	anchor_off = Ephemeris.geo_start_pos()
-	surface_position_revision += 1
+	relocate(Ephemeris.geo_start_pos())
 	velocity = Vector3.ZERO
 	face_toward(-anchor_off)
 	_kill_turn_rates()
@@ -756,6 +778,22 @@ func _newton_corotate(dt: float) -> void:
 	# Keep fractional travel across the rotating frame. A float32 rotation
 	# invalidates _advance_anchor's remainder every frame; gentle takeoff then
 	# shows upward velocity while its sub-metre position steps round to zero.
+	_rotate_anchor(ang)
+	velocity = velocity.rotated(Vector3.UP, ang)
+	rotate(Vector3.UP, ang)
+	orthonormalize()
+	_cam_basis = _cam_basis.rotated(Vector3.UP, ang).orthonormalized()
+	_spin_terrain_frame(ang)
+
+
+# The only way main binds the surface frame: basis and spin angle together
+# (NAN angle when the frame is not a pure Y spin).
+func set_terrain_frame(basis: Basis, angle := NAN) -> void:
+	terrain_basis = basis
+	_terrain_angle = angle
+
+
+func _rotate_anchor(ang: float) -> void:
 	var remainder := _motion_remainder if _motion_is_continuous() else Vector3.ZERO
 	var x := float(anchor_off.x) + float(remainder.x)
 	var y := float(anchor_off.y) + float(remainder.y)
@@ -767,15 +805,19 @@ func _newton_corotate(dt: float) -> void:
 	_motion_position = anchor_off
 	_motion_anchor = anchor_name
 	_motion_revision = surface_position_revision
-	velocity = velocity.rotated(Vector3.UP, ang)
-	rotate(Vector3.UP, ang)
-	orthonormalize()
-	_cam_basis = _cam_basis.rotated(Vector3.UP, ang).orthonormalized()
-	terrain_basis = (Basis(Vector3.UP, ang)*terrain_basis).orthonormalized()
 
 
-func surface_clearance_km() -> float:
-	var up := anchor_off.normalized()
+func _spin_terrain_frame(ang: float) -> void:
+	if is_finite(_terrain_angle):
+		set_terrain_frame(Basis(Vector3.UP, _terrain_angle + ang), _terrain_angle + ang)
+	else:
+		terrain_basis = (Basis(Vector3.UP, ang)*terrain_basis).orthonormalized()
+
+
+# `up` is the contact body's local vertical; the default is the anchor's, which
+# is wrong for any other nearest body (Moon while anchored to Earth).
+func surface_clearance_km(up := Vector3.ZERO) -> float:
+	if up == Vector3.ZERO: up = anchor_off.normalized()
 	var basis := transform.basis * _mesh_root.basis if _mesh_root != null else transform.basis
 	var lowest := 0.0
 	for point in _hull_probes:
@@ -801,7 +843,7 @@ func resolve_surface_motion(sampler: TerrainSampler, from: Vector3, to: Vector3,
 			and systems != null and systems.gear_fraction >= .999 and landing_site.is_empty():
 		landing_site = pad.name
 		landing_site_id = pad.id
-		_pad_position = hit.position
+		hit["seat"] = SurfaceFacility.seat_offset(pad, hit.position, pose, feet, ShipSurfaceContact.SKIN)
 		_pad_attitude = (body_basis.inverse()*transform.basis).orthonormalized()
 		_pad_revision = surface_position_revision
 		debug_toast = "%s / PAD LOCKED" % landing_site
@@ -863,19 +905,57 @@ func prepare_weapons() -> void:
 
 
 func _newton_ground(previous: Vector3 = Vector3.INF) -> void:
-	if not nearest_name.is_empty() and nearest_name != anchor_name:
+	if (not nearest_name.is_empty() and nearest_name != anchor_name) or terrain == null:
+		landed = false  # main resolves other bodies; the anchor's ground is not under us
 		return
-	if terrain == null:
-		return  # first-frame fallback is resolved by main after binding the body
-	var start := anchor_off if previous == Vector3.INF else previous
-	var inverse := terrain_basis.inverse()
-	var contact := resolve_surface_motion(terrain, inverse * start, inverse * anchor_off,
-		inverse * velocity, anchor_radius_km(), terrain_basis)
-	# A miss must leave inertial coordinates untouched. Rotating out and back
-	# loses metres at large radii and invalidates fractional-motion accumulation.
+	var local_now := terrain_local(anchor_off, true)
+	var local_start := local_now if previous == Vector3.INF else terrain_local(previous)
+	var contact := resolve_surface_motion(terrain, local_start, local_now,
+		terrain_basis.inverse() * velocity, anchor_radius_km(), terrain_basis)
+	apply_surface_contact(contact, terrain_basis, local_now)
+	_own_surface()
+
+
+func _own_surface() -> void:
+	_surface_owned_revision = surface_position_revision
+	_surface_owned_body = anchor_name
+
+
+func surface_contact_owned(body: String) -> bool:
+	return _surface_owned_revision == surface_position_revision and _surface_owned_body == body
+
+
+# Body-frame position of an anchor offset, rotated in double precision and
+# rounded once. A float32 Basis*Vector3 at Earth radius adds several ULPs
+# (metres) of error; with_remainder adds the sub-ULP travel not yet in anchor_off.
+# A finite spin angle replaces the float32 basis entries (3e-8 each, 0.2 m here).
+func body_local(basis: Basis, offset: Vector3, with_remainder := false, angle := NAN) -> Vector3:
+	var remainder := _motion_remainder if with_remainder and _motion_is_continuous() else Vector3.ZERO
+	var x := float(offset.x) + float(remainder.x)
+	var y := float(offset.y) + float(remainder.y)
+	var z := float(offset.z) + float(remainder.z)
+	if is_finite(angle):
+		return Vector3(cos(angle)*x - sin(angle)*z, y, sin(angle)*x + cos(angle)*z)
+	return Vector3(float(basis.x.x)*x + float(basis.x.y)*y + float(basis.x.z)*z,
+		float(basis.y.x)*x + float(basis.y.y)*y + float(basis.y.z)*z,
+		float(basis.z.x)*x + float(basis.z.y)*y + float(basis.z.z)*z)
+
+
+func terrain_local(offset: Vector3, with_remainder := false) -> Vector3:
+	return body_local(terrain_basis, offset, with_remainder, _terrain_angle)
+
+
+# The one writer for contact corrections, ship substeps and main's pass alike.
+# Only the small body-frame correction is rotated, and it goes through
+# _advance_anchor: at 1.4 km of co-rotation per frame, dropping the sub-ULP
+# remainder on every supported frame walks a resting hull metres per second.
+func apply_surface_contact(contact: Dictionary, body_basis: Basis, local_now: Vector3) -> void:
 	if contact.hit or contact.budget_limited:
-		anchor_off += terrain_basis*((contact.position as Vector3)-inverse*anchor_off)
-		velocity = terrain_basis * (contact.velocity as Vector3)
+		var move: Vector3 = contact.delta if contact.has("delta") else (contact.position as Vector3)-local_now
+		_advance_anchor(body_basis*move)
+		velocity = body_basis*(contact.velocity as Vector3)
+	if contact.has("seat"):
+		_advance_anchor(body_basis*(contact.seat as Vector3))
 	surface_impact = surface_impact or bool(contact.hit)
 
 # True while the galactic drive is carrying us — the drive hull, spooled up, in clear deep space.
@@ -931,11 +1011,11 @@ var _rcs_braking := false
 var landed := false
 var landing_site := ""
 var landing_site_id := ""
-var _pad_position := Vector3.ZERO
 var _pad_attitude := Basis.IDENTITY
 var _pad_revision := -1
 var _pad_release := 0.0
 var support_accel := Vector3.ZERO
+var jet_accel := Vector3.ZERO   # support + strafe/lift jets this frame, main engine excluded
 var _support_visual_accel := Vector3.ZERO
 var support_active := false
 var _hull_box := AABB(Vector3(-.02, -.01, -.04), Vector3(.04, .02, .08))
@@ -1053,6 +1133,7 @@ func _in_yaw() -> float:
 # Called every frame by main.gd, before the world is rebuilt around the ship.
 func _clear_air_fx() -> void:
 	support_accel = Vector3.ZERO
+	jet_accel = Vector3.ZERO
 	_support_visual_accel = Vector3.ZERO
 	support_active = false
 	air_load = 0.0
@@ -1069,7 +1150,7 @@ func restore_facility_attachment(id: String, sampler: TerrainSampler, body_basis
 	systems.gear_target = true
 	systems.gear_fraction = 1.0
 	systems.pose()
-	var position_body := body_basis.inverse()*anchor_off
+	var position_body := body_local(body_basis, anchor_off, true)
 	var attitude := (body_basis.inverse()*transform.basis).orthonormalized()
 	var pad := SurfaceFacility.pad_at(sampler.facilities,position_body,attitude,systems.foot_points())
 	if pad.is_empty() or pad.id != id:
@@ -1081,7 +1162,6 @@ func restore_facility_attachment(id: String, sampler: TerrainSampler, body_basis
 	terrain_basis = body_basis
 	landing_site = pad.name
 	landing_site_id = pad.id
-	_pad_position = position_body
 	_pad_attitude = attitude
 	_pad_revision = surface_position_revision
 	landed = true
@@ -1089,6 +1169,40 @@ func restore_facility_attachment(id: String, sampler: TerrainSampler, body_basis
 	reset_mesh_pose()
 	return true
 
+
+# Support jets only matter against ground: active assistance, or a gear-down
+# hull within the assistant's 2 km envelope of a solid surface in Sol.
+func _support_jets_in_use() -> bool:
+	if support_active: return true
+	if not newton or terrain == null or anchor_name != nearest_name or not bool(terrain.surface.get("solid", false)):
+		return false
+	return terrain.alt_above_ground_km(terrain_local(anchor_off, true), anchor_radius_km()) < 2.0
+
+
+# Boot/dev start on a named pad: one discontinuous move, then the sub-ULP seat
+# goes through _advance_anchor so the restore check sees the feet on the deck.
+func berth_on_pad(id: String, sampler: TerrainSampler, body_basis: Basis, angle := NAN) -> bool:
+	if sampler == null or systems == null:
+		return false
+	for site in sampler.facilities:
+		if site.id != id: continue
+		var xf: Transform3D = site.transform
+		systems.gear_target = true
+		systems.gear_fraction = 1.0
+		systems.pose()
+		reset_mesh_pose()
+		var lowest := 0.0
+		for foot in systems.foot_points(): lowest = maxf(lowest, -foot.y)
+		transform.basis = body_basis*xf.basis
+		_cam_basis = transform.basis
+		relocate(body_basis*(xf*Vector3(0, lowest+ShipSurfaceContact.SKIN, 0)))
+		velocity = Vector3.ZERO
+		set_terrain_frame(body_basis, angle)
+		var pose := (body_basis.inverse()*transform.basis).orthonormalized()
+		var seat := SurfaceFacility.seat_offset(site, body_local(body_basis, anchor_off, true), pose, systems.foot_points(), ShipSurfaceContact.SKIN)
+		_advance_anchor(body_basis*seat)
+		return restore_facility_attachment(id, sampler, body_basis)
+	return false
 
 func _apply_landing_support(delta: float, input: Vector3, manual_accel: Vector3) -> void:
 	# The assistant is automatic; gear authorizes landing, not hazard protection.
@@ -1102,7 +1216,7 @@ func _apply_landing_support(delta: float, input: Vector3, manual_accel: Vector3)
 	var up := anchor_off.normalized()
 	if transform.basis.y.dot(up) < .85:
 		return
-	var local_position := terrain_basis.inverse()*anchor_off
+	var local_position := terrain_local(anchor_off, true)
 	var clearance := terrain.alt_above_ground_km(local_position,anchor_radius_km())-surface_clearance_km()
 	if clearance > 2.0:
 		return
@@ -1177,6 +1291,7 @@ func _hold_facility_pad(delta: float) -> bool:
 		landing_site_id = ""
 		_pad_release = 0.0
 	if landing_site.is_empty(): return false
+	_own_surface()
 	if Input.is_physical_key_pressed(KEY_SPACE) or touch_pitch < -.1:
 		landing_site = ""
 		landing_site_id = ""
@@ -1199,9 +1314,13 @@ func _hold_facility_pad(delta: float) -> bool:
 	time_rate = 1.0
 	_time_idx = 0
 	_warp_charge = 0.0
-	var spin := Basis(Vector3.UP, Ephemeris.scene_spin_rad_s(anchor_name)*delta)
-	terrain_basis = (spin*terrain_basis).orthonormalized()
-	anchor_off = terrain_basis*_pad_position
+	var ang := Ephemeris.scene_spin_rad_s(anchor_name)*delta
+	var spin := Basis(Vector3.UP, ang)
+	# Ride the pad by rotating the double-precision offset with the body, as
+	# airborne co-rotation does. Rebuilding terrain_basis*pad each frame through
+	# float32 re-quantised the berth by up to 0.49 m per axis every frame.
+	_rotate_anchor(ang)
+	_spin_terrain_frame(ang)
 	transform.basis = terrain_basis*_pad_attitude
 	_cam_basis = (spin*_cam_basis).orthonormalized()
 	_free_look = _want_free_look(delta)
@@ -1221,8 +1340,11 @@ func _hold_facility_pad(delta: float) -> bool:
 
 func fly(delta: float) -> void:
 	simulation_delta = delta
+	surface_impact = false
+	_surface_owned_revision = -1
 	if frozen or transiting or locked or not landing_site.is_empty(): _level_idle_s = 0.0
 	support_accel = Vector3.ZERO
+	jet_accel = Vector3.ZERO
 	_support_visual_accel = Vector3.ZERO
 	support_active = false
 	update_weapon_environment()
@@ -1467,6 +1589,7 @@ func fly(delta: float) -> void:
 	if local_accel.length_squared() > 0.0001:
 		velocity += (transform.basis * local_accel) * boost * delta
 	_apply_landing_support(delta,Vector3(strafe,lift,fwd),local_accel)
+	jet_accel = support_accel+(transform.basis*Vector3(local_accel.x, local_accel.y, 0.0))*boost
 	_rcs_command = _mesh_root.basis.inverse() * Vector3(_strafe, _lift, 0.0)
 	if braking:
 		var hull_velocity := (transform.basis * _mesh_root.basis).inverse() * velocity
@@ -1633,10 +1756,15 @@ func fly(delta: float) -> void:
 
 	# --- Engine voice: loop while we're on the gas, with start/stop whooshes ---
 	if audio:
-		var thrusting := local_accel != Vector3.ZERO or flipping
+		var thrusting := local_accel != Vector3.ZERO or flipping or support_active
 		var ship_name: String = SHIP_MODELS[_current_model].name
+		# Lift-off and hover run on the support jets: voice them by vertical effort,
+		# so the pad departure is heard rather than a 0.18 idle hiss.
+		var voice := clampf(throttle, 0.0, 1.0)
+		if _in_fwd() <= 0.0 and systems != null and systems.gear_target and _support_jets_in_use():
+			voice = maxf(voice, clampf(.35+.65*maxf(absf(_lift), support_accel.length()/LandingThrusters.MAX_ACCEL), 0.0, 1.0))
 		# During the leap, force the boost voice so you HEAR the push.
-		audio.update_engine(ship_name, thrusting, clampf(throttle, 0.0, 1.0), boost > 1.0 or flipping, _engine_pitch, delta)
+		audio.update_engine(ship_name, thrusting, voice, boost > 1.0 or flipping, _engine_pitch, delta)
 		audio.update_air(air_load, mach_number, delta)
 	if _engine_mat:  # fallback ship only
 		var e := 2.0 + throttle * 4.0

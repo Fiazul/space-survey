@@ -36,6 +36,7 @@ var planets: PlanetSystem
 var combat: Combat           # for HP / kills readout
 @onready var codex := Codex   # autoload; discovery progress
 var origin_name := "Earth"   # what the distance readout measures from (per system)
+var physical_system_name := "SOL"   # physical systems name their star
 
 var toast := ""              # transient "✓ discovered" message
 var toast_t := 0.0
@@ -1652,7 +1653,7 @@ func refresh() -> void:
 	_flight_vector.ship = ship
 	_flight_vector.show_nose = not _reticle.visible
 	_flight_vector.queue_redraw()
-	_dist_label.text = "%s  /  %s" % ["SOL" if ship.newton else origin_name.to_upper(), ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
+	_dist_label.text = "%s  /  %s" % [physical_system_name if ship.newton else origin_name.to_upper(), ship.nearest_name.to_upper() if not ship.nearest_name.is_empty() else "DEEP SPACE"]
 	var spd := ship.velocity.length()
 	_mode_label.text = str(ship.flight_mode) + "   ·   RELATIVE SPEED" if ship.newton else ""
 	_speed_label.text = _fmt_speed(spd)

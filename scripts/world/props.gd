@@ -178,6 +178,9 @@ func _ready() -> void:
 # Switch to a system: show only its props and recompute the dock target. Called
 # by main on arrival (replaces the old Sol-only visibility toggle).
 func set_system(id: String) -> void:
+	# Authored props sit in arcade units; a physical non-Sol system shows none of them.
+	if id != SystemDB.SOL and SystemDB.is_physical(id):
+		id = ""
 	current_system = id
 	if id == SystemDB.SOL:
 		_park_sol_at_geo()

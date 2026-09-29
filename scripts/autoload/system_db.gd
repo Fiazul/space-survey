@@ -81,7 +81,7 @@ static var STARS := [
 # helpers work); `map` overrides the 2D chart position for the imaginary Alien zone.
 static var AUTHORED := [
 	{ "id": SOL, "name": "Sol", "ly": 0.0, "ra": 0.0, "dec": 0.0, "spectral": "G2V", "color": Color(1.00, 0.85, 0.30) },
-	{ "id": PROXIMA, "name": "Proxima b", "ly": 4.24, "ra": 217.429, "dec": -62.679, "spectral": "M5.5V", "color": Color(1.00, 0.40, 0.24) },
+	{ "id": PROXIMA, "name": "Proxima b", "star_name": "Proxima Centauri", "planet_prefix": "Proxima", "ly": 4.24, "ra": 217.429, "dec": -62.679, "spectral": "M5.5V", "color": Color(1.00, 0.40, 0.24), "physical": true },
 	{ "id": TRAPPIST, "name": "TRAPPIST-1", "ly": 39.0, "ra": 346.622, "dec": -5.041, "spectral": "M8V", "color": Color(1.00, 0.50, 0.30) },
 	{ "id": K2_18, "name": "K2-18", "ly": 124.0, "ra": 172.560, "dec": 7.588, "spectral": "M2.5V", "color": Color(1.00, 0.45, 0.28) },
 	{ "id": ALIEN, "name": "Alien Zone", "ly": 666.0, "ra": 0.0, "dec": 0.0, "spectral": "—", "color": Color(0.95, 0.15, 0.12), "hostile": true, "map": Vector2(-30.0, -26.0) },
@@ -122,6 +122,15 @@ static func id_for_name(nm: String) -> String:
 		if str(_rows()[id].get("name", "")) == nm:
 			return id
 	return ""
+
+# Physical systems fly at 1 km units with Newton and anchoring (Ephemeris.system_for).
+static func is_physical(id: String) -> bool:
+	return id == SOL or bool(_row(id).get("physical", false))
+
+
+static func star_row(id: String) -> Dictionary:
+	return _row(id)
+
 
 static func light_years(id: String) -> float:
 	return float(_row(id).get("ly", 0.0))
@@ -430,18 +439,22 @@ static func portals(id: String) -> Array:
 	var out := []
 	var base := coord(id) if id != INTERSTELLAR else Vector3(0.0, 3.0, 0.0)
 	var nbs := neighbors(id)
+	# Physical systems hang their gates around the spawn world at Sol's gate radius.
+	var physical := is_physical(id)
+	var eph = Ephemeris.system_for(id) if physical else null
+	var centre: Vector3 = eph.scene_pos(eph.spawn_body) if physical else Vector3.ZERO
 	var i := 0
 	for nb in nbs:
 		var nb_coord := coord(nb) if nb != INTERSTELLAR else Vector3(0.0, 3.0, 0.0)
 		var dir := nb_coord - base
 		dir = dir.normalized() if dir.length() > 0.001 else Vector3(0.0, 0.0, -1.0)
 		# Spread gates in height so near-parallel directions don't overlap.
-		var gate_r: float = PORTAL_LOCAL_R_SOL if id == SOL else PORTAL_LOCAL_R
+		var gate_r: float = PORTAL_LOCAL_R_SOL if physical else PORTAL_LOCAL_R
 		var lift := 220.0 * (float(i) - (nbs.size() - 1) * 0.5)
-		if id == SOL:
+		if physical:
 			lift *= 80.0
 		out.append({
-			"pos": dir * gate_r + Vector3(0.0, lift, 0.0),
+			"pos": centre + dir * gate_r + Vector3(0.0, lift, 0.0),
 			"dest": nb,
 			"dest_ly": maxf(base.distance_to(nb_coord), 0.1),
 		})
@@ -450,6 +463,8 @@ static func portals(id: String) -> Array:
 
 
 static func bodies(id: String) -> Array:
+	if id != SOL and is_physical(id):
+		return sol_from(Ephemeris.system_for(id).live_worlds())
 	match id:
 		INTERSTELLAR: return _interstellar()
 		SOL:      return _sol()
@@ -495,6 +510,9 @@ static func sol_from(worlds: Array) -> Array:
 			b["model"] = p.model
 		if p.has("parent"):
 			b["parent"] = p.parent
+		for k in ["kind", "air_amount", "spectral"]:
+			if p.has(k):
+				b[k] = p[k]
 		out.append(b)
 	return out
 

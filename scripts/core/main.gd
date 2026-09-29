@@ -187,7 +187,7 @@ func _ready() -> void:
 	ship = Ship.new()
 	add_child(ship)
 	ship.load_customization(GameState.customization)
-	ship.set_anchor("Earth")
+	ship.set_anchor(Ephemeris.spawn_body())
 	ship.relocate(Ephemeris.geo_start_pos())
 	ship.face_toward(-ship.anchor_off)   # open looking at Earth (the origin)
 	ship.newton = true                 # Sol: real pull, parked spawn falls
@@ -220,7 +220,7 @@ func _ready() -> void:
 	# This lets ambient + self-emission stay low, so the hull keeps its panel
 	# detail instead of washing pale. Stars/planets are emissive/unshaded, so the
 	# "dots and glow" look is untouched. Shadows off = nearly free on a potato.
-	var sun_dir: Vector3 = eph.scene_pos("Sun").normalized()
+	var sun_dir: Vector3 = eph.rel_km(eph.primary_star, eph.spawn_body()).normalized()
 	_sun_light = DirectionalLight3D.new()
 	var sun_light := _sun_light
 	sun_light.light_energy = 1.05
@@ -385,7 +385,8 @@ func _restore_location() -> void:
 				ship._cam_basis = ship.transform.basis
 		else:
 			ship.face_toward(-_saved_off)
-	elif _has_saved_pos and _saved_pos.length() > 0.001:
+	elif _has_saved_pos and _saved_pos.length() > 0.001 \
+			and not (Ephemeris.is_physical_system() and current_system != SystemDB.SOL):
 		ship.true_pos = _saved_pos
 		ship.face_toward(-_saved_pos)
 	# Pre-1:1 Sol saves sit inside the real Earth. Night-side GEO saves stare at
@@ -445,7 +446,7 @@ func _anchor_ship(who: String) -> void:
 func _update_solar_light() -> void:
 	if _sun_light == null or _fill_light == null:
 		return
-	var direction := (eph.rel_km("Sun",ship.anchor_name)-ship.anchor_off).normalized() if ship.newton else -ship.true_pos.normalized()
+	var direction := (eph.rel_km(eph.primary_star,ship.anchor_name)-ship.anchor_off).normalized() if ship.newton else -ship.true_pos.normalized()
 	if direction.length_squared() < .1:
 		return
 	var up := Vector3.RIGHT if absf(direction.dot(Vector3.UP)) > .98 else Vector3.UP
@@ -473,11 +474,11 @@ func _process(delta: float) -> void:
 		combat.shift_frame(ship.pending_frame_shift)
 		ship.pending_frame_shift = Vector3.ZERO
 	_pt = _perf_t0()
-	# Outside Sol the anchor is Earth internally (ADR §6 — anchor_off IS the
-	# absolute position there), but PlanetSystem must see "" so it keeps the
+	# In an arcade system the anchor is Earth internally (ADR §6 — anchor_off IS
+	# the absolute position there), but PlanetSystem must see "" so it keeps the
 	# plain subtraction against the arcade system's OWN bodies rather than
 	# rel_km-ing against Sol's Earth/Sun (finding 4).
-	var refresh_anchor := ship.anchor_name if current_system == SystemDB.SOL else ""
+	var refresh_anchor := ship.anchor_name if Ephemeris.is_physical_system() else ""
 	planets.refresh(ship.anchor_off, delta, refresh_anchor, ship.velocity)
 	_perf_mark("planets_refresh", _pt)
 	_reanchor_to_nearest()
@@ -642,7 +643,7 @@ func _update_scan(delta: float) -> void:
 		_scan_name = ""
 		return
 	var captured := codex.is_discovered(name)
-	var guarded := current_system != SystemDB.SOL and _is_guarded(name)
+	var guarded := not Ephemeris.is_physical_system() and _is_guarded(name)
 	if guarded and not captured and planets.nearest_dist < GUARD_RANGE \
 			and combat.guard_body != name and not combat.guard_boss_alive() \
 			and not ship.transiting and not docked:
@@ -1666,16 +1667,17 @@ func _skin_finish() -> void:
 	ship.reset_mesh_pose()
 	# Park in the dead body's OWN frame: anchor there first, then the offset is
 	# the sweet spot measured from its centre — no absolute round-trip.
+	var home := Ephemeris.spawn_body()
 	var park := who
-	if who == "" or who == "Sun":
-		park = "Earth"
+	if who == "" or who == Ephemeris.primary_star:
+		park = home
 	_anchor_ship(park)
-	ship.relocate(Ephemeris.geo_start_pos() if ship.anchor_name == "Earth" \
+	ship.relocate(Ephemeris.geo_start_pos() if ship.anchor_name == home \
 		else Ephemeris.sweet_spot_off(ship.anchor_name))
 	ship.velocity = Vector3.ZERO
 	ship.face_toward(-ship.anchor_off)
 	combat.player_hp = ship.max_hp
-	hud.toast = "▲  respawn  ·  safe park above %s" % (who if who != "" else "Earth")
+	hud.toast = "▲  respawn  ·  safe park above %s" % (who if who != "" else home)
 	hud.toast_t = 3.2
 
 
@@ -1707,15 +1709,23 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 	GameState.visited[system_id] = true       # now a KNOWN system → instant map fast-travel hereafter
 	GameState.nav_unlocked.erase(system_id)   # discovered → no longer just a "nav-unlocked" lane
 	current_system = system_id
+	Ephemeris.switch_system(system_id)
 	planets.load_system(SystemDB.bodies(system_id))
 	planets.speed_zones = false   # Sol 1:1 slice: speed pass comes later
-	ship.newton = system_id == SystemDB.SOL
+	var physical := Ephemeris.is_physical_system()
+	ship.newton = physical
 	if ship.camera:
 		ship.camera.far = Ephemeris.CAM_RENDER_FAR_KM
-	# Fly-arrive passes your preserved local offset (no teleport); wormhole/map use the system's pad.
-	# Every arrival coordinate is a small LOCAL one, so the frame resets to Earth's origin.
-	ship.set_anchor("Earth")
-	ship.relocate(at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id))
+	if physical:
+		# Anchored at the system's spawn world, parked in km. A fly-arrive offset
+		# is in the hub's arcade units, so only Sol honours it.
+		ship.set_anchor(Ephemeris.spawn_body())
+		ship.relocate(at_pos if (not is_inf(at_pos.x) and system_id == SystemDB.SOL) else Ephemeris.geo_start_pos())
+	else:
+		# Fly-arrive passes your preserved local offset (no teleport); wormhole/map use the system's pad.
+		# Every arrival coordinate is a small LOCAL one, so the frame resets to Earth's origin.
+		ship.set_anchor("Earth")
+		ship.relocate(at_pos if not is_inf(at_pos.x) else SystemDB.arrival_pos(system_id))
 	ship.transiting = false
 	galaxy.reset_distance()                   # back in a normal system → core is ~26,000 ly away again
 	ship.face_toward(-ship.anchor_off)        # look back toward the system's star
@@ -1739,6 +1749,7 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 	if docked:
 		_set_docked(false)
 	hud.origin_name = SystemDB.display_name(system_id) if system_id != SystemDB.SOL else "Earth"
+	hud.physical_system_name = "SOL" if system_id == SystemDB.SOL else Ephemeris.primary_star.to_upper()
 	# First time here = the trip paid off: coins, a rank bump, and a lore card. Re-visits
 	# (fast-travel, teleport home) are silent — the reward is for discovery, not commuting.
 	if first_visit and system_id != SystemDB.SOL:
@@ -1750,8 +1761,8 @@ func _arrive(system_id: String, at_pos := Vector3(INF, INF, INF)) -> void:
 		if lore != "":
 			hud.show_lore("%s\n\n%s" % [SystemDB.display_name(system_id), lore])
 	_save_profile()                                # persist visited set + any reward
-	print("[wormhole] arrived at %s — anchor %s, offset %.2f (must be small)"
-		% [SystemDB.display_name(system_id), ship.anchor_name, ship.anchor_off.length()])
+	print("[wormhole] arrived at %s — anchor %s, offset %.2f, newton=%s"
+		% [SystemDB.display_name(system_id), ship.anchor_name, ship.anchor_off.length(), ship.newton])
 
 
 # Platform-network arrival: instead of the far generic arrival point, set down right beside

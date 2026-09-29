@@ -111,7 +111,7 @@ func _ready() -> void:
 	check("unknown_body_surface_angle_is_nan", is_nan(planets.surface_angle("NoSuchBody")))
 	var arcade_checked := false
 	for id in SystemDB.all():
-		if id == SystemDB.SOL or id == SystemDB.INTERSTELLAR: continue
+		if id == SystemDB.SOL or id == SystemDB.INTERSTELLAR or SystemDB.is_physical(id): continue
 		planets.load_system(SystemDB.bodies(id))
 		for spec in SystemDB.bodies(id):
 			if not planets.is_physical(str(spec.name)):

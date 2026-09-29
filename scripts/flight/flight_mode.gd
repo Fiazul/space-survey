@@ -129,12 +129,20 @@ static func kill_allowed() -> bool:
 	return death_enabled and not dev_no_death
 
 
-# The only body with a modelled density profile so far (Earth's RHO0 + scale
-# height). Gates air_load/mach/drag/co-rotation together so the HUD, the wind
-# audio and the deceleration that actually happens always agree (ship.gd:242-
-# 244) — a per-body table is backlog, not a silent Earth default elsewhere.
+# Where the one density profile (Ephemeris.RHO0 + EARTH_ATMO_H_KM) applies:
+# the current system's ephemeris decides (Earth in Sol; a generated world whose
+# recipe air_amount > 0). Gates air_load/mach/drag/co-rotation together so the
+# HUD, the wind audio and the deceleration that actually happens always agree.
+# The autoload is looked up at run time so `--script` tests that preload this
+# file still compile; without it (no running tree) only Earth has the profile.
+static var _eph: Node
 static func has_drag_model(body_name: String) -> bool:
-	return body_name == "Earth"
+	if not is_instance_valid(_eph):
+		var tree := Engine.get_main_loop() as SceneTree
+		_eph = tree.root.get_node_or_null(^"Ephemeris") if tree != null and tree.root != null else null
+		if _eph == null:
+			return body_name == "Earth"
+	return _eph.has_drag_air(body_name)
 
 
 static func exclusion_from_center(radius: float, air_top: float, is_star: bool) -> float:

@@ -95,6 +95,7 @@ var _rel := {}          # body name -> current render-space position (for naviga
 var _sun_sky: MeshInstance3D   # photosphere disc on the sky shell (real Sun is 1 AU)
 var _sun_corona: MeshInstance3D
 var _sun_core_r := 1.0
+var _sun_sky_star := "Sun"
 const SUN_CORONA_MULT := 10.0
 const SUN_CORONA_MAX_ANG := 0.07   # ~4° radius — never a screen-filling card
 const SUN_CORONA_SHADER := """
@@ -245,6 +246,7 @@ func load_system(specs: Array) -> void:
 				print("[sol cook] %s  r=%.1f km  map=%s  parent=%s" % [
 					b.name, float(b.radius),
 					PlanetGenerator.has_map(b.recipe), str(b.get("parent", ""))])
+	_match_sun_sky(specs)
 	# reset transient readouts so a stale name doesn't linger one frame
 	nearest_name = ""
 	nearest_dist = INF
@@ -473,6 +475,27 @@ func _build_sun_sky() -> void:
 		Ephemeris.SUN_ANG_RADIUS_DEG * 2.0, SUN_CORONA_MULT])
 
 
+# The sky disc wears the current primary star's photosphere (Sol's is built in
+# _build_sun_sky). Arcade systems keep Sol's, as before.
+func _match_sun_sky(specs: Array) -> void:
+	if _sun_sky == null or eph.primary_star == _sun_sky_star:
+		return
+	for spec in specs:
+		if spec.get("star", false) and str(spec.name) == eph.primary_star:
+			var look := PlanetGenerator.paint(spec, _sun_core_r)
+			var old := _sun_sky
+			_sun_sky = look.sphere
+			_sun_sky.visible = old.visible
+			_sun_sky.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			_sun_sky.extra_cull_margin = Ephemeris.SKY_STAR_KM
+			if look.mat is ShaderMaterial:
+				(look.mat as ShaderMaterial).set_shader_parameter("sky_glow", 1.0)
+			add_child(_sun_sky)
+			old.queue_free()
+			_sun_sky_star = eph.primary_star
+			return
+
+
 # Named real stars at their TRUE distances — floating-origin destinations you can
 # fly to. Far away they read as labelled sky points (clamped); up close they bloom
 # into an emissive sphere. Positions/labels update every frame in refresh().
@@ -612,7 +635,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			star_dist = dist   # how far we are from this system's sun (FTL gate)
 
 		if b.get("mat") != null and b.mat is ShaderMaterial:
-			var to_sun: Vector3 = eph.rel_km("Sun", str(b.name)) \
+			var to_sun: Vector3 = eph.rel_km(eph.primary_star, str(b.name)) \
 				if (anchored and b.get("physical", false) and eph.has_pos(str(b.name))) \
 				else star_true - bpos
 			var alt := dist - vrad
@@ -787,7 +810,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		# speed cap fold that used to sit here (and its inward-only gate)
 		# is removed; FlightMode.band_speed_cap_* is removed alongside it.
 		_surface.transform = Transform3D(body_basis, _rel.get(nearest_name, Vector3.ZERO))
-		var to_star: Vector3 = (eph.rel_km("Sun", anchor) if anchored else star_true) \
+		var to_star: Vector3 = (eph.rel_km(eph.primary_star, anchor) if anchored else star_true) \
 			- (ship_off + _rel.get(nearest_name, Vector3.ZERO))
 		_surface.set_sun_direction(to_star)
 		var vel_body: Vector3 = body_basis.inverse() * ship_vel
@@ -980,14 +1003,16 @@ func _star_true() -> Vector3:
 		if b.live:
 			return eph.scene_pos(b.name)
 		return b.pos
-	return eph.scene_pos("Sun")
+	return eph.scene_pos(eph.primary_star)
 
 
 func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	if _sun_sky == null:
 		return
-	var rel: Vector3 = eph.rel_km("Sun", anchor) - ship_off if anchor != "" \
-		else eph.scene_pos("Sun") - ship_off
+	var star := eph.primary_star
+	var star_r := eph.body_radius_km(star)
+	var rel: Vector3 = eph.rel_km(star, anchor) - ship_off if anchor != "" \
+		else eph.scene_pos(star) - ship_off
 	var dist := rel.length()
 	if dist < 0.001:
 		_sun_sky.visible = false
@@ -995,7 +1020,7 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 			_sun_corona.visible = false
 		return
 	# Same cut as the cook mesh. Hide the disc only when the ball is on.
-	var show_sky: bool = eph.show_sky_impostor(dist, float(Ephemeris.SUN_RADIUS_KM))
+	var show_sky: bool = eph.show_sky_impostor(dist, star_r)
 	_sun_sky.visible = show_sky
 	if _sun_corona != null:
 		_sun_corona.visible = show_sky
@@ -1004,7 +1029,7 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	var dir: Vector3 = rel / dist
 	var shell: float = eph.sky_impostor_km(dist)
 	var pos: Vector3 = dir * shell
-	var ang: float = atan(Ephemeris.SUN_RADIUS_KM / dist)
+	var ang: float = atan(star_r / dist)
 	var core: float = maxf(shell * tan(ang), 2.0)
 	_sun_sky.position = pos
 	_sun_sky.scale = Vector3.ONE * (core / _sun_core_r)

@@ -461,7 +461,7 @@ func _debug_circularize() -> void:
 
 
 func _debug_geo_park() -> void:
-	pending_frame_shift += set_anchor("Earth")
+	pending_frame_shift += set_anchor(Ephemeris.spawn_body())
 	relocate(Ephemeris.geo_start_pos())
 	velocity = Vector3.ZERO
 	face_toward(-anchor_off)
@@ -590,10 +590,7 @@ func _clamp_time_warp(thrusting: bool, is_braking: bool) -> void:
 func _nearest_is_star() -> bool:
 	if nearest_name == "":
 		return false
-	for p in Ephemeris.PLANETS:
-		if str(p.name) == nearest_name:
-			return bool(p.get("star", false))
-	return false
+	return Ephemeris.is_star(nearest_name)
 
 
 func _exclusion_who() -> String:
@@ -737,8 +734,8 @@ func _newton_advance(sim: float) -> void:
 func _newton_atmo_drag(delta: float) -> void:
 	if not _FM.has_drag_model(anchor_name):
 		return
-	var alt := anchor_off.length() - Ephemeris.EARTH_RADIUS_KM
-	if alt >= Ephemeris.EARTH_ATMO_TOP_KM or alt < 0.0:
+	var alt := anchor_off.length() - anchor_radius_km()
+	if alt >= Ephemeris.atmo_top_km(anchor_name) or alt < 0.0:
 		return
 	var rho := Ephemeris.RHO0 * exp(-alt / Ephemeris.EARTH_ATMO_H_KM)
 	var spd := velocity.length()

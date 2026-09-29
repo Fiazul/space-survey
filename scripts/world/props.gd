@@ -1,39 +1,25 @@
 class_name Props
 extends Node3D
-# Hand-placed GLB landmarks (space stations, an astronaut, drifting probes) tracked
-# with floating origin: each has an absolute position in game units and is rendered at
-# (Ship.rel_to(prop.pos)) every frame, just like the planets.
+# Hand-placed GLB landmarks (the dockable station, Finn the astronaut), anchored like the
+# ship (docs/adr/0002): each sits at an offset `off` from a body and renders at
+# ship.to_body(body) + off, so the 64-bit subtraction never lands in a Vector3.
 #
-# Each prop is tagged with the star system it belongs to; only the props for the
-# currently-loaded system are shown (set_system, called from main on arrival).
-#
-# These are decorative points-of-interest — no collision. They're auto-fitted to
-# a target size and self-lit (no Light3D in the scene), then slowly spun.
-#
-# Two special kinds:
-#   dock  — the Sol station you can land at (ship-swap hangar); Sol-only.
-#   probe — a drifting deep-space probe. Fly close and it reports the local
-#           "monster data" (hostiles in this system); see Main's probe readout.
-#
-# pos = true position in km (Sol props park beside the spawn GEO). size = longest-axis target.
-# yaw = initial facing. spin = rad/s idle self-rotation. glow = self-illum.
-# orbit = rad/s revolution around the system's star/origin (0 = parked).
-# system = which star system this prop lives in (defaults to Sol).
-const PROBE_SCAN_RANGE := 90.0   # fly within this of a probe to read its scan
-
+# The station parks beside every system's spawn (20 km off the spawn park, 2 radii out
+# in generated systems, sunlit GEO at Earth); Finn stays in Sol. system = "*" shows a
+# prop in every system. Decorative points-of-interest — no collision; auto-fitted to a
+# target size, self-lit, slowly spun.
 const PROP_LIST := [
-	# --- Sol: the home station (dockable) + Finn, drifting nearby ---
+	# --- the station (dockable, every system) + Finn, drifting nearby in Sol ---
 	{
 		"name": "", "path": "res://assets/Wikiplanet Space Station (WSS).glb",
-		"system": "sol",
-		"pos": Vector3(-45.0, 15.0, 15.0), "size": 4.0, "yaw": 25.0, "spin": 0.03, "glow": 0.18,
-		"orbit": 0.0, "dock": true, "dock_range": 90.0,
+		"system": "*",
+		"size": 4.0, "yaw": 25.0, "spin": 0.03, "glow": 0.18,
+		"dock": true, "dock_range": 90.0,
 	},
 	{
 		"name": "Finn", "path": "res://assets/Astronaut.glb",
 		"system": "sol",
-		"pos": Vector3(-40.0, 12.0, 10.0), "size": 0.3, "yaw": 200.0, "spin": 0.35, "glow": 0.45,
-		"orbit": 0.0,
+		"size": 0.3, "yaw": 200.0, "spin": 0.35, "glow": 0.45,
 	},
 ]
 
@@ -42,13 +28,9 @@ var current_system := "sol"
 
 # Dock target (the prop flagged "dock") for the current system, read by main.
 var has_dock := false
-var dock_pos := Vector3.ZERO
 var dock_name := ""
 var dock_range := 0.0
-
-# Probe scan: set each frame — is the ship within range of a probe right now?
-var probe_in_range := false
-var probe_name := ""
+var _dock: Dictionary = {}
 
 
 func _ready() -> void:
@@ -82,76 +64,73 @@ func _ready() -> void:
 			"label": label,
 			"name": p.get("name", ""),
 			"system": p.get("system", "sol"),
-			"pos": p.pos,
+			"body": "",
+			"off": Vector3.ZERO,
 			"up": float(p.size) * 0.7,      # label height above the prop
 			"spin": float(p.get("spin", 0.0)),
-			"orbit": float(p.get("orbit", 0.0)),   # revolution around the star/origin
 			"cull": float(p.size) * 90.0,   # stop drawing big meshy props when far
 			"is_dock": bool(p.get("dock", false)),
-			"is_probe": bool(p.get("probe", false)),
 			"dock_range": float(p.get("dock_range", float(p.size) * 1.8)),
 		})
 
 	set_system(current_system)
 
 
-# Switch to a system: show only its props and recompute the dock target. Called
-# by main on arrival. Only Sol has props (parked beside its spawn GEO); other
-# systems show none until their stations are placed per body (slice 3).
 func set_system(id: String) -> void:
 	current_system = id
-	if id == SystemDB.SOL:
-		_park_sol_at_geo()
+	_park_at_spawn()
 	has_dock = false
 	dock_name = ""
+	_dock = {}
 	for it in _items:
-		var here: bool = it.system == id
+		var here := _in_system(it)
 		it.holder.visible = here
 		if it.label != null:
 			it.label.visible = here
 		if here and it.is_dock:
 			has_dock = true
-			dock_pos = it.pos
 			dock_name = it.name
 			dock_range = it.dock_range
+			_dock = it
 
 
-func _park_sol_at_geo() -> void:
-	var geo: Vector3 = Ephemeris.geo_start_pos()
-	var side := geo.cross(Vector3.UP)
+func _in_system(it: Dictionary) -> bool:
+	return it.system == "*" or it.system == current_system
+
+
+func _park_at_spawn() -> void:
+	var body: String = Ephemeris.spawn_body()
+	var park: Vector3 = Ephemeris.spawn_pos()
+	var side := park.cross(Vector3.UP)
 	if side.length_squared() < 0.0001:
-		side = geo.cross(Vector3.RIGHT)
+		side = park.cross(Vector3.RIGHT)
 	side = side.normalized()
 	for it in _items:
-		if it.system != "sol":
-			continue
+		it.body = body
 		if it.is_dock:
-			it.pos = geo + side * 20.0
+			it.off = park + side * 20.0
 		elif str(it.name) == "Finn":
-			it.pos = geo + side * 16.0 + Vector3(0.0, 2.0, 0.0)
+			it.off = park + side * 16.0 + Vector3(0.0, 2.0, 0.0)
+
+
+# Render-space vector from the ship to the dock ("" dock → INF).
+func dock_rel(flyer: Ship) -> Vector3:
+	if _dock.is_empty():
+		return Vector3.INF
+	return flyer.to_body(_dock.body) + _dock.off
 
 
 func update(flyer: Ship, delta: float) -> void:
-	probe_in_range = false
-	probe_name = ""
 	for it in _items:
-		if it.system != current_system:
+		if not _in_system(it):
 			continue
-		# Slow revolution around the star (the origin), if this prop orbits.
-		if it.orbit != 0.0:
-			it.pos = it.pos.rotated(Vector3.UP, it.orbit * delta)
-			if it.is_dock:
-				dock_pos = it.pos   # keep the dock prompt tracking the moving station
-		var rel: Vector3 = flyer.rel_to(it.pos)  # floating origin, anchor-safe
+		var rel: Vector3 = flyer.to_body(it.body) + it.off
 		it.holder.position = rel
 		var dist := rel.length()
 		var vis: bool = dist < it.cull
 		it.holder.visible = vis
 		if vis and it.spin != 0.0:
 			it.holder.rotate_y(it.spin * delta)
-		if it.is_probe and dist < PROBE_SCAN_RANGE:
-			probe_in_range = true
-			probe_name = it.name
 		if it.label != null:
 			it.label.visible = vis
 			if vis:
@@ -160,7 +139,6 @@ func update(flyer: Ship, delta: float) -> void:
 				it.label.pixel_size = clampf(dist * 0.00012, 0.02, 1.2)
 
 
-# Scale model so its longest axis == target_len and recenter it on the holder.
 static func _fit(holder: Node3D, model: Node3D, target_len: float) -> void:
 	var box := _combined_aabb(holder)
 	var size := box.size

@@ -163,8 +163,5 @@ func _generated_system_boots() -> void:
 	ship.frozen = true
 	check("fire_blocked_docked", not Combat.fire_allowed(ship))
 	ship.frozen = false
-	ship.transiting = true
-	check("fire_blocked_transiting", not Combat.fire_allowed(ship))
-	ship.transiting = false
 	main.queue_free()
 	await get_tree().process_frame

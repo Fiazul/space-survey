@@ -167,7 +167,6 @@ func place(local: Vector3, pose_local: Basis, gear: bool) -> void:
 	ship.landed = false
 	ship.locked = false
 	ship.frozen = false
-	ship.transiting = false
 	ship.systems.gear_target = gear
 	ship.systems.gear_fraction = 1.0 if gear else 0.0
 	ship.systems.pose()

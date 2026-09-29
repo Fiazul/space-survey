@@ -224,3 +224,42 @@ Surprises:
   `docs/superpowers/specs/2026-09-04-earth-flyover-terrain-design.md:29,186`,
   `docs/superpowers/plans/2026-09-04-earth-flyover-terrain.md:1340,1387`,
   `docs/ROADMAP.md:108-109,135` (decision text, keep).
+
+## Slice 3 done (2026-09-29, branch `one-physics`)
+
+- Deleted `wormhole.gd`(+uid), `WORMHOLE_NETWORK.md/.png(.import)`, `export_wh_graph.gd`(+uid),
+  `draw_wh_network.py`; SystemDB hub/graph/portal sections, `INTERSTELLAR`, `HUB_ENTRY`.
+  `is_teleport_platform(id)` = Sol or `GameState.visited`; `has_station` = same.
+- GameState: `coins`, `claimed`, `nav_unlocked`, `wormholes_found`, reward/nav consts and claim
+  API gone; old save keys ignored. main: wormhole wiring, radar, routes/"via" text, nav lanes,
+  paid navigator, `_nav_goal`, core hazard/`_core_kill`, probe readout, `_land_beside_dock`,
+  `hud.origin_name`, GalaxyModel loom, dead `ship.transiting` flag (every reader) removed.
+- `main.travel_to(id)` / `can_travel_to(id)`: visited, or `ASTRYX_DEV_TRAVEL=1`; refusal toast
+  "Not yet reached — needs the interstellar drive" (also star map, quest log, teleport console).
+  Teleports route through it; emergency home always allowed.
+- Save in a system with no star row (`interstellar`) → Sol pad start. Boot resets the Ephemeris
+  autoload to Sol (it survived `reload_current_scene`). `surface_off/basis` reads no longer
+  print "no default" errors.
+- Props anchored (body + off, `dock_rel(ship)`); the station parks 20 km off every system's
+  spawn park (2 radii out in generated systems). Finn Sol-only.
+- Tests: new `test_travel.tscn`; `test_docking` (relocate to spawn instead of `_land_beside_dock`),
+  `test_dev_no_death` (core-hazard checks deleted: hazard gone), `test_one_physics` (transit fire
+  gate deleted: flag gone), `test_landing_cycle`, `test_onboarding_migration`/`test_profile_dir`/
+  `test_anchor_frame` (renamed strings only).
+- Verified (coordinator-cut acceptance): test_one_physics OK, test_playable_minute OK,
+  test_landing_cycle (LANDING_HULLS=1) OK, test_travel OK, headless Sol pad boot clean (no
+  SCRIPT ERROR, saved at kennedy_lc39a). Full sweep NOT run.
+
+## Slice 4 remaining
+
+- Grep sweep `warp|spool|sublight|hypersonic|leap|lane|capture|claim|bounty|VISUAL_SCALE|0.01 AU|0.1 AU|newton` in scripts/ tools/ with verdict list (not done).
+- `MissionDB.reward` / bounty text now unused by any economy — delete or keep as flavour.
+- `TAB_TARGETING.md` still describes wormhole Tab targets.
+- CONTEXT.md glossary: remove wormhole/arcade/lane/coins terms; keep "time warp = Sol clock rate".
+- README.md, lore.md wormhole/FTL mentions; `PLANET_GENERATOR.md:155`; `scripts/*/README.md` rows.
+- CLAUDE.md directives/forbidden-patterns still mentioning arcade (`VISUAL_SCALE`, 0.01 AU).
+- docs/ROADMAP.md: delete "Wormhole hop test reinstatement"; add "Later: sky in generated systems is Sol's star field".
+- New ADR `docs/adr/0003-one-physics-one-unit.md` (referenced by code comments already).
+- Onboarding `teleport_net` text checked: no wormhole mention (done).
+- Full `tools/test_*.gd` sweep with per-test profile dirs, docking PASS list, test_system_ephemeris.
+- Ready-to-merge checklist for the player (fly: pad start, dock, teleport to a visited system, dev travel).

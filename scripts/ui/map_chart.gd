@@ -3,7 +3,7 @@ extends Control
 # The interactive star-chart canvas (the heart of the Star Map). A real, zoomable, pannable
 # map drawn entirely in _draw() — no per-star Button nodes, so it stays crisp at any zoom:
 #   • STARS      — a star icon per system, core tinted by spectral colour, ringed by travel
-#                  state (here / discovered / nav / locked).
+#                  state (here / discovered = teleport destination / not yet reached).
 #   • PLANETS    — the selected system's worlds, as tiny dots ringed around its node.
 #   • PLAYER     — a live, pulsing cursor at the system you're in ("you are here", but a real
 #                  marker, not text).
@@ -80,9 +80,7 @@ func _draw() -> void:
 		for id in ids:
 			_draw_star(font, id)
 
-	# Platforms — a ⬡ badge on every system that carries a dockable space platform
-	# (bright once you've reached it, dim otherwise). These are the station→station
-	# teleport network, so seeing them on the map lets you plan jumps.
+	# Platforms — a ⬡ badge on every system you can teleport to (Sol + visited).
 	if filters.platforms:
 		for id in ids:
 			if SystemDB.has_station(id):
@@ -139,14 +137,12 @@ func _draw_planets(id: String) -> void:
 		draw_circle(pp, 2.6, col)
 
 
-# A ⬡ platform badge, set just above-right of the star. Teal, bright if the system is
-# known (reachable platform), dim if still locked.
+# A ⬡ platform badge, set just above-right of the star.
 func _draw_platform(id: String) -> void:
 	var p := _project(SystemDB.galaxy_pos(id))
 	if p.x < -HIT_R or p.x > size.x + HIT_R or p.y < -HIT_R or p.y > size.y + HIT_R:
 		return
-	var known: bool = main.star_state(id) != "locked"
-	var col := Color(0.35, 1.0, 0.85, 0.95) if known else Color(0.35, 0.8, 0.7, 0.4)
+	var col := Color(0.35, 1.0, 0.85, 0.95)
 	var c := p + Vector2(STAR_R + 7.0, -(STAR_R + 6.0))
 	var pts := PackedVector2Array()
 	for k in 7:                                   # 6 sides + close
@@ -182,8 +178,8 @@ func _draw_hover(font: Font) -> void:
 		return
 	var st: String = main.star_state(id)
 	var head := "%s — %s · %.1f ly" % [SystemDB.display_name(id), SystemDB.spectral(id), SystemDB.light_years(id)]
-	var sub: String = { "here": "you are here", "discovered": "discovered · click to browse",
-		"nav": "known · click to browse", "locked": "locked · click to browse" }.get(st, "")
+	var sub: String = { "here": "you are here", "discovered": "visited · teleport from a dock",
+		"locked": "not yet reached · needs the interstellar drive" }.get(st, "")
 	var p := _project(SystemDB.galaxy_pos(id)) + Vector2(10, -34)
 	var w: float = maxf(font.get_string_size(head, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x,
 		font.get_string_size(sub, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x) + 14.0
@@ -216,7 +212,6 @@ func _state_col(st: String) -> Color:
 	match st:
 		"here":       return Color(0.5, 1.0, 0.6)
 		"discovered": return Color(1.0, 0.78, 0.32)
-		"nav":        return Color(0.45, 0.85, 1.0)
 		_:            return Color(0.55, 0.6, 0.68)
 
 

@@ -105,11 +105,11 @@ func _reanchor_keeps_the_ship_still() -> void:
 		ship.anchor_off.distance_to(moon * 0.5) < 0.001)
 	# An absolute true-position fixture ~80,000 km out renders at
 	# the same offset whichever body the ship is anchored to.
-	var portal := Vector3(80000.0, 0.0, 0.0)
-	var portal_from_earth: Vector3 = ship.rel_to(portal)
+	var far_point := Vector3(80000.0, 0.0, 0.0)
+	var far_from_earth: Vector3 = ship.rel_to(far_point)
 	ship.set_anchor("Moon")
 	check("rel_to_absolute_survives_reanchor",
-		portal_from_earth.distance_to(ship.rel_to(portal)) < 0.001)
+		far_from_earth.distance_to(ship.rel_to(far_point)) < 0.001)
 	ship.queue_free()
 
 

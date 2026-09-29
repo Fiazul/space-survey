@@ -94,9 +94,6 @@ func current_step_id() -> String:
 func update() -> void:
 	var ship = main.ship
 	var hud = main.hud
-	if ship.transiting:
-		hud.set_tip("")
-		return
 	# Live latches for the action-counted steps (re-armed on restart via the baselines).
 	if ship.velocity.length() > 30.0:
 		note("thrust")

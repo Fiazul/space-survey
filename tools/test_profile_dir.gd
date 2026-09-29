@@ -10,7 +10,7 @@ func _ready() -> void:
 		and ProfileDir.isolate("other") == dir \
 		and not GameState.profile_path().begins_with("user://")
 	var cfg := ConfigFile.new()
-	cfg.set_value("player", "coins", 7)
+	cfg.set_value("player", "visited", ["sol"])
 	ok = ok and cfg.save(GameState.profile_path()) == OK and FileAccess.file_exists(dir.path_join("profile.cfg"))
 	DirAccess.remove_absolute(dir.path_join(Codex.FILE))
 	Codex._save()

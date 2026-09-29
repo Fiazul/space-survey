@@ -35,7 +35,6 @@ var ship: Ship
 var planets: PlanetSystem
 var combat: Combat           # for HP / kills readout
 @onready var codex := Codex   # autoload; discovery progress
-var origin_name := "Earth"   # what the distance readout measures from (per system)
 var physical_system_name := "SOL"   # physical systems name their star
 
 var toast := ""              # transient "✓ discovered" message
@@ -629,7 +628,7 @@ func _set_systems_open(open: bool) -> void:
 		if ship_ref != null:
 			ship_ref._set_capture(false)
 	elif not open and is_systems_open() and _systems_recapture:
-		if ship_ref != null and not ship_ref.frozen and not ship_ref.transiting:
+		if ship_ref != null and not ship_ref.frozen:
 			ship_ref._set_capture(true)
 		_systems_recapture = false
 	_btn_bar.visible = open
@@ -1640,7 +1639,7 @@ func refresh() -> void:
 	# Ease the core flash back toward zero (set fresh each frame by main while in the danger zone).
 	_flash_a = maxf(_flash_a - 2.0 * get_process_delta_time(), 0.0)
 	_flash.color.a = _flash_a * 0.55
-	var weapons_visible := not ship.frozen and not ship.transiting and ship.systems != null \
+	var weapons_visible := not ship.frozen and ship.systems != null \
 		and (ship.systems.weapons_target or ship.systems.weapons_fraction > .01)
 	_reticle.visible = weapons_visible
 	_hitmarker.visible = false # hit confirmation is drawn by fire control itself
@@ -1713,7 +1712,7 @@ func refresh() -> void:
 			_mode_label.text = "HARDPOINTS READY" if ship.weapons_ready() else "HARDPOINTS DEPLOYING"
 		elif ship.systems.weapons_fraction > .01:
 			_mode_label.text = "HARDPOINTS STOWING"
-	if planets != null and not ship.transiting and not ship.frozen and not planets.stellar_hazard.is_empty():
+	if planets != null and not ship.frozen and not planets.stellar_hazard.is_empty():
 		var hazard: Dictionary = planets.stellar_hazard
 		if int(hazard.level) > 0:
 			_tape_label.text += "\n%s  /  %.0f kW/m²" % [hazard.state, float(hazard.flux_w_m2)/1000.0]

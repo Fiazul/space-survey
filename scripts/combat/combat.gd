@@ -258,9 +258,9 @@ func reset(active := false, with_boss := false, count := SWARM_COUNT) -> void:
 
 
 # The one gate on player fire. Roadmap S.8 defines the real combat envelope;
-# until then any flight that is not docked or in transit may fire.
+# until then any flight that is not docked may fire.
 static func fire_allowed(ship: Node3D) -> bool:
-	return not ship.frozen and not ship.transiting
+	return not ship.frozen
 
 
 # Called by main each frame. `pressed` = left fire held; `laser` = right-click beam.
@@ -884,17 +884,15 @@ func _boss_burst(a: Dictionary, sp: Vector3) -> void:
 	_spawn_bolt(_abolts, a.pos + aim * (a.size * 0.5), aim * (ALIEN_BOLT_SPEED * 1.4), _abolt_mat)
 	_combat_t = COMBAT_HOLD
 
-# Energy cell: only ever offered when the boost tank is actually low, and only in open
-# interstellar flight. It appears ahead in view, then HOMES to the ship (faster than the
+# Energy cell: only ever offered when the boost tank is actually low. It appears ahead in view, then HOMES to the ship (faster than the
 # ship moves) so it always reaches you — no chasing. Floating-origin: world pos stored,
 # drawn relative to the ship; the ⚡ label is fixed-size so it stays readable at any range.
 func _step_pickups(ship: Node3D, sp: Vector3, fwd: Vector3, delta: float) -> void:
-	var open_space: bool = not ship.transiting
 	var speed: float = ship.velocity.length()
 	_pickup_cd -= delta
 	# Offer a cell only when you NEED it — boost tank under PICKUP_NEED_FRAC of full.
 	var need: bool = boost_energy < PICKUP_NEED_FRAC * e_max
-	if open_space and need and _pickup_cd <= 0.0 and _pickups.size() < PICKUP_CAP:
+	if need and _pickup_cd <= 0.0 and _pickups.size() < PICKUP_CAP:
 		_pickup_cd = PICKUP_EVERY
 		var ahead: float = maxf(PICKUP_AHEAD, speed * 1.3)   # lead grows with speed so it's on-screen long enough to see
 		_spawn_pickup(sp + fwd * ahead + _rand_dir() * PICKUP_SCATTER)

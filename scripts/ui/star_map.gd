@@ -3,7 +3,7 @@ extends CanvasLayer
 # Star map overlay (M). A real, zoomable/pannable chart (see MapChart) of the ~50-star
 # catalogue laid out by real sky position, with toggleable layers (stars / planets /
 # platforms), a live player cursor, and hover read-outs. The right column lists the
-# SELECTED system's bodies. The map NEVER moves the ship —
+# SELECTED system's bodies. The map moves the ship only via the dev-travel button —
 # it's a chart you read. Pauses flight + frees the cursor; process_mode = ALWAYS so M keeps
 # working (and the chart keeps animating) while the tree is paused.
 
@@ -147,7 +147,7 @@ func _build() -> void:
 	_root.add_child(_title)
 
 	var hint := Label.new()
-	hint.text = "● gold discovered · ● cyan known · 🔒 locked   ·   🪐 planet · ⌖ you   ·   M / Esc / click-outside to close"
+	hint.text = "● gold visited · ● grey not yet reached   ·   ⬡ platform · 🪐 planet · ⌖ you   ·   M / Esc / click-outside to close"
 	hint.position = PANEL_POS + Vector2(0, 40)
 	hint.size = Vector2(PANEL.x, 18)
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -319,9 +319,18 @@ func _add_travel_action(sys: String, here: bool) -> void:
 		_sys_list.add_child(_spacer())
 		return
 	var discovered: bool = main.star_state(sys) == "discovered"
-	info.text = "✦  Discovered." if discovered else "◇  Not yet reached."
+	info.text = "✦  Visited. Teleport here from any dock." if discovered \
+		else "◇  %s." % main.NOT_REACHED_TEXT
 	info.add_theme_color_override("font_color", Color(1.0, 0.84, 0.4) if discovered else Color(0.7, 0.78, 0.9))
 	_sys_list.add_child(info)
+	if not discovered and main.can_travel_to(sys):
+		var dev := Button.new()
+		dev.text = "DEV TRAVEL (ASTRYX_DEV_TRAVEL)"
+		dev.focus_mode = Control.FOCUS_NONE
+		dev.pressed.connect(func():
+			_close()
+			main.travel_to(sys))
+		_sys_list.add_child(dev)
 	_sys_list.add_child(_spacer())
 
 
@@ -335,7 +344,7 @@ func _add_teleport_action(sys: String, here: bool, info: Label) -> void:
 		_sys_list.add_child(_spacer())
 		return
 	if main.is_teleport_unlocked(sys):
-		info.text = "⬡  %s\n\nA teleport platform you've reached. Jump straight there — the ritual takes a few seconds." % SystemDB.display_name(sys)
+		info.text = "⬡  %s\n\nA system you've reached. Jump straight to its platform — the ritual takes a few seconds." % SystemDB.display_name(sys)
 		info.add_theme_color_override("font_color", Color(0.4, 1.0, 0.85))
 		_sys_list.add_child(info)
 		var go := Button.new()
@@ -351,12 +360,8 @@ func _add_teleport_action(sys: String, here: bool, info: Label) -> void:
 			_close()                      # unpause the tree BEFORE the ritual starts ticking
 			main.teleport_to_platform(sys))
 		_sys_list.add_child(go)
-	elif SystemDB.has_station(sys):
-		info.text = "🔒  %s has a platform, but you haven't reached it yet. Fly there once to add it to the network." % SystemDB.display_name(sys)
-		info.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
-		_sys_list.add_child(info)
 	else:
-		info.text = "✦  %s has no teleport platform.\n\nPick a ⬡ system to jump to it." % SystemDB.display_name(sys)
+		info.text = "🔒  %s\n\n%s. Pick a ⬡ system you have visited to jump to it." % [SystemDB.display_name(sys), main.NOT_REACHED_TEXT]
 		info.add_theme_color_override("font_color", Color(0.7, 0.78, 0.9))
 		_sys_list.add_child(info)
 	_sys_list.add_child(_spacer())

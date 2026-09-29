@@ -158,7 +158,7 @@ func _ready() -> void:
 	_build_star_shell()
 
 
-# Swap the rendered bodies to a different star system (used on wormhole arrival).
+# Swap the rendered bodies to a different star system (used on arrival).
 # Clears the current bodies and rebuilds from the given specs.
 func load_system(specs: Array) -> void:
 	for b in _bodies:

@@ -27,7 +27,7 @@ scenes/Main.tscn (one-node stub, boots res://scripts/core/main.gd)
   │            WedgeFighterDesign
   ├─ world/    PlanetSystem, PlanetGenerator, SurfaceRecipe, SurfacePatch,
   │            TerrainSampler, Starfield, GalaxyModel, Props
-  ├─ travel/   Wormhole, Navigator, PlatformTeleport
+  ├─ travel/   Navigator, PlatformTeleport
   ├─ combat/   Combat, CombatFX, EnemyFactory
   └─ ui/       HUD + panels (CodexPanel, StarMap, QuestLog, PlanetInfo, …)
 ```
@@ -98,15 +98,13 @@ for f in tools/test_*.gd; do
     tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
     tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\
     tools/test_weapon_aim.gd|tools/test_landing_cycle.gd|tools/test_system_ephemeris.gd|\
-    tools/test_proxima_boot.gd|tools/test_one_physics.gd) continue ;;
+    tools/test_proxima_boot.gd|tools/test_one_physics.gd|tools/test_travel.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
 ```
-Removed 2026-09-08: `test_wh_network.gd` (hung — `SystemDB.arrival_pos()` reaches the
-`Ephemeris` autoload, which does not exist under `--script`; wormhole hop guarantee is
-currently unchecked, reinstate as a scene-based test), `test_dingo57_starship.gd`,
-`test_jazoone_spaceship.gd` (ships left the roster).
+Removed 2026-09-08: `test_dingo57_starship.gd`, `test_jazoone_spaceship.gd` (ships left
+the roster).
 
 Known noisy pass: `test_streak_scale.gd` preloads `ship.gd` (which touches the
 `Ephemeris` autoload), so `--script` prints a `SCRIPT ERROR`/`Failed to load script`
@@ -125,6 +123,7 @@ Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_chase_rig
 `test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`,
 `test_system_ephemeris.tscn`, `test_proxima_boot.tscn`, `test_one_physics.tscn` (one flight
 model: GEO circular for a day with the Sun on, a generated HYG system falls at GM/r²),
+`test_travel.tscn` (visited-gate, `ASTRYX_DEV_TRAVEL=1`, a save in a deleted system → Sol pad),
 `test_landing_cycle.tscn` (all seven hulls at 60 and 20 fps over rotating Earth; ~30 s;
 `LANDING_VERBOSE=1` prints measurements, `LANDING_CLOCK=<unix_s>|wall` sets the rotation phase, `LANDING_HULLS=1,6` limits hulls,
 `LANDING_TRACE=descend|hold|depart|open|rest|press|slope` prints a 4 Hz trace).
@@ -223,7 +222,6 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 | `.godot/` | Godot editor (import cache, class registry) — gitignored |
 | `assets/starfield_{naked,low,high,tycho}.res` | `tools/build_starfield.gd` (`godot --headless --script tools/build_starfield.gd`) |
 | `assets/planets/*` | `tools/fetch_planet_maps.py` (→ /tmp) then `tools/ingest_planet_maps.py` (crop/resize into `assets/planets/`) |
-| `WORMHOLE_NETWORK.png` | `tools/export_wh_graph.gd` (dumps `/tmp/wh_graph.json`) → `tools/draw_wh_network.py` |
 | `TAB_TARGETING.png` | `tools/draw_tab_target.py` |
 | `assets/fx/exhaust_noise.png` | `tools/gen_exhaust_noise.py` |
 | `assets/{sfx_fire,laser_loop,notify,teleport}.wav`, `engine_*.ogg` | `tools/gen_{fire,laser,notify,teleport,engine}_audio.py`, `tools/gen_booster.py` |
@@ -256,7 +254,6 @@ expected; per-line/per-function narration is not.
 | `CREDITS.md` | Asset credits — what's code-generated vs. free/AI-generated, and where from |
 | `STARFIELD.md` | How the real-catalogue star field is built and rendered |
 | `TAB_TARGETING.md` | How nose-aim Tab-targeting picks and cycles candidates |
-| `WORMHOLE_NETWORK.md` | The wormhole graph's structure and routing rules |
 | `lore.md` | In-universe codex — fleet, factions, setting |
 | `docs/adr/` | Accepted architecture decisions (the "why" behind structural choices) |
 | `docs/specs/2026-09-26-ship-roster-and-modules.md` | The seven-hull roster + swappable weapon/pad module GLBs, generated via `tools/blender/` |

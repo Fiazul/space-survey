@@ -241,7 +241,6 @@ var _time_idx := 0
 const TIME_RATES := [1.0, 5.0, 10.0, 50.0, 100.0, 1000.0, 10000.0, 100000.0]
 var dock_approach := 0.0       # 0 outside the station's landing zone, 1 at the pad; set by main
 var frozen := false            # docked at a station — motion held, mouse freed
-var transiting := false        # in a wormhole tunnel — motion held, view locked forward
 var camera: Camera3D           # assigned by main; driven from fly()
 @onready var audio := GameAudio   # autoload; the engine voice is driven from fly()
 var mouse_sens := MOUSE_SENS   # live mouse sensitivity (Settings menu adjusts this)
@@ -346,8 +345,8 @@ func to_body(body_name: String) -> Vector3:
 	return Ephemeris.rel_km(body_name, anchor_name) - anchor_off
 
 
-# Render-space vector to an absolute (Earth-centred) point — portals, docks, the
-# probes. Replaces every `something.pos - ship.true_pos`.
+# Render-space vector to an absolute point in the system frame (orbital stations).
+# Replaces every `something.pos - ship.true_pos`.
 func rel_to(abs_pos: Vector3) -> Vector3:
 	return _AF.rel_to(abs_pos, anchor64(), anchor_off)
 
@@ -784,7 +783,7 @@ func resolve_surface_motion(sampler: TerrainSampler, from: Vector3, to: Vector3,
 
 
 func toggle_gear() -> void:
-	if systems == null or frozen or transiting:
+	if systems == null or frozen:
 		return
 	if systems.gear_target and (landed or not landing_site.is_empty()):
 		debug_toast = "LIFT OFF BEFORE RETRACTING GEAR"
@@ -798,7 +797,7 @@ func toggle_gear() -> void:
 
 
 func toggle_hardpoints() -> void:
-	if systems == null or frozen or transiting:
+	if systems == null or frozen:
 		return
 	if not systems.weapons_target and not weapons_in_atmosphere():
 		debug_toast = "HARDPOINTS LOCKED  ·  ENTER ATMOSPHERE"
@@ -811,7 +810,7 @@ func toggle_hardpoints() -> void:
 
 
 func weapons_ready() -> bool:
-	return can_fire and not frozen and not transiting and weapons_in_atmosphere() \
+	return can_fire and not frozen and weapons_in_atmosphere() \
 		and systems != null and systems.weapons_ready()
 
 
@@ -831,7 +830,7 @@ func update_weapon_environment() -> void:
 
 func prepare_weapons() -> void:
 	if systems != null and weapons_in_atmosphere() and not systems.gear_target \
-		and systems.gear_fraction < .01 and not frozen and not transiting:
+		and systems.gear_fraction < .01 and not frozen:
 		systems.weapons_target = true
 
 
@@ -1176,7 +1175,7 @@ func _flight_controls_active(md: Vector2) -> bool:
 
 
 func _level_near_planet(delta: float, player_active: bool) -> void:
-	if player_active or frozen or transiting or locked or not landing_site.is_empty():
+	if player_active or frozen or locked or not landing_site.is_empty():
 		_level_idle_s = 0.0
 		return
 	if terrain == null or not bool(terrain.surface.get("solid",false)):
@@ -1200,7 +1199,7 @@ func _level_near_planet(delta: float, player_active: bool) -> void:
 # Only a qualified facility pad can hold the ship. This path never changes
 # ordinary airborne steering, banking, camera framing or engine tuning.
 func _hold_facility_pad(delta: float) -> bool:
-	if _pad_revision != surface_position_revision or frozen or transiting or locked:
+	if _pad_revision != surface_position_revision or frozen or locked:
 		landing_site = ""
 		landing_site_id = ""
 		_pad_release = 0.0
@@ -1255,7 +1254,7 @@ func fly(delta: float) -> void:
 	simulation_delta = delta
 	surface_impact = false
 	_surface_owned_revision = -1
-	if frozen or transiting or locked or not landing_site.is_empty(): _level_idle_s = 0.0
+	if frozen or locked or not landing_site.is_empty(): _level_idle_s = 0.0
 	support_accel = Vector3.ZERO
 	jet_accel = Vector3.ZERO
 	_support_visual_accel = Vector3.ZERO
@@ -1263,39 +1262,11 @@ func fly(delta: float) -> void:
 	update_weapon_environment()
 	if systems != null:
 		systems.step(delta)
-		# Early returns (pad lock, transit, menus) must not leave old jets firing.
+		# Early returns (pad lock, menus) must not leave old jets firing.
 		systems.support.command(Vector3.ZERO,0.0)
 	_pad_release = maxf(0.0, _pad_release-delta)
 	if _hold_facility_pad(delta):
 		return
-	# Wormhole transit: motion held, view locked forward, streaks at full tilt.
-	if transiting:
-		velocity = Vector3.ZERO
-		_mouse_delta = Vector2.ZERO
-		_steer = Vector2.ZERO
-		_strafe = 0.0
-		_lift = 0.0
-		_look_yaw = 0.0
-		_look_pitch = 0.0
-		_yaw_rate = 0.0
-		_pitch_rate = 0.0
-		_bank = 0.0
-		_lean = 0.0
-		# Face the nose INTO the tunnel (the tunnel renders ahead at local -Z). Flip 180°
-		# so the ship dives forward instead of riding through tail-first. The hull holds
-		# STABLE facing the portal — only a faint breathing roll/pitch so it isn't dead
-		# (yaw stays exactly PI so the nose points dead-on). (Reset to 0 on normal path.)
-		var wob := Time.get_ticks_msec() * 0.001
-		_mesh_root.rotation = Vector3(
-			sin(wob * 0.7) * 0.012, PI, sin(wob * 0.5) * 0.018)
-		_clear_air_fx()
-		_update_authored_propulsion(0.4, delta) # engines low — calm, not hypersonic
-		_update_streaks(VISUAL_CRUISE_KMS * 0.7)     # restrained streaks, not full cruise
-		_update_camera(delta)
-		if audio:
-			audio.engine_off()   # silent in the wormhole
-		return
-
 	# Skin-kill cutscene: hull is already lost. Tumble, no thrust.
 	if locked:
 		velocity = Vector3.ZERO
@@ -1530,7 +1501,7 @@ func fly(delta: float) -> void:
 	if systems != null and systems.gear_fraction > 0.0:
 		_bank *= 1.0 - systems.gear_fraction
 		_lean *= 1.0 - systems.gear_fraction
-	_mesh_root.rotation = Vector3(_lean, 0.0, _bank)   # clear any transit flip/wobble
+	_mesh_root.rotation = Vector3(_lean, 0.0, _bank)
 	# Cinematic drift-flip: a full 360° barrel roll layered on the bank (cosmetic — heading
 	# and velocity are untouched).
 	if _flip_t > 0.0:
@@ -1649,7 +1620,7 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 
 # Parent the chase fill light under the camera once it exists, so it inherits the
 # camera's orientation for free — no per-frame aiming, and it survives every path
-# that rewrites camera.global_transform (transit buffet, teleport, aim snap).
+# that rewrites camera.global_transform (teleport, aim snap).
 func _ensure_hull_fill() -> void:
 	if HULL_FILL_ENERGY <= 0.0:
 		return
@@ -1733,18 +1704,6 @@ func _update_camera(delta: float) -> void:
 	var basis := _cam_basis * Basis(Vector3.RIGHT, deg_to_rad(CAM_VIEW_PITCH_DEG)) \
 		* (Basis(Vector3.UP, _look_yaw_s) * Basis(Vector3.RIGHT, _look_pitch_s))
 	var cam_pos := basis * (CAM_OFFSET * _hull_km * maxf(_cam_zoom_smooth, _near_zoom_floor()))
-	# Wormhole transit: only a SLIGHT, slow buffet (gentle position drift + a touch of
-	# roll/pitch) and a restrained FOV lean → the dive feels tense and dark, not stormy.
-	if transiting:
-		var t := Time.get_ticks_msec() * 0.001
-		var pj := 0.05
-		cam_pos += basis * Vector3(sin(t * 7.0) * pj, cos(t * 9.0) * pj, sin(t * 11.0) * pj * 0.5)
-		var jr := 0.004
-		basis = basis * Basis.from_euler(Vector3(
-			sin(t * 5.0) * jr, cos(t * 6.0) * jr, sin(t * 8.0) * jr * 2.0))
-		camera.global_transform = Transform3D(basis, cam_pos)
-		camera.fov = lerpf(camera.fov, FOV_BASE + FOV_KICK * 0.8, clampf(3.0 * delta, 0.0, 1.0))
-		return
 	camera.global_transform = Transform3D(basis, cam_pos)
 	# Clamp the fraction so warp speeds don't blow the FOV out into a fisheye.
 	var speed_frac := clampf(velocity.length() / MAX_SPEED, 0.0, 1.0)
@@ -2201,7 +2160,7 @@ func _kill_turn_rates() -> void:
 # Cinematic drift-flip (W + C): a full barrel roll, cosmetic (mesh only, so heading, aim and
 # velocity are unaffected). dir < 0 = left, ≥ 0 = right. Works in free-look too.
 func do_flip(dir := 1.0) -> void:
-	if _flip_t > 0.0 or frozen or transiting or (systems != null and systems.gear_fraction > .01):
+	if _flip_t > 0.0 or frozen or (systems != null and systems.gear_fraction > .01):
 		return
 	_flip_dir = -1.0 if dir < 0.0 else 1.0
 	_flip_t = FLIP_TIME

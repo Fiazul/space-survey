@@ -5,7 +5,7 @@ extends SceneTree
 # FlightMode is autoload-free (static vars/funcs only), so it loads clean under
 # --script, unlike ship.gd/main.gd which touch autoloads (see CLAUDE.md
 # "Commands"). Behaviour that only exists inside main.gd's per-frame death
-# checks (_update_skin_kill/_update_core_hazard) is asserted as a SOURCE check
+# check (_update_skin_kill) is asserted as a SOURCE check
 # below, the same pattern test_skin_kill.gd uses for the swept-contact test.
 
 const FM := preload("res://scripts/flight/flight_mode.gd")
@@ -35,18 +35,15 @@ func _initialize() -> void:
 	failed += _check("dev_off_clears_no_death",
 		ship_src.find("_FM.dev_no_death = false") >= 0)
 
-	# main.gd: both death paths must consult the same gate before they can kill.
+	# main.gd: surface contact never kills. (The galactic-core hazard and its kill
+	# gate were deleted with the galactic drive, docs/adr/0003.)
 	var main_src := FileAccess.get_file_as_string("res://scripts/core/main.gd")
 	var skin_kill_at := main_src.find("func _update_skin_kill(")
-	var core_hazard_at := main_src.find("func _update_core_hazard(")
-	failed += _check("skin_kill_and_core_hazard_found", skin_kill_at >= 0 and core_hazard_at >= 0)
+	failed += _check("skin_kill_found", skin_kill_at >= 0)
 	var contact_src := main_src.substr(skin_kill_at, main_src.find("func _skin_begin(") - skin_kill_at)
 	failed += _check("contact_is_not_death_gated", contact_src.find("if not FlightMode.kill_allowed()") < 0)
 	failed += _check("contact_resolves_motion", contact_src.find("resolve_surface_motion(") >= 0)
 
-	failed += _check("core_hazard_checks_kill_allowed",
-		main_src.find("FlightMode.kill_allowed()", core_hazard_at) >= 0 \
-		and main_src.find("FlightMode.kill_allowed()", core_hazard_at) < main_src.find("func _core_kill("))
 	failed += _check("skin_begin_also_clears_no_death",
 		main_src.find("FlightMode.dev_no_death = false") >= 0)
 

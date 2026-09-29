@@ -97,7 +97,8 @@ for f in tools/test_*.gd; do
     tools/test_music_director_scene.gd|tools/test_plasma.gd|tools/test_plasma_frame.gd|\
     tools/test_ship_modules.gd|tools/test_ship_roster.gd|tools/test_ship_systems.gd|\
     tools/test_surface_facility.gd|tools/test_surface_integration.gd|tools/test_surface_streaming.gd|\
-    tools/test_weapon_aim.gd|tools/test_landing_cycle.gd) continue ;;
+    tools/test_weapon_aim.gd|tools/test_landing_cycle.gd|tools/test_system_ephemeris.gd|\
+    tools/test_proxima_boot.gd|tools/test_one_physics.gd) continue ;;
   esac
   echo "=== $f ==="; timeout 120 godot --headless --script "$f"
 done
@@ -122,6 +123,8 @@ Same form for `test_anchor_frame.tscn`, `test_ship_roster.tscn`, `test_chase_rig
 `test_dem_calibration.tscn`, `test_music_director_scene.tscn`, `test_ship_modules.tscn`,
 `test_landing_support.tscn`, `test_surface_facility.tscn`, `test_ship_systems.tscn`,
 `test_plasma.tscn`, `test_docking.tscn`, `test_weapon_aim.tscn`, `test_plasma_frame.tscn`,
+`test_system_ephemeris.tscn`, `test_proxima_boot.tscn`, `test_one_physics.tscn` (one flight
+model: GEO circular for a day with the Sun on, a generated HYG system falls at GM/r²),
 `test_landing_cycle.tscn` (all seven hulls at 60 and 20 fps over rotating Earth; ~30 s;
 `LANDING_VERBOSE=1` prints measurements, `LANDING_CLOCK=<unix_s>|wall` sets the rotation phase, `LANDING_HULLS=1,6` limits hulls,
 `LANDING_TRACE=descend|hold|depart|open|rest|press|slope` prints a 4 Hz trace).
@@ -155,9 +158,9 @@ runs it.
 
 ## Directives
 
-- Scene-unit convention: 1 scene unit = 1 km for physical bodies (`ship.gd:61-64`).
-  Arcade (non-Sol) systems use 1u = 0.01 AU with body radii boosted by `VISUAL_SCALE`
-  (`planet_system.gd:36-42`) — never assume a bare unit count means km outside Sol.
+- Scene-unit convention: 1 scene unit = 1 km, all systems (`ship.gd:61-64`). Sol comes
+  from `SolEphemeris`, every other star from `GeneratedEphemeris` at real scale; Newton
+  and anchored positions everywhere (docs/plans/2026-09-29-one-physics-ripout.md).
 - Every Sol feature shipped so far is a first pass. Treat none of it as finished
   (`CONTEXT.md`).
 - Always keep `TerrainSampler` the single height source. Never add a second height/noise
@@ -195,7 +198,8 @@ Domain-glossary terms to avoid (full definitions + longer avoid-lists: `CONTEXT.
 - Never say "world position"/"global transform" for a body's coordinate — say **true
   position** (ship stays at render origin; bodies draw at true minus ship's true).
 - Never build an "arcade gravity well" / safe-zone pull / idle-release physics — Newton
-  inverse-square only, no damping, no arcade 550 speed cap in Sol.
+  inverse-square only, no damping, no speed cap. The ship's frame free-falls with its
+  anchor body (`Ship._newton_g` subtracts each body's pull on the anchor).
 - Never add a "fat air shell" / Kerbal bubble / arcade planet spin — Earth atmosphere is a
   100 km drag-only skin; inside it the ship turns WITH the planet.
 - Never build a landing game / landing gear / one mesh per planet / unique GLB per world —

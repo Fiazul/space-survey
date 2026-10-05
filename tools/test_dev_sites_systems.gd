@@ -1,6 +1,6 @@
 extends Node
 # The Ctrl+P panel's STAR SYSTEMS rows: Sol pad -> Proxima through the dev
-# travel bypass (no ASTRYX_DEV_TRAVEL) -> back to Sol on Earth. Sol site rows
+# travel bypass (no ASTRYX_DEV_TRAVEL) -> back to the Sun. Sol site rows
 # vanish outside Sol.
 # Run: godot --headless tools/test_dev_sites_systems.tscn
 
@@ -53,21 +53,21 @@ func _ready() -> void:
 	main_panel().toggle()
 	check("panel_has_star_systems", _labels().has("STAR SYSTEMS"))
 	check("panel_has_sol_sites", _labels().has("Earth"))
-	check("proxima_pressed", _press(SystemDB.display_name(SystemDB.PROXIMA)))
+	check("proxima_pressed", _press("Proxima Centauri"))
 	check("panel_closed", not main_panel()._open and not get_tree().paused)
 	check("on_proxima", main.current_system == SystemDB.PROXIMA and Ephemeris.system_id == SystemDB.PROXIMA)
 	check("generated_system", Ephemeris.current() is GeneratedEphemeris)
 	var anchor: String = main.ship.anchor_name
-	check("anchor_generated_body", anchor == Ephemeris.spawn_body() and anchor != "Earth"
+	check("anchor_primary_star", anchor == Ephemeris.primary_star and anchor != "Earth"
 		and Ephemeris.is_anchorable(anchor))
 	print("  anchor=%s off_km=%.1f" % [anchor, main.ship.anchor_off.length()])
 	check("newton_on", main.ship._newton_g().length() > 0.0)
 
 	main_panel().toggle()
 	check("sol_sites_hidden", not _labels().has("Earth") and _labels().has("STAR SYSTEMS"))
-	check("sol_pressed", _press("Sol"))
+	check("sol_pressed", _press("Sun"))
 	check("back_on_sol", main.current_system == SystemDB.SOL and Ephemeris.system_id == SystemDB.SOL)
-	check("anchor_earth", main.ship.anchor_name == "Earth")
+	check("anchor_sun", main.ship.anchor_name == "Sun")
 	main_panel().toggle()
 	check("sol_sites_back", _labels().has("Earth"))
 	main_panel().toggle()

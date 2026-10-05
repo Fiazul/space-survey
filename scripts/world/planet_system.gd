@@ -45,6 +45,8 @@ const SUN_CORONA_MAX_ANG := 0.07   # ~4° radius — never a screen-filling card
 const SUN_CORONA_SHADER := """
 shader_type spatial;
 render_mode unshaded, blend_add, depth_draw_never, cull_disabled, shadows_disabled, fog_disabled;
+uniform vec3 tint : source_color = vec3(1.0, 0.95, 0.86);
+uniform float strength = 1.0;
 void fragment() {
 	vec2 p = UV - vec2(0.5);
 	float d = length(p) * 2.0;
@@ -53,7 +55,7 @@ void fragment() {
 	}
 	float core = smoothstep(0.16, 0.0, d);
 	float halo = exp(-d * 5.5) * (1.0 - smoothstep(0.45, 0.92, d));
-	ALBEDO = vec3(1.0, 0.95, 0.86) * (core * 3.2 + halo * 0.65);
+	ALBEDO = tint * strength * (core * 3.2 + halo * 0.65);
 }
 """
 var _surface: Node3D           # skin-band bird-view ground (rings / water / kit)
@@ -424,6 +426,11 @@ func _match_sun_sky(specs: Array) -> void:
 			add_child(_sun_sky)
 			old.queue_free()
 			_sun_sky_star = eph.primary_star
+			if _sun_corona != null:
+				var glare := _sun_corona.material_override as ShaderMaterial
+				var tint: Color = look.recipe.color_a
+				glare.set_shader_parameter("tint", Vector3(tint.r,tint.g,tint.b))
+				glare.set_shader_parameter("strength", minf(float(look.recipe.stellar.brightness),1.0))
 			return
 
 
@@ -849,12 +856,14 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	var ang: float = atan(star_r / dist)
 	var core: float = maxf(shell * tan(ang), 2.0)
 	_sun_sky.position = pos
-	_sun_sky.scale = Vector3.ONE * (core / _sun_core_r)
+	_sun_sky.basis = surface_basis(star).scaled(Vector3.ONE * (core / _sun_core_r))
 	if _sun_sky.material_override is ShaderMaterial:
 		var sm := _sun_sky.material_override as ShaderMaterial
 		PlanetGenerator.apply_view(sm, -pos, 0.0)
 		sm.set_shader_parameter("sky_glow", 1.0)
 	if _sun_corona != null:
+		# Resolved discs already have their recipe's corona; extra point glare washes out detail.
+		_sun_corona.visible = ang < .02
 		_sun_corona.position = pos
 		var corona_ang: float = minf(ang * SUN_CORONA_MULT, SUN_CORONA_MAX_ANG)
 		var corona_r: float = maxf(shell * tan(corona_ang), core * 1.6)

@@ -39,11 +39,16 @@ mining, atmosphere gathering or landing surface. Crafting extraction is not impl
 
 ## Appearance and cost
 
-Main-sequence photospheres have seeded granulation and spots; giants have broader
-convection patterns. Cool dwarfs have dim banded surfaces, white dwarfs smoother
-compact surfaces, and neutron remnants hot polar regions. A single billboard quad
-adds the corona and pulsar modulation. Spectral temperature controls the palette;
-the old shader's universal orange cast is removed. Star meshes are 96×48 spheres,
+Main-sequence photospheres combine filtered fine granulation with broader convection,
+sparse spots and bright magnetic regions; giants emphasize broader convection.
+Cool red dwarfs have a red display palette and stronger clustered prominence loops.
+Brown dwarfs have dim banded surfaces, white dwarfs smooth compact surfaces,
+Wolf–Rayet stars blue turbulent wind envelopes, and neutron remnants hot polar
+regions and narrow polar glare. A single billboard quad adds a soft corona and
+localized prominence filaments; brown dwarfs and compact remnants omit solar loops.
+Surface exposure is compressed separately from halo strength to preserve resolved
+texture even with the Sun brightness multiplier. Spectral temperature guides the
+authored display palette. Star meshes are 96×48 spheres,
 with no particle populations, CPU-generated textures or per-frame texture loads.
 Existing dot/mesh/Sun-sky LOD remains active. Display exposure is intentionally
 compressed to retain detail; these are not photometric observations. Cool brown
@@ -51,17 +56,24 @@ dwarfs retain a faint visible representation for playability.
 
 ## Scale and hazards
 
-Sol's Sun remains 695,700 km in radius. Extrasolar arenas still use the project's
-compressed layouts. There the rendered radius follows `5 × R_solar^0.45`, bounded
-to 0.12–16 scene units; hub destination spheres use a further 4.4 display factor.
-Planet layout and existing orbital/gravity models are not migrated in this pass.
-This is not yet a physically scaled extrasolar flight simulation.
+Sol's Sun remains 695,700 km in radius. Catalogue destinations use generated
+systems in kilometres: `GeneratedEphemeris` builds stellar radii and gravity
+from the recipe, plus seeded planetary orbits. The compressed
+`5 × R_solar^0.45` radius remains a display helper for distant catalogue markers;
+it does not set the local primary star's radius after a system jump.
+
+Ctrl+P's star rows jump to the selected system's primary star at four stellar
+radii, face it, set circular-orbit velocity, clear time warp, and save the stellar park.
+The current star can be selected again. Normal platform travel still uses its
+planetary arrival. Near meshes and distant stellar spheres share the primary's
+recipe and rotation; resolved stars use their recipe corona without additional
+point-source glare.
 
 For distance expressed in stellar radii `q`, incident flux is `σ T⁴ / q²` and the
 zero-albedo, uniformly reradiating equilibrium temperature is `T / sqrt(2q)`.
 The latter is an environmental reference, **not measured ship temperature**.
-Sol returns approximately 1,361 W/m² at 1 AU. Compressed arenas use the same
-radius ratio, not a claim that their scene units are real kilometres.
+Sol returns approximately 1,361 W/m² at 1 AU. Catalogue systems evaluate the
+radius ratio from their local kilometre distances.
 
 PlanetSystem exposes `stellar_hazard` and the flight tape shows heat/radiation
 warnings on approach. Withdrawal and system changes clear the warning. Radiation
@@ -85,3 +97,15 @@ Run `godot --headless --path . tools/test_star_recipes.tscn` for catalogue cover
 classification, physical estimates, inverse-square flux, runtime warnings and
 scan-panel checks. `tools/render_star_recipes.tscn` produces `/tmp/star-recipes.png`:
 equal angular sizes for comparing surfaces, with physical sizes printed below.
+The capture checks rendered hot-star, solar, red-dwarf and brown-dwarf palettes.
+Pass `-- --details` to also capture close views of the Sun, Proxima, a red supergiant
+and a Wolf–Rayet star beside the gallery image. `tools/render_sun_approach.tscn`
+checks solar brightness, surface contrast and clipping from distant through
+photosphere views; `tools/test_stellar_corona_clipping.tscn` checks camera-plane
+clipping and foreground occlusion. These are authored visualizations, not images
+of the catalogued stars or a simulation of a particular observed flare.
+`tools/test_star_teleport.tscn` checks every catalogue destination through the
+Ctrl+P jump path, including selected renderer, arrival state and saved position.
+`tools/render_star_teleport.tscn` drives Ctrl+P and the picker buttons in the real
+game, then captures Sol, Proxima, Wolf 359, Sirius, Luhman 16 and Gliese 440 in
+`/tmp/star-teleport`; `STAR_TELEPORT_SHOTS` changes the output directory.

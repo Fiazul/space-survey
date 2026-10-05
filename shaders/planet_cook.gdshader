@@ -18,6 +18,7 @@ uniform float stellar_activity = 0.3;
 uniform float stellar_brightness = 1.0;
 uniform float stellar_limb_floor = .72;
 uniform float stellar_detail_contrast = .20;
+uniform float stellar_temperature_k = 5772.0;
 uniform float seed = 0.0;
 uniform float ice_amount = 0.12;
 uniform float land_amount = 0.32;
@@ -262,46 +263,51 @@ void fragment() {
 	if (kind == 3) {
 		float mu = max(dot(n_world, normalize(INV_VIEW_MATRIX[3].xyz-v_world)), 0.0);
 		float limb = mix(stellar_limb_floor, 1.0, pow(mu, 0.55));
-		vec3 drift = vec3(TIME * .012, TIME * -.009, TIME * .006);
-		vec3 gp = n * stellar_cells + drift + seed;
-		vec3 flow = vec3(stellar_noise(gp*.42), stellar_noise(gp*.42+19.7), stellar_noise(gp*.42-8.3));
-		gp += (flow-.5)*.6;
-		float g1 = stellar_noise(gp);
-		float g2 = stellar_granules(gp * 3.2 + vec3(0.0, seed, 0.0));
-		float fine_cells = stellar_noise(gp * 6.4 + vec3(seed, 0.0, 0.0));
-		float cells = mix(.5, clamp(g1*.30 + g2*.50 + fine_cells*.20, 0.0, 1.0), granulation);
-		float magnetic = stellar_noise(n * 9.0 + seed + drift*.08);
-		float penumbra = smoothstep(.65, .77, magnetic);
-		float umbra = smoothstep(.75, .84, magnetic);
-		float spot = (penumbra*.42 + umbra*.48)*clamp(stellar_spots*3.0, 0.0, 1.0);
-		float heat = clamp(.5 + (cells-.5)*1.8, 0.0, 1.0);
-		// The temperature palette remains authoritative; cooler lanes carry a gold tint.
-		float warmth = clamp((color_a.r-color_a.b)*5.0+.2, 0.0, 1.0);
-		vec3 lanes = color_a * mix(vec3(1.0), vec3(1.0, .65, .27), warmth);
-		vec3 phot = mix(lanes, color_a, heat) * (1.0 + (cells-.5)*stellar_detail_contrast*2.0) * (1.0-spot);
+		vec3 drift = vec3(TIME * .025, TIME * -.018, TIME * .011);
+		vec3 phot = color_a;
 		if (stellar_mode == 0) {
-			float convection = stellar_noise(n*18.0+flow*2.0+seed+drift*.3);
-			float fire = clamp((cells-.30)*2.1+(convection-.5)*.65, 0.0, 1.0);
-			vec3 ember = vec3(.65, .035, .002);
-			vec3 gold = vec3(1.45, .42, .025);
-			vec3 hot = vec3(1.65, 1.25, .65);
-			vec3 plasma = mix(ember, gold, smoothstep(.05, .55, fire));
-			plasma = mix(plasma, hot, smoothstep(.60, .95, fire));
-			phot = mix(phot, plasma*(1.0-spot), warmth);
-		}
-		if (stellar_mode == 1) {
-			// Cool dwarfs have bands/clouds, not a miniature solar photosphere.
-			float bands = sin(n.y * 42.0 + fbm(n * 5.0 + seed) * 7.0 + TIME * .015);
-			phot = mix(color_b, color_a, .5 + .35 * bands);
+			vec3 flow = vec3(stellar_noise(n*12.0+seed+drift*.15),
+				stellar_noise(n*12.0+seed+19.7), stellar_noise(n*12.0+seed-8.3));
+			vec3 gp = n*stellar_cells+(flow-.5)*.8+drift+seed;
+			float convection = stellar_noise(gp*.15);
+			float granules = stellar_granules(gp*2.0);
+			float fine = stellar_noise(gp*4.0);
+			float giant = 1.0-smoothstep(8.0,25.0,stellar_cells);
+			float cells = mix(.5, mix(granules*.50+convection*.40+fine*.10,
+				convection*.80+granules*.10+fine*.10,giant), granulation);
+			float heat = clamp(.5+(cells-.43)*2.3, 0.0, 1.0);
+			float magnetic = stellar_noise(n*11.0+seed+drift*.08);
+			float penumbra = smoothstep(.68,.79,magnetic);
+			float umbra = smoothstep(.77,.86,magnetic);
+			float spot = (penumbra*.30+umbra*.55)*clamp(stellar_spots*2.0,0.0,1.0);
+			float cool = 1.0-smoothstep(3200.0,5200.0,stellar_temperature_k);
+			float warm = 1.0-smoothstep(6200.0,8500.0,stellar_temperature_k);
+			vec3 low = mix(vec3(.85,.12,.008),vec3(.65,.006,.001),cool);
+			vec3 high = mix(vec3(1.5,.75,.20),vec3(1.5,.12,.008),cool);
+			vec3 plasma = mix(low,high,heat);
+			phot = mix(color_a*(.8+heat*.45),plasma,warm);
+			phot *= (1.0+(cells-.43)*stellar_detail_contrast)*(1.0-spot);
+			float plage = smoothstep(.57,.72,magnetic)*(1.0-penumbra);
+			phot += mix(color_a,vec3(1.5,.65,.12),warm)*plage*stellar_activity*.10;
+		} else if (stellar_mode == 1) {
+			float clouds = stellar_noise(n*18.0+seed+drift*.25);
+			float bands = sin(n.y*34.0+stellar_noise(n*6.0+seed)*5.0);
+			phot = mix(color_b,color_a,smoothstep(-.9,.9,bands+clouds-.5));
+			phot *= .8+clouds*.5;
 		} else if (stellar_mode == 2) {
-			phot = color_a * (1.1 + cells * .08); // smooth compact white dwarf
+			phot = color_a*(1.0+stellar_noise(n*45.0+seed)*.035);
 		} else if (stellar_mode == 3) {
-			float polar = pow(abs(n.y), 28.0);
-			phot = color_a * (1.0 + polar * 2.0); // hot magnetic poles
+			float polar = pow(abs(n.y),18.0);
+			float belts = .5+.5*sin(n.y*36.0+stellar_noise(n*8.0+seed)*3.0);
+			phot = color_a*(.65+belts*.10)+vec3(.45,.7,1.4)*polar;
+		} else if (stellar_mode == 4) {
+			float wind = stellar_noise(n*stellar_cells+seed+drift*2.0);
+			phot = color_a*(.65+wind*.85);
+			phot += vec3(.3,.45,.8)*smoothstep(.60,.80,wind);
 		}
-		float flare = smoothstep(.72, .9, noise(n * 13.0 + vec3(TIME * .06, seed, 0.0)));
-		phot += color_a * flare * stellar_activity * .12;
-		ALBEDO = phot * limb * stellar_brightness;
+		// Compress surface exposure independently of halo intensity so HDR cannot erase cells.
+		float display_brightness = stellar_brightness/(1.0+stellar_brightness*.65);
+		ALBEDO = phot*limb*display_brightness;
 	} else {
 	float water = sample_water(v_map_uv, n, alb);
 	float land = 1.0 - water;

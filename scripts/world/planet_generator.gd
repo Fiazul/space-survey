@@ -588,6 +588,8 @@ static func paint(spec: Dictionary, radius: float) -> Dictionary:
 		halo.set_shader_parameter("falloff", recipe.stellar.corona_falloff)
 		halo.set_shader_parameter("star_radius", radius)
 		halo.set_shader_parameter("seed", recipe.seed)
+		halo.set_shader_parameter("activity", recipe.stellar.activity)
+		halo.set_shader_parameter("stellar_mode", recipe.stellar.mode)
 		halo.set_shader_parameter("pulse", 1.0 if recipe.stellar.type in ["pulsar", "magnetar"] else 0.0)
 		corona.material_override = halo
 		corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -1019,7 +1021,7 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	var surface := preload("res://scripts/world/surface_recipe.gd").resolve(recipe)
 	if recipe.has("stellar"):
 		var stellar: Dictionary = recipe.stellar
-		for key in ["mode", "cells", "spots", "activity", "brightness", "limb_floor", "detail_contrast"]:
+		for key in ["mode", "cells", "spots", "activity", "brightness", "limb_floor", "detail_contrast", "temperature_k"]:
 			mat.set_shader_parameter("stellar_"+key, stellar[key])
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)

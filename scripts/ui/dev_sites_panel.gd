@@ -6,7 +6,7 @@ extends CanvasLayer
 # restores capture. main.gd owns the Ctrl+P key; this class only exposes toggle().
 #
 # Dev tool: no separate flag gate, same as F6/F7/F9 on Ship (always available).
-# STAR SYSTEMS rows jump to any SystemDB star (dev travel bypass); the Sol
+# STAR SYSTEMS rows park around any SystemDB primary star (dev travel bypass); the Sol
 # site rows are hidden outside Sol — DevSites names Sol bodies only.
 
 const DS := preload("res://scripts/world/dev_sites.gd")
@@ -129,14 +129,17 @@ func _add_systems(needle: String) -> void:
 	var added := false
 	for id in system_ids():
 		var label := SystemDB.display_name(id)
-		if not needle.is_empty() and not ("%s %s star system" % [label, id]).to_lower().contains(needle):
+		var catalog := SystemDB.star_row(id)
+		var star := "Sun" if id == SystemDB.SOL else str(catalog.get("star_name", label))
+		var spectral := SystemDB.spectral(id)
+		if not needle.is_empty() and not ("%s %s %s %s star system" % [star, label, id, spectral]).to_lower().contains(needle):
 			continue
 		if not added:
 			_add_head("STAR SYSTEMS")
 			added = true
 		var ly := SystemDB.light_years(id)
-		var row := _row("    %s   —  %s" % [label, "%.2f ly" % ly if ly > 0.0 else "home"])
-		row.disabled = id == Ephemeris.system_id
+		var row := _row("    %s · %s   —  %s" % [star, spectral, "%.2f ly" % ly if ly > 0.0 else "home"])
+		row.tooltip_text = "Jump to a safe viewing position around this star"
 		row.pressed.connect(_pick_system.bind(id))
 		_list.add_child(row)
 
@@ -147,9 +150,29 @@ func _pick_system(id: String) -> void:
 
 
 func go_system(id: String) -> bool:
-	if main == null:
+	if main == null or ship == null or SystemDB.star_row(id).is_empty():
 		return false
-	return main.travel_to(id, true)
+	main.cancel_teleport()
+	if id != Ephemeris.system_id and not main.travel_to(id, true):
+		return false
+	var star := Ephemeris.primary_star
+	if not Ephemeris.is_star(star) or not main.planets.has_body(star):
+		return false
+	if main.docked:
+		main._set_docked(false)
+	main._anchor_ship(star)
+	ship.relocate(Ephemeris.sweet_spot_off(star))
+	# A stationary arrival falls into compact stars before the player can inspect them.
+	var radial := ship.anchor_off.normalized()
+	var up := Vector3.UP if absf(radial.dot(Vector3.UP)) < .99 else Vector3.RIGHT
+	ship.velocity = radial.cross(up).normalized()*sqrt(Ephemeris.gm(star)/ship.anchor_off.length())
+	ship.reset_mesh_pose()
+	ship.face_toward(-ship.anchor_off)
+	_finish_jump()
+	main.hud.toast = "STAR VIEW — %s" % star
+	main.hud.toast_t = 3.0
+	main._save_profile()
+	return true
 
 
 func _pick(site: Dictionary) -> void:
@@ -203,6 +226,10 @@ func go(site: Dictionary) -> void:
 		var fwd := DS.heading_forward(dir2, float(site.get("heading_deg", 0.0)))
 		ship.transform.basis = Basis.looking_at(body_basis * fwd, body_basis * dir2)
 		ship._cam_basis = ship.transform.basis
+	_finish_jump()
+
+
+func _finish_jump() -> void:
 	ship.time_rate = 1.0
 	ship._time_idx = 0
 	ship._shell_edge_known = false

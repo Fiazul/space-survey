@@ -88,6 +88,7 @@ var _saved_pos := Vector3.ZERO
 var _has_saved_pos := false
 var _saved_anchor := ""           # anchored save (docs/adr/0002); "" = a pre-anchor save
 var _saved_off := Vector3.ZERO
+var _saved_star_velocity: Variant = null
 var _saved_surface_off: Variant = null
 var _saved_surface_basis: Variant = null
 var _saved_landing_site := ""
@@ -354,6 +355,8 @@ func _restore_location() -> void:
 				ship._cam_basis = ship.transform.basis
 		else:
 			ship.face_toward(-_saved_off)
+		if Ephemeris.is_star(_saved_anchor) and _saved_star_velocity is Vector3 and _saved_star_velocity.is_finite():
+			ship.velocity = _saved_star_velocity
 	elif _has_saved_pos and _saved_pos.length() > 0.001 and current_system == SystemDB.SOL:
 		ship.true_pos = _saved_pos
 		ship.face_toward(-_saved_pos)
@@ -626,6 +629,7 @@ func _load_profile() -> void:
 		# is Earth-centred by definition — the empty anchor decomposes onto Earth.
 		_saved_anchor = str(cfg.get_value("player", "anchor", ""))
 		_saved_off = cfg.get_value("player", "off", Vector3.ZERO)
+		_saved_star_velocity = cfg.get_value("player", "star_velocity") if cfg.has_section_key("player", "star_velocity") else null
 		_saved_surface_off = cfg.get_value("player", "surface_off") if cfg.has_section_key("player", "surface_off") else null
 		_saved_surface_basis = cfg.get_value("player", "surface_basis") if cfg.has_section_key("player", "surface_basis") else null
 		_saved_landing_site = str(cfg.get_value("player", "landing_site", ""))
@@ -658,6 +662,11 @@ func _save_profile() -> void:
 			cfg.set_value("player", "pos", ship.true_pos)
 			cfg.set_value("player", "anchor", ship.anchor_name)
 			cfg.set_value("player", "off", ship.anchor_off)
+			# Compact-star inspection orbits must resume with their tangential velocity.
+			if Ephemeris.is_star(ship.anchor_name) and ship.velocity.is_finite():
+				cfg.set_value("player", "star_velocity", ship.velocity)
+			elif cfg.has_section_key("player", "star_velocity"):
+				cfg.erase_section_key("player", "star_velocity")
 			cfg.set_value("player", "ship_index", ship.current_index())
 			cfg.set_value("player", "landing_site",ship.landing_site_id if not ship.landing_site.is_empty() else "")
 			# Surface saves follow the same longitude while the world turns offline.

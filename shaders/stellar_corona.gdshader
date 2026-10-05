@@ -7,6 +7,8 @@ uniform float pulse = 0.0;
 uniform float star_radius = 1.0;
 uniform float extent = 2.8;
 uniform float falloff = 3.8;
+uniform float activity = .3;
+uniform int stellar_mode = 0;
 varying vec4 corona_clip_position;
 
 float corona_hash(vec2 p) {
@@ -65,33 +67,48 @@ void fragment() {
 	vec2 bent = direction + vec2(-direction.y, direction.x)*height*.35;
 	float broad = corona_noise(direction*3.1+seed);
 	float wisps = corona_noise(bent*11.0+vec2(seed, TIME*.015));
-	float corona = exp(-height*falloff/(.42+.40*broad))*(.28+.40*broad+.18*wisps);
+	float strands = corona_noise(bent*38.0+vec2(seed, TIME*.009));
+	float corona = exp(-height*falloff/(.42+.60*broad))*(.24+.40*broad+.16*wisps);
+	corona *= .94+.06*strands;
 	float veil = .09*exp(-height*falloff*2.8)*wisps;
 	float glare = .025*exp(-height*2.6);
 	float prominences = 0.0;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 6; i++) {
 		float id = float(i);
-		float phase = seed*1.37 + id*2.39996 + .22*sin(seed+id*4.7);
+		float phase = seed*1.37 + (i < 3 ? id*.13 : id*2.39996);
 		vec2 axis = vec2(cos(phase), sin(phase));
 		float tangent = dot(p, vec2(-axis.y, axis.x));
 		float radial = dot(p, axis)-.985;
-		float reach = .12+.065*sin(seed+id*3.1)+.008*sin(TIME*.08+id);
+		float reach = (.07+activity*.25)*(1.0+id*.14)+.008*sin(TIME*.08+id);
 		// Upper elliptical arc: two narrow footpoints joined by a curved loop.
-		vec2 arc = vec2((tangent-radial*.25)/(.085+id*.018), radial/reach);
+		vec2 arc = vec2((tangent-radial*.35)/(.06+id*.016+activity*.025), radial/reach);
 		float turbulence = corona_noise(p*57.0+vec2(seed+id, TIME*.06));
-		float ring = abs(length(arc)-1.0+(turbulence-.5)*.15);
-		float width = max(fwidth(ring), .04);
-		float filament = 1.0-smoothstep(.015, .015+width, ring);
-		float envelope = exp(-ring*ring*42.0)*.28;
-		prominences += (filament+envelope)*smoothstep(0.0,.025,radial)*(.35+.65*turbulence);
+		float ring = abs(length(arc)-1.0+(turbulence-.5)*.13);
+		float width = max(fwidth(ring), .022);
+		float filament = 1.0-smoothstep(.008, .008+width, ring);
+		float envelope = exp(-ring*ring*60.0)*.30;
+		float group = i < 3 ? 1.0 : .15;
+		prominences += (filament+envelope)*smoothstep(0.0,.025,radial)*(.55+.45*turbulence)*group;
 	}
+	prominences *= stellar_mode == 0 ? (.2+activity*1.8) : 0.0;
 	// Soft radial support reaches zero before every edge of the quad.
-	float mask = smoothstep(.94, 1.02, r)*(1.0-smoothstep(extent*.72, extent*.98, r));
+	float mask = smoothstep(.972, 1.012, r)*(1.0-smoothstep(extent*.72, extent*.98, r));
 	float poles = pow(abs(p.y/max(r,.001)),24.0)*(.7+.3*sin(TIME*3.0+seed));
 	float warmth = clamp((tint.r-tint.b)*5.0+.2, 0.0, 1.0);
 	vec3 halo_color = tint*mix(vec3(1.0), vec3(1.0,.28,.025), warmth);
+	if (stellar_mode == 4) {
+		corona *= 1.3+strands*.25;
+		halo_color = mix(tint,vec3(.45,.65,1.0),.45);
+	}
 	float hot_rim = exp(-height*45.0)*(.5+.5*wisps);
-	ALBEDO = halo_color*strength*(corona*1.6+veil+glare+hot_rim*1.8+pulse*poles*corona*2.0)
-		+ tint*vec3(1.0,.36,.09)*strength*prominences*3.5;
+	vec3 loop_color = mix(tint,vec3(1.0,.65,.22),warmth);
+	float eruption = 0.0;
+	if (stellar_mode == 0) {
+		vec2 axis = vec2(cos(seed*1.37+.13),sin(seed*1.37+.13));
+		float alignment = max(dot(direction,axis),0.0);
+		eruption = pow(alignment,80.0)*exp(-height*9.0)*activity*activity*wisps;
+	}
+	ALBEDO = halo_color*strength*(corona*1.4+veil+glare+hot_rim*1.8+pulse*poles*corona*22.0)
+		+ loop_color*strength*(prominences*4.0+eruption*5.0);
 	ALPHA = mask;
 }

@@ -30,6 +30,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_sol_facing.gd` | Roll/yaw nose-facing regressions |
 | `test_sol_occlude.gd` | Celestial-body opacity (no see-through) |
 | `test_sol_sun_lod.gd` | Sun stays drawn across the sky-disc/mesh LOD switch |
+| `test_star_teleport.gd` (+ `.tscn`) | Every Ctrl+P catalogue star: primary-star arrival, recipe visibility, motion reset, repeated visits and saved park |
 | `test_sol_truth.gd` | Radii, fallback distances, visual scale, EZ vs real air |
 | `test_streak_scale.gd` | Motion-streak field scale vs ship speed |
 | `test_surface_band.gd` | The bird-eye ground tile (skin band) contract |
@@ -46,6 +47,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | File | Captures |
 |---|---|
 | `render_day_night.gd` (+ `.tscn`) | Same Amazon location and heading at local noon/midnight; writes `/tmp/day-night/amazon-{day,night}.png` using the production terrain/cloud path without touching saves |
+| `render_star_teleport.gd` (+ `.tscn`) | Real Ctrl+P picker arrivals for six representative stars; `/tmp/star-teleport/*.png` or `STAR_TELEPORT_SHOTS`, isolated player profile |
 | `render_plasma.gd` (+ `.tscn`) | 90 chase-camera firing frames; `PLASMA_CRUISE_KMS`, `PLASMA_ROTATING=1` and `PLASMA_SHOTS` select fast drift, turning with planetary rotation and output directory |
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
 | `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |

@@ -4,7 +4,7 @@ extends RefCounted
 ## Calibration and approximation limits: docs/STAR_RECIPES.md.
 const SOLAR_RADIUS_KM := 695700.0
 const SIGMA := 5.670374419e-8
-# Sun surface + corona: 1.0 = original look, 2.0 = twice the render intensity.
+# Sun HDR brightness control; the shader compresses photosphere exposure.
 const SUN_BRIGHTNESS_MULTIPLIER := 6
 # Representative dwarf anchors: Teff K, radius / Sun, mass / Sun.
 const DWARFS := {
@@ -54,9 +54,9 @@ static func resolve(spec: Dictionary) -> Dictionary:
 				radius = lerpf(low[2],high[2],mix_t)
 				mass = lerpf(low[3],high[3],mix_t)
 				break
-	var mode := 0 # photosphere, brown bands, white dwarf, neutron remnant
+	var mode := 0 # photosphere, brown bands, white dwarf, neutron remnant, stellar wind
 	var activity := .3
-	var cells := 36.0
+	var cells := 95.0
 	var spots := .15
 	match family:
 		"subdwarf": radius *= .75
@@ -65,7 +65,7 @@ static func resolve(spec: Dictionary) -> Dictionary:
 			radius = 25.0 if family == "giant" else (70.0 if family == "bright_giant" else 500.0)
 			mass = 2.0 if family in ["giant", "carbon_star"] else 15.0
 			if family == "carbon_star": temperature = 2800.0; radius = 200.0
-			cells = 7.0
+			cells = 5.0
 			activity = .55
 		"brown_dwarf":
 			mode = 1; activity = .08; spots = 0.0
@@ -73,14 +73,14 @@ static func resolve(spec: Dictionary) -> Dictionary:
 			temperature = 50400.0/maxf(subtype, 1.0)
 			radius = .012; mass = .6; mode = 2; activity = .02; spots = 0.0
 		"wolf_rayet":
-			temperature = 65000.0; radius = 5.0; mass = 20.0; activity = 1.0; cells = 12.0
+			temperature = 65000.0; radius = 5.0; mass = 20.0; activity = 1.0; cells = 18.0; mode = 4
 		"neutron_star", "pulsar", "magnetar":
 			temperature = 600000.0; radius = 12.0/SOLAR_RADIUS_KM; mass = 1.4
 			mode = 3; activity = 1.0; spots = 0.0
 			if not spec.has("spectral"): sp = "REMNANT"
 	if letter == "M" and family in ["main_sequence", "subdwarf"]:
 		activity = .75; spots = .35
-	if letter in ["O", "B", "A"]: spots = .02; cells = 60.0
+	if letter in ["O", "B", "A"]: spots = .02; cells = 140.0
 	var solar := name in ["Sun", "Sol"]
 	if solar:
 		temperature = 5772.0; radius = 1.0; mass = 1.0
@@ -105,10 +105,11 @@ static func resolve(spec: Dictionary) -> Dictionary:
 		"activity": activity, "mode": mode, "cells": cells, "spots": spots,
 		"brightness": brightness,
 		"limb_floor": .35 if mode == 1 else (.48 if mode == 0 else .72),
-		"detail_contrast": .85 if mode == 0 else .20,
-		"corona_strength": brightness*((.11+activity*.16) if mode == 0 else (.12+activity*.22)),
+		"detail_contrast": .55 if mode == 0 else .20,
+		"corona_strength": brightness*(.11+activity*.32) if mode == 0 else
+			(brightness*.025 if mode == 1 else (.075 if mode == 2 else (.22 if mode == 3 else .6))),
 		"corona_extent": 2.8,
-		"corona_falloff": 7.0 if mode == 1 else 3.8,
+		"corona_falloff": 9.0 if mode in [1, 2] else (2.6 if mode == 4 else 3.8),
 		"estimated": not solar, "composition": ["hydrogen", "helium"],
 	}
 	if family == "white_dwarf": stellar.composition = ["degenerate_carbon_oxygen", "hydrogen_or_helium_envelope"]

@@ -1,6 +1,6 @@
 """Concept-sheet renders of the exported v2 hull GLBs (visual gate, not pass/fail).
 
-  blender -b --python fleet_v2/blender/render_ships.py -- [--ship <slug>|roster|fleet] [--samples N] [--res N] [--views 3q,side,top,rear]
+  blender -b --python tools/blender/render_ships.py -- [--ship <slug>|roster|fleet] [--samples N] [--res N] [--views 3q,side,top,rear] [--out <dir>]
 
 Writes renders/<slug>_{3q,side,top,rear}.png, roster.png (side profiles, one scale, labelled) and
 fleet_3q.png (the seven 3/4 views tiled). Renders the GLB, so what is judged is what Godot imports.
@@ -24,7 +24,7 @@ def arg(name, default):
 	return argv[argv.index(name) + 1] if name in argv else default
 
 
-REN = os.path.join(os.path.dirname(SHIPS), "renders")
+REN = arg("--out", os.path.join(os.path.dirname(os.path.abspath(__file__)), "renders"))
 SAMPLES = int(arg("--samples", "96"))
 RES = int(arg("--res", "1000"))
 VIEWS = arg("--views", "3q,side,top,rear").split(",")
@@ -249,6 +249,8 @@ def render_roster():
 	items, allpts = [], []
 	for tier in sorted(ROSTER):
 		spec = ROSTER[tier]
+		if spec["slug"] == "wren":
+			continue
 		objs = import_ship(spec["slug"])
 		lo, hi, _ = bounds(objs)
 		off = Vector((0, cursor - lo.y, -lo.z))
@@ -291,6 +293,8 @@ def render_roster():
 def tile_fleet(tile=640):
 	imgs = []
 	for tier in sorted(ROSTER):
+		if ROSTER[tier]["slug"] == "wren":
+			continue
 		im = bpy.data.images.load(os.path.join(REN, "%s_3q.png" % ROSTER[tier]["slug"]))
 		im.scale(tile, tile)
 		a = np.array(im.pixels[:], dtype=np.float32).reshape(tile, tile, 4)

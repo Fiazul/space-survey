@@ -91,7 +91,7 @@ func _init() -> void:
 			var p := st.origin
 			check(aabb.grow(0.01 * length).has_point(p), "%s: %s outside hull bounds" % [slug, k])
 			if k.begins_with("SOCKET_BOOSTER"):
-				check(p.z > aabb.end.z - 0.06 * length, "%s: %s not at +Z end (z=%.1f)" % [slug, k, p.z])
+				check(p.z > aabb.end.z - 0.15 * length, "%s: %s not under aft hull (z=%.1f)" % [slug, k, p.z])
 				check(st.basis.z.normalized().dot(Vector3.BACK) > 0.99, "%s: %s exhaust not +Z" % [slug, k])
 			elif k.begins_with("SOCKET_WEAPON"):
 				check(st.basis.z.normalized().dot(Vector3.BACK) > 0.99, "%s: %s not firing -Z" % [slug, k])

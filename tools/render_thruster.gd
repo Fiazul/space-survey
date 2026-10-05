@@ -46,6 +46,8 @@ var _env: Environment
 # forward axis, so the plumes point at the lens. The default 3/4 side view flatters the
 # thruster; "too bright" is a complaint about the chase view, so tune against this one.
 var _view := ""
+var _check_exhaust_frame := false
+var _frame_failures := 0
 # Mirrors of Ship's camera constants, overridable per run so a candidate rig can be
 # photographed without editing ship.gd first.
 var _cam_back := 2.6      # CAM_OFFSET.z, in hull lengths
@@ -83,6 +85,7 @@ func _ready() -> void:
 	# can be attributed to the layer that actually draws it.
 	_isolate = OS.get_environment("ISOLATE")
 	_view = OS.get_environment("VIEW")
+	_check_exhaust_frame = OS.get_environment("CHECK_EXHAUST_FRAME") == "1"
 	if OS.get_environment("WEAPON") != "":
 		_weapon_set = OS.get_environment("WEAPON")
 	if OS.get_environment("PAD") != "":
@@ -110,7 +113,7 @@ func _ready() -> void:
 	_glow_strength = _envf("GLOW_STRENGTH", _glow_strength)
 	_glow_bloom = _envf("GLOW_BLOOM", _glow_bloom)
 	DirAccess.make_dir_recursive_absolute(_out_dir)
-	get_window().size = Vector2i(960, 540)
+	get_window().size = Vector2i(int(_envf("SHOT_WIDTH", 960)), int(_envf("SHOT_HEIGHT", 540)))
 	_build_environment()
 	_build_starfield()
 	_build_scene_lights()
@@ -234,11 +237,40 @@ func _run() -> void:
 			var img := get_viewport().get_texture().get_image()
 			var path := "%s/%s_%s.png" % [_out_dir, ship.label, shot.label]
 			img.save_png(path)
+			if _check_exhaust_frame and String(shot.label) == "boost":
+				_check_exhaust_image(img, String(ship.label))
 			print("render: %s" % path)
 		rig.model.queue_free()
 		await get_tree().process_frame
 	print("render: done")
-	get_tree().quit(0)
+	get_tree().quit(1 if _frame_failures else 0)
+
+
+func _check_exhaust_image(img: Image, label: String) -> void:
+	var flow_pixels := 0
+	var edge_pixels := 0
+	var center_rows := 0
+	for y in range(int(img.get_height() * .70), img.get_height()):
+		var center_flow := false
+		for x in range(int(img.get_width() * .25), int(img.get_width() * .75)):
+			var color := img.get_pixel(x, y)
+			if color.b > .25 and color.g > .10 and color.b > color.r * 1.6 and color.b > color.g * 1.05:
+				flow_pixels += 1
+				if y >= img.get_height() - 8:
+					edge_pixels += 1
+				if y >= img.get_height() * .85 and absf(x - img.get_width() * .5) <= img.get_width() * .0035:
+					center_flow = true
+		if center_flow:
+			center_rows += 1
+	var ok := flow_pixels >= 10 and edge_pixels < 5
+	# Osprey's outer trails can mask an occluded third engine in the aggregate check.
+	if label == "osprey" and _view == "chase":
+		ok = ok and center_rows >= int(img.get_height() * .045)
+		print("exhaust_frame: osprey center trail rows=%d" % center_rows)
+	print("exhaust_frame: %s %s (flow=%d edge=%d)" % [label, "PASS" if ok else "FAIL", flow_pixels, edge_pixels])
+	if not ok:
+		_frame_failures += 1
+		push_error("%s: exhaust missing or cropped at the bottom edge" % label)
 
 
 func _build_ship(ship: Dictionary):
@@ -337,7 +369,7 @@ func _build_ship(ship: Dictionary):
 		var chase := Basis(Vector3.RIGHT, deg_to_rad(_cam_pitch))
 		_camera.fov = _cam_fov
 		_camera.global_transform = Transform3D(
-			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len))
+			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len * _envf("CAM_ZOOM", 1.0)))
 		print("render: VIEW=chase fov=%.1f back=%.2f up=%.2f pitch=%.1f"
 			% [_cam_fov, _cam_back, _cam_up, _cam_pitch])
 	elif _detail:

@@ -39,46 +39,114 @@ mining, atmosphere gathering or landing surface. Crafting extraction is not impl
 
 ## Appearance and cost
 
-Main-sequence photospheres combine filtered fine granulation with broader convection,
-sparse spots and bright magnetic regions; giants emphasize broader convection.
-Cool red dwarfs have warmer amber/red colors and stronger clustered prominence loops.
-Brown dwarfs have dim banded surfaces, white dwarfs smooth compact surfaces,
-Wolf–Rayet stars blue turbulent wind envelopes, and neutron remnants hot polar
-regions and narrow polar glare. A single billboard quad adds a soft corona and
-localized prominence filaments; brown dwarfs and compact remnants omit solar loops.
-Surface exposure is compressed separately from halo strength to preserve resolved
-texture. The Sun uses the same exposure response as other photospheres; its previous
-sixfold boost is removed. Effective temperature selects a visible blackbody continuum,
-integrated from 380–780 nm at 5 nm intervals through the CIE 1931 observer and converted
-from XYZ to linear sRGB, normalized by peak channel, then encoded for Godot's
-`source_color` uniforms. Cached colors are shared across recipes.
-The solar photosphere is warm white, A/F stars white, O/B stars blue-white, and K/M
-stars increasingly warm. Local surface temperature colors span ±6%; the shader no
-longer replaces G/K/M colors with orange plasma. Optical corona tint tends toward
-white instead of applying an orange multiplier. Star meshes are 96×48 spheres,
-with no particle populations, CPU-generated textures or per-frame texture loads.
-Existing dot/mesh/Sun-sky LOD remains active. Display exposure is intentionally
-compressed to retain detail; these are not photometric observations. Cool brown
-dwarfs retain a faint visible representation for playability.
+Every surface uses `PlanetGenerator._cook_material` and the same
+`planet_cook.gdshader`. Its `kind == 3` branch calls the stellar-only calculations
+in `stellar_surface.gdshaderinc`; other kinds retain their existing cook logic.
+The cook binds `stellar.display_color`, `stellar.display_hot_color` and the explicit
+sensor index for display while the resolved physical colors remain unchanged.
+`StellarStructures` owns optional geometry, not surface materials.
+`StellarStructures` creates normalized batches below the sphere's single immediate
+corona child. Freeing child 0 still removes every corona/structure effect. The
+corona shader's billboard affects its own vertices, not its children's transforms;
+structures inherit the fixed sphere's orientation and radius. Both near and primary
+sky spheres use the same resolved recipe, including authored visual options.
 
-Solar granule spacing is approximately `R_sun / (2 × cells)` = 994 km at 350 cells.
-Derivative filtering suppresses unresolved fine detail and skips its expensive
-noise evaluations. Hot radiative-envelope stars have reduced convection contrast,
-while giant presets retain broad cells. Magnetic regions gate smaller spot groups;
-their activity and coverage are display estimates, not observations of these stars.
-Stars skip terrain height sampling in the shared vertex shader.
+Main-sequence photospheres have filtered granulation, mottled magnetic networks and
+spots; giants use broad convection cells and a faint diffuse shell. The granule
+scale remains approximately `R_sun / (2 × cells)` = 994 km for the Sun. Hot radiative
+stars retain reduced texture contrast. Brown dwarfs use fine, irregular turbulent
+cloud shear adapted from the approved structure preview, with seamless cylindrical
+sampling and noise-driven cloud lanes. Bare white dwarfs and neutron remnants have
+compact smooth luminous surfaces, without latitude stripes, rings or winds.
 
-Opaque cook spheres cull far-side faces. At large scene distances, drawing both
-hemispheres produced depth conflicts and large triangular patches in compatibility
-rendering. In-game disc checks reproduce this with `STAR_DOUBLE_SIDED=1` and pass
-with the production draw mode. `STAR_TELEPORT_SYSTEMS=sol,sirius` restricts that
-capture to the two regression cases. Main space background is black; atmospheric
-color still comes from the air shell around the observer.
+`StarRecipe.color_at` still integrates a visible blackbody continuum from 380–780 nm
+at 5 nm intervals through the CIE 1931 observer, converts XYZ to linear sRGB,
+normalizes by peak channel, and encodes for Godot's `source_color` uniforms. Solar
+color stays warm white; red dwarfs stay orange; O/B stars stay blue-white. Local
+photosphere colors retain the ±6% temperature range. The physical color, luminosity
+and exposure calculation are independent of sensor palettes. Surface brightness
+keeps the existing compressed response `brightness / (1 + .65 × brightness)`.
+These procedural patterns and exposure choices are authored approximations, not
+photometric measurements or observations of individual stars. Cool brown dwarfs
+remain faintly represented even though most of their emission is infrared.
 
-The current travel catalogue mostly contains nearby M/K dwarfs, with G/F/A stars,
-brown dwarfs and white dwarfs; it has no O/B destinations. Its warm/white balance
-therefore persists despite the corrected renderer. The gallery includes O/B recipe
-examples to verify blue-white support, without changing real catalogue metadata.
+The corona has faint irregular support and real clustered 3D strands and streamers;
+the old billboard ellipse loops are removed. Resolved corona strength is reduced
+when structures are active. Far-plane vertex clamping and per-pixel depth restoration
+remain in `stellar_corona.gdshader`; structure shaders use the same depth rule.
+Depth testing remains enabled for foreground occlusion. Opaque photospheres retain
+back-face culling. Extended effects preserve their angular projection at the far
+plane; they are not a volumetric or radiative-transfer simulation.
+
+Geometry construction is lazy. A core angular radius of .02 radians selects low
+structure LOD, .12 selects high, with 20% hysteresis; hidden or unresolved stars
+release their nodes. Optional extended structures select LOD using their authored
+extent, so a resolved nebula can exist around an unresolved core. Standalone paint
+renders use the viewport camera; `PlanetSystem.refresh` explicitly updates the near
+sphere and sky primary. The background named-star shell starts with dots and labels
+and allocates a sphere only on approach, then releases it on withdrawal. No catalogue
+destinations or scientific metadata are added.
+
+| Structure | Low vertices | High vertices | Mesh surfaces |
+|---|---:|---:|---:|
+| Main-sequence/subdwarf/subgiant/Wolf–Rayet strands + haze | 3,240 | 25,344 | 2 |
+| White-dwarf disk including batched debris | 1,200 | 4,752 | 1 |
+| Brown-dwarf auroral curtain | 768 | 1,536 | 1 |
+| Neutron/pulsar wind: bright tubes + haze tubes + clouds | 8,286 | 21,894 | 3 |
+
+The sphere remains 96 × 48 (4,850 stored vertices); the existing corona is one quad. A resolved main-sequence
+star therefore submits four mesh surfaces including its sphere and corona; bare
+brown dwarfs and compact remnants submit two. An optional disk or aurora adds one
+surface; an optional wind adds three, for five including the sphere and corona.
+No structure exceeds 32,768 vertices or three batches. Seeded geometry is deterministic
+and radius-relative. A FIFO cache holds at most eight normalized geometry sets across
+visited stars; the physical color memo holds at most 256 colors. Neither cache grows
+with travel history. No particles, downloaded textures or per-frame image builds.
+
+## Optional structures and sensor views
+
+All options default OFF; `sensor_mode` defaults to `visible`. Author visual options
+inside `stellar.visual`:
+
+```gdscript
+{"name": "Disk-bearing white dwarf", "star": true, "spectral": "DA3",
+ "stellar": {"visual": {"debris_disk": true,
+                         "disk_inner_radii": 4.0, "disk_outer_radii": 26.0}}}
+
+{"name": "Auroral brown dwarf", "star": true, "spectral": "L4",
+ "stellar": {"visual": {"aurora": true, "sensor_mode": "enhanced_visible"}}}
+
+{"name": "Authored wind example", "star": true, "stellar_type": "pulsar",
+ "stellar": {"visual": {"wind_nebula": true, "sensor_mode": "xray",
+                         "wind_extent_radii": 2.6e11}}}
+
+{"name": "Sun", "star": true,
+ "stellar": {"visual": {"sensor_mode": "uv"}}}
+```
+
+`aurora` is valid only for brown dwarfs; `debris_disk` only for white dwarfs;
+`wind_nebula` only for neutron stars, pulsars or magnetars. A wind additionally
+requires explicit `xray` mode and a finite authored extent greater than one and
+at most 1e13 core radii. There is no silently assigned compressed nebula scale.
+At a 12 km core radius, the example extends 3.12e12 km, roughly .1 parsec: it is an
+enormous X-ray wind reference, not structure on a neutron-star surface. The layout
+is a procedural wind approximation, not a reconstruction of Vela. Emission is
+batched into bright toroidal arcs/jets, wider haze tubes and noisy soft cloud quads.
+Low/high LOD uses 37/65 quads in a single cloud mesh, rather than per-cloud nodes.
+All three batches retain the authored extent; camera framing or a parent transform
+can compress their display without changing the recipe or geometry scale. Disk defaults
+span 4–26 core radii; overrides require `1 < inner < outer <= 10000`. Invalid family,
+sensor or scale combinations stay disabled and appear in `stellar.visual.validation`.
+
+`uv` is an explicitly enhanced golden palette for photospheres/Wolf–Rayet envelopes.
+`xray` is an explicitly enhanced blue palette for neutron remnants and their requested
+winds. `enhanced_visible` strengthens optical structures and brown cloud visibility;
+its brown-dwarf palette uses the approved dark red artist-reference treatment,
+separate from the temperature-derived physical continuum color.
+These modes are authored visualizations, not calibrated passband integrations.
+They never replace `color_a`, bolometric luminosity, temperature, mass or hazards.
+Optional aurora approximates red emission and is fainter in plain visible mode.
+Optional dust disk colors approximate heated dust. Neither option is universal.
 
 ## Scale and hazards
 
@@ -144,3 +212,74 @@ game, then captures Sol, Proxima, Wolf 359, Sirius, Luhman 16 and Gliese 440 in
 K2-18 b is the planet; K2-18 is its M2.5V host star. The current spectral interpolation gives the host an estimated temperature of 3,455 K, close to the 3,457 ± 39 K solution in the [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/overview/K2-18). This is a spectral estimate, not a per-object measured override.
 
 Orange visible colour is consistent with the classification: [NASA's star types guide](https://science.nasa.gov/universe/stars/types/) explains that red dwarfs appear more orange than red. The renderer approximates a blackbody continuum through a standard observer and display colour space. It does not calculate full stellar atmosphere absorption spectra or human visual adaptation. Surface patterns, spots, activity and glare are procedural estimates, not observations of K2-18's surface.
+
+## Production integration checks
+
+Run from the repository root with the installed Godot 4.6.3:
+
+```sh
+godot --headless --path . --check-only --script scripts/world/star_recipe.gd
+godot --headless --path . --check-only --script scripts/world/stellar_structures.gd
+godot --headless --path . tools/test_stellar_structures.tscn
+godot --headless --path . tools/test_star_recipes.tscn
+godot --headless --path . --script tools/test_stellar_color.gd
+godot --headless --path . tools/test_star_teleport.tscn
+for f in test_surface_recipes test_earth_terrain test_surface_band test_skin_kill test_terrain_light test_planet_generator; do
+  timeout 120 godot --headless --path . --script tools/$f.gd
+done
+```
+
+`test_stellar_structures` checks family validation/defaults, explicit enormous wind
+scales, physics/palette separation, deterministic finite normalized geometry,
+vertex/surface budgets at both LODs, explicit cached construction through more than
+eight seeds, cache filling/bounds, identity reuse, FIFO eviction and deterministic
+regeneration, lazy construction, and the actual near/sky handoff. It also checks
+shared cook identity and near/sky uniform agreement, including display palettes. These are logic checks; headless passes do not prove shader compilation,
+clipping or visual approval. The clipping scene freezes only its duplicated corona
+shader's `TIME`, selects a lit halo pixel outside the core, and verifies foreground
+blocker depth. It separately captures the tilted disk, aurora, both wind tube batches
+and cloud batch at reference/limited far planes and behind an opaque blocker. Wind
+geometry retains its authored 2.6e11-core-radius extent, framed by the parent scale.
+The original .001 changed-fraction and 50-pixel grazing limits remain in force.
+Render checks completed on 2026-10-06 with Godot 4.6.3, Compatibility rendering
+and Mesa llvmpipe. The corona, disk, aurora and all three wind batches passed the
+limited-far-plane and foreground-occlusion comparisons; isolated grazing halo
+pixels had zero differences. This checks effect clipping, not photosphere clipping.
+Production captures use automatic LOD, including the authored astronomical wind
+extent. Real Ctrl+P picker captures passed for Sun, Proxima, Wolf 359, Sirius,
+Luhman 16 and Gliese 440. Hardware performance and other rendering backends
+have not been measured. Captures and details: [integration review](reference/stellar-integration/README.md).
+Existing stellar tests have exit resource-leak warnings;
+an OK assertion summary should not be described as clean shutdown.
+
+Windowed production captures and the existing pixel occlusion regression:
+
+```sh
+STELLAR_PRODUCTION_SHOTS=/tmp/stellar-production xvfb-run -a godot --path . res://tools/render_stellar_production.tscn
+STAR_RECIPE_SHOT=/tmp/star-recipes.png xvfb-run -a godot --path . res://tools/render_star_recipes.tscn -- --details
+STAR_TELEPORT_SHOTS=/tmp/star-teleport xvfb-run -a godot --path . res://tools/render_star_teleport.tscn
+CORONA_SHOT_DIR=/tmp/corona-clipping xvfb-run -a godot --path . res://tools/test_stellar_corona_clipping.tscn
+xvfb-run -a godot --path . res://tools/render_sun_approach.tscn
+```
+
+When using the installed Flatpak, replace `godot` with
+`flatpak run org.godotengine.Godot`. Run these windowed commands from the parent
+session if sandbox display access is unavailable. The new production gallery writes
+12 per-family/variant captures, `gallery.png` and a scale/sensor manifest. Frames
+normalize by the core radius; the disk and wind frames widen to their full authored
+extent. The neutron core is consequently unresolved in the enormous wind frame.
+These captures call production `PlanetGenerator.paint` and its lazy structures,
+not the separate preview renderer. Every new scene tool isolates its profile with
+`ProfileDir.isolate`; choose a separate `ASTRYX_PROFILE_DIR` for repeated runs.
+
+
+For the current `/tmp/astryx-godot` wrapper, the parent can run the blocked
+windowed checks without installing anything:
+
+```sh
+STELLAR_PRODUCTION_SHOTS=/tmp/stellar-production-fixed xvfb-run -a /tmp/astryx-godot --path /home/fiazul/Desktop/space-survey res://tools/render_stellar_production.tscn
+CORONA_SHOT_DIR=/tmp/corona-clipping-fixed xvfb-run -a /tmp/astryx-godot --path /home/fiazul/Desktop/space-survey res://tools/test_stellar_corona_clipping.tscn
+```
+
+Inspect the captures and complete logs. Exit zero with `SCRIPT ERROR`, a shader
+compilation error, or a missing assertion summary is not a passing check.

@@ -1,5 +1,6 @@
 class_name PlanetSystem
 extends Node3D
+const StellarStructuresScript := preload("res://scripts/world/stellar_structures.gd")
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
 
 const SurfacePatchScript := preload("res://scripts/world/surface_patch.gd")
@@ -411,10 +412,12 @@ func _build_sun_sky() -> void:
 # The sky disc wears the current primary star's photosphere (Sol's is built in
 # _build_sun_sky). Arcade systems keep Sol's, as before.
 func _match_sun_sky(specs: Array) -> void:
-	if _sun_sky == null or eph.primary_star == _sun_sky_star:
+	if _sun_sky == null:
 		return
 	for spec in specs:
 		if spec.get("star", false) and str(spec.name) == eph.primary_star:
+			if _sun_sky.get_meta("stellar_recipe", {}) == PlanetGenerator.recipe_for(spec):
+				return
 			var look := PlanetGenerator.paint(spec, _sun_core_r)
 			var old := _sun_sky
 			_sun_sky = look.sphere
@@ -428,7 +431,7 @@ func _match_sun_sky(specs: Array) -> void:
 			_sun_sky_star = eph.primary_star
 			if _sun_corona != null:
 				var glare := _sun_corona.material_override as ShaderMaterial
-				var tint: Color = look.recipe.color_a
+				var tint: Color = look.recipe.stellar.display_color
 				glare.set_shader_parameter("tint", Vector3(tint.r,tint.g,tint.b))
 				glare.set_shader_parameter("strength", minf(float(look.recipe.stellar.brightness),1.0))
 			return
@@ -451,9 +454,7 @@ func _build_star_shell() -> void:
 		dot.pixel_size = 5.0
 		add_child(dot)
 
-		var sphere: MeshInstance3D = PlanetGenerator.paint(spec, radius).sphere
-		sphere.visible = false
-		add_child(sphere)
+		var sphere: MeshInstance3D = null
 
 		var label := Label3D.new()
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
@@ -465,7 +466,7 @@ func _build_star_shell() -> void:
 		add_child(label)
 
 		_stars.append({
-			"name": s.name, "id": id, "recipe": recipe, "radius": radius,
+			"name": s.name, "id": id, "recipe": recipe, "radius": radius, "spec": spec,
 			"true_pos": eph.star_true_pos(s), "ly": s.ly,
 			"mass": float(s.get("mass", 333000.0)),
 			"dot": dot, "sphere": sphere, "label": label,
@@ -552,6 +553,8 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			b.sphere.position = rel
 			b.sphere.basis = eph.surface_basis(str(b.name))
 			b.sphere.visible = not too_far
+			if b.star:
+				StellarStructuresScript.update(b.sphere, atan(rad/maxf(dist, .000001)), not too_far)
 
 		if b.get("sky") != null:
 			_place_body_sky(b, rel, dist, too_far)
@@ -603,12 +606,18 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			var exposure := StarRecipe.exposure(st.recipe,sdist,st.radius)
 			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
 				stellar_hazard = exposure
+			if st.sphere == null:
+				st.sphere = PlanetGenerator.paint(st.spec, st.radius).sphere
+				add_child(st.sphere)
 			st.sphere.visible = true
+			StellarStructuresScript.update(st.sphere, atan(st.radius/maxf(sdist, .000001)), true)
 			st.sphere.position = srel
 			st.dot.visible = false
 			st.label.position = srel + Vector3(0.0, st.radius * 1.6 + 2.0, 0.0)
 		else:
-			st.sphere.visible = false
+			if st.sphere != null:
+				st.sphere.queue_free()
+				st.sphere = null
 			st.dot.visible = true
 			var sky: float = Ephemeris.SKY_STAR_KM
 			var rd := minf(sdist, sky)
@@ -840,12 +849,14 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	var dist := rel.length()
 	if dist < 0.001:
 		_sun_sky.visible = false
+		StellarStructuresScript.update(_sun_sky, 0.0, false)
 		if _sun_corona != null:
 			_sun_corona.visible = false
 		return
 	# Same cut as the cook mesh. Hide the disc only when the ball is on.
 	var show_sky: bool = eph.show_sky_impostor(dist, star_r)
 	_sun_sky.visible = show_sky
+	StellarStructuresScript.update(_sun_sky, atan(star_r/maxf(dist, .000001)), show_sky)
 	if _sun_corona != null:
 		_sun_corona.visible = show_sky
 	if not show_sky:
@@ -855,6 +866,9 @@ func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	var pos: Vector3 = dir * shell
 	var ang: float = atan(star_r / dist)
 	var core: float = maxf(shell * tan(ang), 2.0)
+	var recipe: Dictionary = _sun_sky.get_meta("stellar_recipe", {})
+	if not recipe.is_empty() and (recipe.stellar.visual.wind_nebula or recipe.stellar.visual.debris_disk):
+		core = shell * tan(ang)
 	_sun_sky.position = pos
 	_sun_sky.basis = surface_basis(star).scaled(Vector3.ONE * (core / _sun_core_r))
 	if _sun_sky.material_override is ShaderMaterial:

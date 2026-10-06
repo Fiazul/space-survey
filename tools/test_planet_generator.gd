@@ -97,7 +97,9 @@ func _initialize() -> void:
 	if sun_p.mat is ShaderMaterial:
 		var sun_sm := sun_p.mat as ShaderMaterial
 		failed += _check("sun_kind3", int(sun_sm.get_shader_parameter("kind")) == 3)
+		failed += _check("sun_shared_cook", sun_sm.shader == G.COOK_SHADER)
 		failed += _check("sun_procedural_photosphere", float(sun_sm.get_shader_parameter("has_albedo")) < 0.5)
+		failed += _check("sun_temperature_bound", is_equal_approx(float(sun_sm.get_shader_parameter("stellar_temperature_k")), sun_r.stellar.temperature_k))
 		G.ensure_close_maps(sun_sm, sun_r, false)
 		failed += _check("sun_binds_no_height", float(sun_sm.get_shader_parameter("has_height")) < 0.5)
 	sun_p.sphere.free()
@@ -154,6 +156,8 @@ func _initialize() -> void:
 	var sirius_p := G.paint(sirius, float(sirius.get("radius", 5.0)))
 	if sirius_p.mat is ShaderMaterial:
 		failed += _check("catalog_star_kind3", int((sirius_p.mat as ShaderMaterial).get_shader_parameter("kind")) == 3)
+		failed += _check("catalog_star_shared_cook", (sirius_p.mat as ShaderMaterial).shader == G.COOK_SHADER
+			and is_equal_approx(float(sirius_p.mat.get_shader_parameter("stellar_temperature_k")), sirius_r.stellar.temperature_k))
 	sirius_p.sphere.free()
 
 	var cooked := G.paint({ "name": "Proxima b", "color": Color(0.62, 0.46, 0.40), "radius": 3.2 }, 3.2)

@@ -1,0 +1,86 @@
+[
+	{
+		"core_radius_km": 695700.0,
+		"frame_core_radii": 3.35,
+		"id": "sun-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 108529.2,
+		"frame_core_radii": 3.35,
+		"id": "red-dwarf-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 17392500.0,
+		"frame_core_radii": 3.35,
+		"id": "red-giant-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 8348.4,
+		"frame_core_radii": 3.35,
+		"id": "white-dwarf-bare",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 12.0,
+		"frame_core_radii": 3.35,
+		"id": "neutron-bare",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 69570.0,
+		"frame_core_radii": 3.35,
+		"id": "brown-clouds-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 695700.0,
+		"frame_core_radii": 3.35,
+		"id": "sun-uv",
+		"production": true,
+		"sensor_mode": "uv"
+	},
+	{
+		"core_radius_km": 69570.0,
+		"frame_core_radii": 3.35,
+		"id": "brown-aurora-enhanced",
+		"production": true,
+		"sensor_mode": "enhanced_visible"
+	},
+	{
+		"core_radius_km": 8348.4,
+		"frame_core_radii": 87.1,
+		"id": "white-dwarf-disk",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 12.0,
+		"frame_core_radii": 871000000000.0,
+		"id": "pulsar-xray-wind",
+		"production": true,
+		"sensor_mode": "xray"
+	},
+	{
+		"core_radius_km": 69570.0,
+		"frame_core_radii": 3.35,
+		"id": "cool-brown-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	},
+	{
+		"core_radius_km": 4660494.3,
+		"frame_core_radii": 3.35,
+		"id": "hot-star-visible",
+		"production": true,
+		"sensor_mode": "visible"
+	}
+]

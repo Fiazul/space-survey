@@ -1,0 +1,155 @@
+[
+	{
+		"id": "solar-visible",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "solar-visible",
+			"name": "Sun",
+			"spectral": "G2V",
+			"star": true,
+			"view": 4.6
+		},
+		"structure_batches": 2,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "solar-uv",
+		"sensor_mode": "uv",
+		"spec": {
+			"id": "solar-uv",
+			"name": "Sun",
+			"spectral": "G2V",
+			"star": true,
+			"stellar": {
+				"visual": {
+					"sensor_mode": "uv"
+				}
+			},
+			"view": 4.6
+		},
+		"structure_batches": 2,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "red-dwarf",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "red-dwarf",
+			"name": "Active M dwarf",
+			"spectral": "M5.5V",
+			"star": true,
+			"view": 4.6
+		},
+		"structure_batches": 2,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "red-giant",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "red-giant",
+			"name": "Cool giant",
+			"spectral": "M2III",
+			"star": true,
+			"view": 4.6
+		},
+		"structure_batches": 1,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "white-dwarf-bare",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "white-dwarf-bare",
+			"name": "White dwarf",
+			"spectral": "DA3",
+			"star": true,
+			"view": 4.6
+		},
+		"structure_batches": 0,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "white-dwarf-disk",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "white-dwarf-disk",
+			"name": "Dusty white dwarf",
+			"spectral": "DA3",
+			"star": true,
+			"stellar": {
+				"visual": {
+					"debris_disk": true
+				}
+			},
+			"view": 62.0
+		},
+		"structure_batches": 1,
+		"view_diameter_radii": 62.0
+	},
+	{
+		"id": "neutron-star-bare",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "neutron-star-bare",
+			"name": "Neutron star",
+			"star": true,
+			"stellar_type": "neutron_star",
+			"view": 4.6
+		},
+		"structure_batches": 0,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "pulsar-wind",
+		"sensor_mode": "xray",
+		"spec": {
+			"id": "pulsar-wind",
+			"name": "Wind visualization",
+			"star": true,
+			"stellar": {
+				"visual": {
+					"sensor_mode": "xray",
+					"wind_extent_radii": 45.0,
+					"wind_nebula": true
+				}
+			},
+			"stellar_type": "pulsar",
+			"view": 110.0
+		},
+		"structure_batches": 3,
+		"view_diameter_radii": 110.0
+	},
+	{
+		"id": "brown-dwarf-visible",
+		"sensor_mode": "visible",
+		"spec": {
+			"id": "brown-dwarf-visible",
+			"name": "Brown dwarf",
+			"spectral": "L8",
+			"star": true,
+			"view": 4.6
+		},
+		"structure_batches": 0,
+		"view_diameter_radii": 4.6
+	},
+	{
+		"id": "brown-dwarf-aurora",
+		"sensor_mode": "enhanced_visible",
+		"spec": {
+			"id": "brown-dwarf-aurora",
+			"name": "Auroral brown dwarf",
+			"spectral": "L4",
+			"star": true,
+			"stellar": {
+				"visual": {
+					"aurora": true,
+					"sensor_mode": "enhanced_visible"
+				}
+			},
+			"view": 4.6
+		},
+		"structure_batches": 1,
+		"view_diameter_radii": 4.6
+	}
+]

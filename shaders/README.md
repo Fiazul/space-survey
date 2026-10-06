@@ -5,6 +5,11 @@ GDShader source, all `shader_type spatial` except `hud_text.gdshader` (canvas_it
 | File | Type | Role |
 |---|---|---|
 | `planet_cook.gdshader` | feature area | The one shared planet/star cook shader — kind 0 rocky, 1 gas, 2 ice, 3 star. `sample_height()` must mirror `PlanetGenerator.crust_height()` (see CLAUDE.md) |
+| `stellar_surface.gdshaderinc` | shared functions | Stellar photospheres, giant convection, sheared brown clouds and explicit sensor display inside the shared cook |
+| `stellar_corona.gdshader` | feature area | Irregular camera glare and faint halo with far-plane projection and foreground occlusion |
+| `stellar_filament.gdshader`, `stellar_shell.gdshader` | feature area | Batched plasma strands and diffuse giant envelopes |
+| `stellar_disk.gdshader`, `stellar_aurora.gdshader`, `stellar_cloud.gdshader` | feature area | Optional debris disks, polar curtains and diffuse X-ray wind emission |
+| `stellar_depth.gdshaderinc` | shared functions | Projection and depth restoration for stellar effects extending beyond the far plane |
 | `terrain_tile.gdshader` | feature area | Lit, hazed ground for the skin-band terrain rings; `stream_fade` instance uniform (default 1) |
 | `surface_prop.gdshader` | feature area | Lit Lambert + sky/sun shading for kit props; sky term only when air is present; `stream_fade` (default 1) |
 | `air_shell.gdshader` | feature area | The sky as seen from inside an atmosphere |

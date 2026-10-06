@@ -9,6 +9,7 @@ uniform float extent = 2.8;
 uniform float falloff = 3.8;
 uniform float activity = .3;
 uniform int stellar_mode = 0;
+uniform bool structure_active = false;
 varying vec4 corona_clip_position;
 
 float corona_hash(vec2 p) {
@@ -73,24 +74,6 @@ void fragment() {
 	float veil = .09*exp(-height*falloff*2.8)*wisps;
 	float glare = .025*exp(-height*2.6);
 	float prominences = 0.0;
-	for (int i = 0; i < 6; i++) {
-		float id = float(i);
-		float phase = seed*1.37 + (i < 3 ? id*.13 : id*2.39996);
-		vec2 axis = vec2(cos(phase), sin(phase));
-		float tangent = dot(p, vec2(-axis.y, axis.x));
-		float radial = dot(p, axis)-.985;
-		float reach = (.07+activity*.25)*(1.0+id*.14)+.008*sin(TIME*.08+id);
-		// Upper elliptical arc: two narrow footpoints joined by a curved loop.
-		vec2 arc = vec2((tangent-radial*.35)/(.06+id*.016+activity*.025), radial/reach);
-		float turbulence = corona_noise(p*57.0+vec2(seed+id, TIME*.06));
-		float ring = abs(length(arc)-1.0+(turbulence-.5)*.13);
-		float width = max(fwidth(ring), .022);
-		float filament = 1.0-smoothstep(.008, .008+width, ring);
-		float envelope = exp(-ring*ring*60.0)*.30;
-		float group = i < 3 ? 1.0 : .15;
-		prominences += (filament+envelope)*smoothstep(0.0,.025,radial)*(.55+.45*turbulence)*group;
-	}
-	prominences *= stellar_mode == 0 ? (.2+activity*1.8) : 0.0;
 	// Soft radial support reaches zero before every edge of the quad.
 	float mask = smoothstep(.972, 1.012, r)*(1.0-smoothstep(extent*.72, extent*.98, r));
 	float poles = pow(abs(p.y/max(r,.001)),24.0)*(.7+.3*sin(TIME*3.0+seed));
@@ -102,12 +85,13 @@ void fragment() {
 	float hot_rim = exp(-height*45.0)*(.5+.5*wisps);
 	vec3 loop_color = mix(tint,vec3(1.0),.25);
 	float eruption = 0.0;
-	if (stellar_mode == 0) {
+	if (stellar_mode == 0 && !structure_active) {
 		vec2 axis = vec2(cos(seed*1.37+.13),sin(seed*1.37+.13));
 		float alignment = max(dot(direction,axis),0.0);
 		eruption = pow(alignment,80.0)*exp(-height*9.0)*activity*activity*wisps;
 	}
-	ALBEDO = halo_color*strength*(corona*1.4+veil+glare+hot_rim*1.8+pulse*poles*corona*22.0)
+	float resolved_faintness = structure_active ? .22 : .45;
+	ALBEDO = halo_color*strength*resolved_faintness*(corona*1.4+veil+glare+hot_rim*1.8+pulse*poles*corona*22.0)
 		+ loop_color*strength*(prominences*4.0+eruption*5.0);
 	ALPHA = mask;
 }

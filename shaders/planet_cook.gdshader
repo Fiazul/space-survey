@@ -12,6 +12,7 @@ uniform vec3 color_ocean : source_color = vec3(0.03, 0.09, 0.22);
 uniform vec3 color_ice : source_color = vec3(0.86, 0.89, 0.93);
 uniform int kind = 0;
 uniform int stellar_mode = 0;
+uniform int sensor_mode = 0;
 uniform float stellar_cells = 36.0;
 uniform float stellar_spots = 0.15;
 uniform float stellar_activity = 0.3;
@@ -150,44 +151,7 @@ float fbm(vec3 p) {
 	return s;
 }
 
-// Screen-filtered stellar detail: unresolved cells average out instead of sparkling.
-float stellar_noise(vec3 p) {
-	float result = 0.0;
-	float amplitude = .57;
-	for (int i = 0; i < 3; i++) {
-		float resolved = 1.0-smoothstep(.35,1.0,length(fwidth(p)));
-		result += amplitude * mix(.5,noise(p),resolved);
-		p *= 2.03;
-		amplitude *= .5;
-	}
-	return result;
-}
-
-// Filter after shaping the cells so subpixel intergranular lanes cannot shimmer.
-float stellar_granules(vec3 p) {
-	float resolved = 1.0-smoothstep(.25, .85, length(fwidth(p)));
-	vec3 grid = floor(p);
-	vec3 local = fract(p);
-	float nearest = 8.0;
-	float second = 8.0;
-	for (int z = -1; z <= 1; z++) {
-		for (int y = -1; y <= 1; y++) {
-			for (int x = -1; x <= 1; x++) {
-				vec3 offset = vec3(float(x), float(y), float(z));
-				vec3 key = grid+offset;
-				vec3 jitter = vec3(hash(key), hash(key+17.3), hash(key-9.1));
-				vec3 delta = offset+.15+jitter*.7-local;
-				float distance_sq = dot(delta, delta);
-				second = min(second, max(nearest, distance_sq));
-				nearest = min(nearest, distance_sq);
-			}
-		}
-	}
-	float center = 1.0-smoothstep(.12, .95, sqrt(nearest));
-	float lanes = smoothstep(0.0, .65, sqrt(second)-sqrt(nearest));
-	float cell = mix(center, lanes, .35);
-	return mix(.5, cell, resolved);
-}
+#include "res://shaders/stellar_surface.gdshaderinc"
 
 // Mirrors TerrainSampler._texel() - value = (R*256+G)/65535 for the RG16
 // byte-pack, plain .r for Earth's R8 map.
@@ -263,57 +227,8 @@ void fragment() {
 	}
 	vec3 view_w0 = normalize(-v_world);
 	if (kind == 3) {
-		float mu = max(dot(n_world, normalize(INV_VIEW_MATRIX[3].xyz-v_world)), 0.0);
-		float limb = mix(stellar_limb_floor, 1.0, pow(mu, 0.55));
-		vec3 drift = vec3(TIME * .025, TIME * -.018, TIME * .011);
-		vec3 phot = color_a;
-		if (stellar_mode == 0) {
-			vec3 flow = vec3(stellar_noise(n*12.0+seed+drift*.15),
-				stellar_noise(n*12.0+seed+19.7), stellar_noise(n*12.0+seed-8.3));
-			vec3 gp = n*stellar_cells+(flow-.5)*.8+drift+seed;
-			float footprint = length(fwidth(gp));
-			float convection = .5;
-			float granules = .5;
-			float fine = .5;
-			float coarse_weight = 1.0-smoothstep(.4,1.5,footprint*.15);
-			float granule_weight = 1.0-smoothstep(.4,1.5,footprint*2.0);
-			float fine_weight = 1.0-smoothstep(.4,1.5,footprint*4.0);
-			if (coarse_weight > .01) convection = mix(.5,stellar_noise(gp*.15),coarse_weight);
-			if (granule_weight > .01) granules = mix(.5,stellar_granules(gp*2.0),granule_weight);
-			if (fine_weight > .01) fine = mix(.5,stellar_noise(gp*4.0),fine_weight);
-			float giant = 1.0-smoothstep(8.0,25.0,stellar_cells);
-			float cells = mix(.5, mix(granules*.50+convection*.40+fine*.10,
-				convection*.80+granules*.10+fine*.10,giant), granulation);
-			float heat = clamp(.5+(cells-.43)*2.3, 0.0, 1.0);
-			float magnetic_scale = mix(110.0,16.0,clamp(stellar_spots*2.0,0.0,1.0));
-			float magnetic = stellar_noise(n*magnetic_scale+seed+drift*.08);
-			float active_region = smoothstep(.59,.75,stellar_noise(n*7.0+seed));
-			float penumbra = smoothstep(.68,.79,magnetic);
-			float umbra = smoothstep(.77,.86,magnetic);
-			float spot = (penumbra*.30+umbra*.55)*clamp(stellar_spots*2.0,0.0,1.0)*active_region;
-			phot = mix(stellar_cool_color.rgb,stellar_hot_color.rgb,heat);
-			phot *= (1.0+(cells-.5)*stellar_detail_contrast)*(1.0-spot);
-			float plage = smoothstep(.57,.72,magnetic)*(1.0-penumbra);
-			phot += stellar_hot_color.rgb*plage*stellar_activity*.10;
-		} else if (stellar_mode == 1) {
-			float clouds = stellar_noise(n*18.0+seed+drift*.25);
-			float bands = sin(n.y*34.0+stellar_noise(n*6.0+seed)*5.0);
-			phot = mix(color_b,color_a,smoothstep(-.9,.9,bands+clouds-.5));
-			phot *= .8+clouds*.5;
-		} else if (stellar_mode == 2) {
-			phot = color_a*(1.0+stellar_noise(n*45.0+seed)*.035);
-		} else if (stellar_mode == 3) {
-			float polar = pow(abs(n.y),18.0);
-			float belts = .5+.5*sin(n.y*36.0+stellar_noise(n*8.0+seed)*3.0);
-			phot = color_a*(.65+belts*.10)+vec3(.45,.7,1.4)*polar;
-		} else if (stellar_mode == 4) {
-			float wind = stellar_noise(n*stellar_cells+seed+drift*2.0);
-			phot = color_a*(.65+wind*.85);
-			phot += vec3(.3,.45,.8)*smoothstep(.60,.80,wind);
-		}
-		// Compress surface exposure independently of halo intensity so HDR cannot erase cells.
-		float display_brightness = stellar_brightness/(1.0+stellar_brightness*.65);
-		ALBEDO = phot*limb*display_brightness;
+		float mu = max(dot(normalize(NORMAL), normalize(VIEW)), 0.0);
+		ALBEDO = stellar_surface_color(n, mu);
 	} else {
 	float water = sample_water(v_map_uv, n, alb);
 	float land = 1.0 - water;

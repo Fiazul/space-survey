@@ -31,6 +31,8 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | `test_sol_occlude.gd` | Celestial-body opacity (no see-through) |
 | `test_sol_sun_lod.gd` | Sun stays drawn across the sky-disc/mesh LOD switch |
 | `test_star_teleport.gd` (+ `.tscn`) | Every Ctrl+P catalogue star: primary-star arrival, recipe visibility, motion reset, repeated visits and saved park |
+| `test_stellar_structures.gd` (+ `.tscn`) | Optional-family validation, physical/display separation, deterministic geometry budgets, cache eviction and near/sky ownership |
+| `test_stellar_corona_clipping.gd` (+ `.tscn`) | Windowed pixel checks of halo, disk, aurora and wind clipping and foreground occlusion |
 | `test_sol_truth.gd` | Radii, fallback distances, visual scale, EZ vs real air |
 | `test_streak_scale.gd` | Motion-streak field scale vs ship speed |
 | `test_surface_band.gd` | The bird-eye ground tile (skin band) contract |
@@ -48,6 +50,8 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 |---|---|
 | `render_day_night.gd` (+ `.tscn`) | Same Amazon location and heading at local noon/midnight; writes `/tmp/day-night/amazon-{day,night}.png` using the production terrain/cloud path without touching saves |
 | `render_star_teleport.gd` (+ `.tscn`) | Real Ctrl+P picker arrivals for six representative stars; `/tmp/star-teleport/*.png` or `STAR_TELEPORT_SHOTS`, isolated player profile |
+| `render_stellar_integration.gd` (+ `.tscn`) | Ten high-resolution production captures with automatic detail selection; `docs/reference/stellar-integration` |
+| `render_stellar_production.gd` (+ `.tscn`) | Production family gallery including astronomical wind scale; `STELLAR_PRODUCTION_SHOTS` selects output |
 | `render_plasma.gd` (+ `.tscn`) | 90 chase-camera firing frames; `PLASMA_CRUISE_KMS`, `PLASMA_ROTATING=1` and `PLASMA_SHOTS` select fast drift, turning with planetary rotation and output directory |
 | `render_terrain.gd` (+ `.tscn`) | Ground-tile terrain (`TERRAIN_SHOTS` env selects which bodies/scenes) |
 | `render_approach.gd` (+ `.tscn`) | Earth/Moon at distance (30/8/3/1.5 R) + altitude (60/25/10 km) with a `SHELLS=all\|nosky\|nosurface\|noclouds` toggle, for diagnosing the reported "ring/bridge around the globe" (which shell it belongs to) |
@@ -59,6 +63,7 @@ scene-based (`extends Node3D`/`Node`, need a `.tscn`, run via
 | File | Produces |
 |---|---|
 | `build_starfield.gd` | `assets/starfield_{naked,low,high,tycho}.res` baked star meshes |
+| `build_stellar_integration_sheet.py` | Labeled comparison of production captures; requires Pillow |
 | `build_dingo57_obj.py` | Godot-safe re-grouped Dingo57 OBJ (source has too many material switches) |
 | `build_godot_double.sh` | Compiles a double-precision (64-bit coords) Godot editor build |
 | `fetch_planet_maps.py` | Downloads 2k evidence planet maps to `/tmp/planet-maps` |

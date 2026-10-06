@@ -577,13 +577,14 @@ static func paint(spec: Dictionary, radius: float) -> Dictionary:
 	var mat := make_material(recipe, spec)
 	mi.material_override = mat
 	if recipe.has("stellar"):
+		mi.set_meta("stellar_recipe", recipe)
 		var corona := MeshInstance3D.new()
 		var quad := QuadMesh.new()
 		quad.size = Vector2.ONE*radius*2.0*float(recipe.stellar.corona_extent)
 		corona.mesh = quad
 		var halo := ShaderMaterial.new()
 		halo.shader = preload("res://shaders/stellar_corona.gdshader")
-		var tint: Color = recipe.color_a
+		var tint: Color = recipe.stellar.display_color
 		halo.set_shader_parameter("tint", Vector3(tint.r,tint.g,tint.b))
 		halo.set_shader_parameter("strength", recipe.stellar.corona_strength)
 		halo.set_shader_parameter("extent", recipe.stellar.corona_extent)
@@ -592,12 +593,13 @@ static func paint(spec: Dictionary, radius: float) -> Dictionary:
 		halo.set_shader_parameter("seed", recipe.seed)
 		halo.set_shader_parameter("activity", recipe.stellar.activity)
 		halo.set_shader_parameter("stellar_mode", recipe.stellar.mode)
-		halo.set_shader_parameter("pulse", 1.0 if recipe.stellar.type in ["pulsar", "magnetar"] else 0.0)
+		halo.set_shader_parameter("pulse", 0.0)
 		corona.material_override = halo
 		corona.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 		# The billboard moves from the centre toward the silhouette's tangent plane.
 		corona.extra_cull_margin = radius*(float(recipe.stellar.corona_extent)+1.0)
 		mi.add_child(corona)
+		preload("res://scripts/world/stellar_structures.gd").attach(corona, recipe, radius)
 	mi.visible = false
 	if physical:
 		mi.extra_cull_margin = 8000.0
@@ -676,6 +678,8 @@ static func set_cloud_amount(mat: Material, cloud_amount: float) -> void:
 # synchronous bind for a unit test that asserts the flags right after the call, with no
 # frame loop alive to drive the poll.
 static func ensure_close_maps(mat: Material, recipe: Dictionary, async: bool = true) -> void:
+	if recipe.has("stellar"):
+		return
 	if not mat is ShaderMaterial:
 		return
 	var sm := mat as ShaderMaterial
@@ -1029,12 +1033,15 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 		var stellar: Dictionary = recipe.stellar
 		for key in ["mode", "cells", "spots", "activity", "brightness", "limb_floor", "detail_contrast", "temperature_k"]:
 			mat.set_shader_parameter("stellar_"+key, stellar[key])
-		for key in ["cool_color", "hot_color"]:
-			mat.set_shader_parameter("stellar_"+key, stellar[key])
+		mat.set_shader_parameter("stellar_cool_color", stellar.cool_color)
+		mat.set_shader_parameter("stellar_hot_color", stellar.display_hot_color)
+		mat.set_shader_parameter("sensor_mode", ["visible", "enhanced_visible", "uv", "xray"].find(stellar.visual.sensor_mode))
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)
 	mat.set_shader_parameter("exposure", surface.exposure)
 	var a: Color = recipe.get("color_a", spec.get("color", Color(0.45, 0.4, 0.35)))
+	if recipe.has("stellar"):
+		a = recipe.stellar.display_color
 	var b: Color = recipe.get("color_b", a.lightened(0.18))
 	var land_c: Color = recipe.get("color_land", a)
 	var ocean: Color = recipe.get("color_ocean", DEFAULT_COLOR_OCEAN)

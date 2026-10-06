@@ -1,0 +1,697 @@
+{
+	"equal_angular_sizes": true,
+	"physical_values": "recipe estimates",
+	"samples": [
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "9fb9ff",
+			"image": "hot-o-star.png",
+			"name": "Hot O star",
+			"resolved_preview": {
+				"activity": 0.03375,
+				"brightness": 3.1986275231201,
+				"cells": 786.285967683718,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "a0b9ff",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.180018757001199,
+				"detail_contrast": 0.025,
+				"estimated": true,
+				"hot_color": "9fb8ff",
+				"limb_floor": 0.48,
+				"luminosity_solar": 181745.023854471,
+				"mass_solar": 37.85,
+				"mode": 0,
+				"radius_km": 7026570.0,
+				"radius_solar": 10.1,
+				"spectral": "O5V",
+				"spots": 0.002,
+				"temperature_k": 37500.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "Hot O star",
+				"spectral": "O5V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "fff1ea",
+			"image": "sun.png",
+			"name": "Sun",
+			"resolved_preview": {
+				"activity": 0.135,
+				"brightness": 2.2,
+				"cells": 350.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffeddf",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.190344,
+				"detail_contrast": 0.32,
+				"estimated": false,
+				"hot_color": "fff5f4",
+				"limb_floor": 0.48,
+				"luminosity_solar": 1.0,
+				"mass_solar": 1.0,
+				"mode": 0,
+				"radius_km": 695700.0,
+				"radius_solar": 1.0,
+				"spectral": "G2V",
+				"spots": 0.15,
+				"temperature_k": 5772.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "Sun",
+				"spectral": "G2V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffdfbf",
+			"image": "cool-k-star.png",
+			"name": "Cool K star",
+			"resolved_preview": {
+				"activity": 0.135,
+				"brightness": 2.09870010801162,
+				"cells": 308.924504211191,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffdab3",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.181579533345166,
+				"detail_contrast": 0.32,
+				"estimated": true,
+				"hot_color": "ffe4ca",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.190875488263562,
+				"mass_solar": 0.725,
+				"mode": 0,
+				"radius_km": 486990.0,
+				"radius_solar": 0.7,
+				"spectral": "K5V",
+				"spots": 0.15,
+				"temperature_k": 4560.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "Cool K star",
+				"spectral": "K5V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffe0c0",
+			"image": "warm-giant.png",
+			"name": "Warm giant",
+			"resolved_preview": {
+				"activity": 0.12,
+				"brightness": 2.10236918655326,
+				"cells": 12.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffdbb5",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.18038327620627,
+				"detail_contrast": 1.0,
+				"estimated": true,
+				"hot_color": "ffe5cb",
+				"limb_floor": 0.35,
+				"luminosity_solar": 252.119277784434,
+				"mass_solar": 2.0,
+				"mode": 0,
+				"radius_km": 17392500.0,
+				"radius_solar": 25.0,
+				"spectral": "K3III",
+				"spots": 0.06,
+				"temperature_k": 4600.0,
+				"type": "giant"
+			},
+			"spec": {
+				"name": "Warm giant",
+				"spectral": "K3III",
+				"star": true,
+				"stellar": {
+					"temperature_k": 4600.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffc88c",
+			"image": "cool-giant.png",
+			"name": "Cool giant",
+			"resolved_preview": {
+				"activity": 0.12,
+				"brightness": 1.99054053181521,
+				"cells": 12.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffc280",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.170788377629745,
+				"detail_contrast": 1.0,
+				"estimated": true,
+				"hot_color": "ffce97",
+				"limb_floor": 0.35,
+				"luminosity_solar": 84.4980924938773,
+				"mass_solar": 2.0,
+				"mode": 0,
+				"radius_km": 17392500.0,
+				"radius_solar": 25.0,
+				"spectral": "M3III",
+				"spots": 0.06,
+				"temperature_k": 3500.0,
+				"type": "giant"
+			},
+			"spec": {
+				"name": "Cool giant",
+				"spectral": "M3III",
+				"star": true,
+				"stellar": {
+					"temperature_k": 3500.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffb260",
+			"image": "late-m-giant.png",
+			"name": "Late M giant",
+			"resolved_preview": {
+				"activity": 0.12,
+				"brightness": 1.90365841353487,
+				"cells": 12.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffab54",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.163333891881292,
+				"detail_contrast": 1.0,
+				"estimated": true,
+				"hot_color": "ffb86b",
+				"limb_floor": 0.35,
+				"luminosity_solar": 34.6104186854921,
+				"mass_solar": 2.0,
+				"mode": 0,
+				"radius_km": 17392500.0,
+				"radius_solar": 25.0,
+				"spectral": "M7III",
+				"spots": 0.06,
+				"temperature_k": 2800.0,
+				"type": "giant"
+			},
+			"spec": {
+				"name": "Late M giant",
+				"spectral": "M7III",
+				"star": true,
+				"stellar": {
+					"temperature_k": 2800.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "a6beff",
+			"image": "hot-remnant.png",
+			"name": "Hot remnant",
+			"resolved_preview": {
+				"activity": 0.02,
+				"brightness": 3.0,
+				"cells": 350.0,
+				"composition": [
+					"degenerate_carbon_oxygen",
+					"hydrogen_or_helium_envelope"
+				],
+				"cool_color": "a7bfff",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "a4bdff",
+				"limb_floor": 0.56,
+				"luminosity_solar": 0.0506777397714216,
+				"mass_solar": 0.6,
+				"mode": 2,
+				"radius_km": 8348.4,
+				"radius_solar": 0.012,
+				"spectral": "DA2",
+				"spots": 0.0,
+				"temperature_k": 25000.0,
+				"type": "white_dwarf"
+			},
+			"spec": {
+				"name": "Hot remnant",
+				"spectral": "DA2",
+				"star": true,
+				"stellar": {
+					"temperature_k": 25000.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "dde4ff",
+			"image": "cooling-remnant.png",
+			"name": "Cooling remnant",
+			"resolved_preview": {
+				"activity": 0.02,
+				"brightness": 3.0,
+				"cells": 350.0,
+				"composition": [
+					"degenerate_carbon_oxygen",
+					"hydrogen_or_helium_envelope"
+				],
+				"cool_color": "e4e8ff",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "d7e0ff",
+				"limb_floor": 0.56,
+				"luminosity_solar": 0.000645913477676129,
+				"mass_solar": 0.6,
+				"mode": 2,
+				"radius_km": 8348.4,
+				"radius_solar": 0.012,
+				"spectral": "DA6",
+				"spots": 0.0,
+				"temperature_k": 8400.0,
+				"type": "white_dwarf"
+			},
+			"spec": {
+				"name": "Cooling remnant",
+				"spectral": "DA6",
+				"star": true,
+				"stellar": {
+					"temperature_k": 8400.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffd9af",
+			"image": "old-remnant.png",
+			"name": "Old remnant",
+			"resolved_preview": {
+				"activity": 0.02,
+				"brightness": 3.0,
+				"cells": 350.0,
+				"composition": [
+					"degenerate_carbon_oxygen",
+					"hydrogen_or_helium_envelope"
+				],
+				"cool_color": "ffd3a3",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "ffddba",
+				"limb_floor": 0.56,
+				"luminosity_solar": 0.000040369592354758,
+				"mass_solar": 0.6,
+				"mode": 2,
+				"radius_km": 8348.4,
+				"radius_solar": 0.012,
+				"spectral": "DA12",
+				"spots": 0.0,
+				"temperature_k": 4200.0,
+				"type": "white_dwarf"
+			},
+			"spec": {
+				"name": "Old remnant",
+				"spectral": "DA12",
+				"star": true,
+				"stellar": {
+					"temperature_k": 4200.0
+				}
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "95b1ff",
+			"image": "neutron-star.png",
+			"name": "Neutron star",
+			"overlays": "none",
+			"preview_surface": "smooth crust with tilted magnetic polar caps; no gas-cloud belts",
+			"resolved_preview": {
+				"activity": 1.0,
+				"brightness": 3.2,
+				"cells": 350.0,
+				"composition": [
+					"neutron_rich_matter"
+				],
+				"cool_color": "95b1ff",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "95b1ff",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.0347390707570248,
+				"mass_solar": 1.4,
+				"mode": 3,
+				"radius_km": 12.0,
+				"radius_solar": 0.0000172488141440276,
+				"spectral": "REMNANT",
+				"spots": 0.0,
+				"temperature_k": 600000.0,
+				"type": "neutron_star"
+			},
+			"spec": {
+				"name": "Neutron star",
+				"star": true,
+				"stellar_type": "neutron_star"
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "95b1ff",
+			"image": "pulsar.png",
+			"name": "Pulsar",
+			"overlays": "schematic radiation beams",
+			"preview_surface": "smooth crust with tilted magnetic polar caps; no gas-cloud belts",
+			"resolved_preview": {
+				"activity": 1.0,
+				"brightness": 3.2,
+				"cells": 350.0,
+				"composition": [
+					"neutron_rich_matter"
+				],
+				"cool_color": "95b1ff",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "95b1ff",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.0347390707570248,
+				"mass_solar": 1.4,
+				"mode": 3,
+				"radius_km": 12.0,
+				"radius_solar": 0.0000172488141440276,
+				"spectral": "REMNANT",
+				"spots": 0.0,
+				"temperature_k": 600000.0,
+				"type": "pulsar"
+			},
+			"spec": {
+				"name": "Pulsar",
+				"star": true,
+				"stellar_type": "pulsar"
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "95b1ff",
+			"image": "magnetar.png",
+			"name": "Magnetar",
+			"overlays": "schematic field lines",
+			"preview_surface": "smooth crust with tilted magnetic polar caps; no gas-cloud belts",
+			"resolved_preview": {
+				"activity": 1.0,
+				"brightness": 3.2,
+				"cells": 350.0,
+				"composition": [
+					"neutron_rich_matter"
+				],
+				"cool_color": "95b1ff",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.075,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "95b1ff",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.0347390707570248,
+				"mass_solar": 1.4,
+				"mode": 3,
+				"radius_km": 12.0,
+				"radius_solar": 0.0000172488141440276,
+				"spectral": "REMNANT",
+				"spots": 0.0,
+				"temperature_k": 600000.0,
+				"type": "magnetar"
+			},
+			"spec": {
+				"name": "Magnetar",
+				"star": true,
+				"stellar_type": "magnetar"
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffc789",
+			"image": "k2-18.png",
+			"name": "K2-18",
+			"resolved_preview": {
+				"activity": 0.55,
+				"brightness": 1.98539547022054,
+				"cells": 252.409349151655,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffc17d",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.291853134122419,
+				"detail_contrast": 0.32,
+				"estimated": true,
+				"hot_color": "ffcc94",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.019827685328768,
+				"mass_solar": 0.366,
+				"mode": 0,
+				"radius_km": 273410.1,
+				"radius_solar": 0.393,
+				"spectral": "M2.5V",
+				"spots": 0.42,
+				"temperature_k": 3455.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "K2-18",
+				"spectral": "M2.5V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffb769",
+			"image": "proxima-centauri.png",
+			"name": "Proxima Centauri",
+			"resolved_preview": {
+				"activity": 0.55,
+				"brightness": 1.92101581566064,
+				"cells": 182.667655096419,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffb05d",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.282389324902114,
+				"detail_contrast": 0.32,
+				"estimated": true,
+				"hot_color": "ffbc74",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.00161589965579763,
+				"mass_solar": 0.123,
+				"mode": 0,
+				"radius_km": 108529.2,
+				"radius_solar": 0.156,
+				"spectral": "M5.5V",
+				"spots": 0.42,
+				"temperature_k": 2930.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "Proxima Centauri",
+				"spectral": "M5.5V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ffa94f",
+			"image": "trappist-1.png",
+			"name": "TRAPPIST-1",
+			"resolved_preview": {
+				"activity": 0.55,
+				"brightness": 1.87130268618153,
+				"cells": 175.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ffa243",
+				"corona_extent": 2.8,
+				"corona_falloff": 3.8,
+				"corona_strength": 0.275081494868685,
+				"detail_contrast": 0.32,
+				"estimated": true,
+				"hot_color": "ffaf5b",
+				"limb_floor": 0.48,
+				"luminosity_solar": 0.000510783554860858,
+				"mass_solar": 0.085,
+				"mode": 0,
+				"radius_km": 79309.8,
+				"radius_solar": 0.114,
+				"spectral": "M8V",
+				"spots": 0.42,
+				"temperature_k": 2570.0,
+				"type": "main_sequence"
+			},
+			"spec": {
+				"name": "TRAPPIST-1",
+				"spectral": "M8V",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ff9d38",
+			"image": "warm-l-dwarf.png",
+			"name": "Warm L dwarf",
+			"resolved_preview": {
+				"activity": 0.08,
+				"brightness": 0.331498689843116,
+				"cells": 350.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ff962b",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.0082874672460779,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "ffa345",
+				"limb_floor": 0.35,
+				"luminosity_solar": 0.000252119277784434,
+				"mass_solar": 0.07,
+				"mode": 1,
+				"radius_km": 69570.0,
+				"radius_solar": 0.1,
+				"spectral": "L0",
+				"spots": 0.0,
+				"temperature_k": 2300.0,
+				"type": "brown_dwarf"
+			},
+			"sensor_inset": "illustrative false color; enhanced brightness and authored palette, not a computed infrared spectrum",
+			"spec": {
+				"name": "Warm L dwarf",
+				"spectral": "L0",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ff6b00",
+			"image": "luhman-like-l8.png",
+			"name": "Luhman-like L8",
+			"resolved_preview": {
+				"activity": 0.08,
+				"brightness": 0.198480535943255,
+				"cells": 350.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ff6300",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.00496201339858138,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "ff7200",
+				"limb_floor": 0.35,
+				"luminosity_solar": 0.0000456099657942795,
+				"mass_solar": 0.046,
+				"mode": 1,
+				"radius_km": 69570.0,
+				"radius_solar": 0.1,
+				"spectral": "L8",
+				"spots": 0.0,
+				"temperature_k": 1500.0,
+				"type": "brown_dwarf"
+			},
+			"sensor_inset": "illustrative false color; enhanced brightness and authored palette, not a computed infrared spectrum",
+			"spec": {
+				"name": "Luhman-like L8",
+				"spectral": "L8",
+				"star": true
+			}
+		},
+		{
+			"color_model": "CIE 1931 blackbody continuum approximation",
+			"color_srgb": "ff0000",
+			"image": "cool-t-dwarf.png",
+			"name": "Cool T dwarf",
+			"resolved_preview": {
+				"activity": 0.08,
+				"brightness": 0.0687509083454317,
+				"cells": 350.0,
+				"composition": [
+					"hydrogen",
+					"helium"
+				],
+				"cool_color": "ff0000",
+				"corona_extent": 2.8,
+				"corona_falloff": 9.0,
+				"corona_strength": 0.00171877270863579,
+				"detail_contrast": 0.2,
+				"estimated": true,
+				"hot_color": "ff0000",
+				"limb_floor": 0.35,
+				"luminosity_solar": 0.00000133125566325883,
+				"mass_solar": 0.024,
+				"mode": 1,
+				"radius_km": 69570.0,
+				"radius_solar": 0.1,
+				"spectral": "T8",
+				"spots": 0.0,
+				"temperature_k": 620.0,
+				"type": "brown_dwarf"
+			},
+			"sensor_inset": "illustrative false color; enhanced brightness and authored palette, not a computed infrared spectrum",
+			"spec": {
+				"name": "Cool T dwarf",
+				"spectral": "T8",
+				"star": true
+			}
+		}
+	],
+	"status": "preview_only"
+}

@@ -1,0 +1,55 @@
+{
+	"presets": [
+		{
+			"id": "main-sequence",
+			"production_changes": false,
+			"structure": "clustered 3D plasma bundles, soft streamers and layered coronal shells"
+		},
+		{
+			"id": "red-giant",
+			"production_changes": false,
+			"structure": "large convection cells and diffuse envelope"
+		},
+		{
+			"id": "white-dwarf-disk",
+			"production_changes": false,
+			"structure": "optional inclined dust disk, gaps, outer debris and compact luminous core"
+		},
+		{
+			"id": "pulsar-wind",
+			"production_changes": false,
+			"structure": "X-ray-inspired toroidal wind arcs, diffuse emission and a bent particle jet; compressed geometry ratios"
+		},
+		{
+			"id": "red-dwarf",
+			"production_changes": false,
+			"structure": "enhanced magnetic network and bundled plasma loops"
+		},
+		{
+			"id": "brown-dwarf",
+			"production_changes": false,
+			"structure": "enhanced cloud visibility and optional red polar auroral curtain"
+		},
+		{
+			"id": "solar-visible",
+			"production_changes": false,
+			"structure": "clustered 3D plasma bundles, soft streamers and layered coronal shells"
+		},
+		{
+			"id": "white-dwarf-bare",
+			"production_changes": false,
+			"structure": "bare cooling remnant without disk"
+		},
+		{
+			"id": "neutron-star-bare",
+			"production_changes": false,
+			"structure": "bare neutron remnant with compact luminous surface, no wind nebula"
+		},
+		{
+			"id": "brown-dwarf-no-aurora",
+			"production_changes": false,
+			"structure": "uneven cloud belts and sheared streaks without aurora"
+		}
+	],
+	"status": "preview_only"
+}

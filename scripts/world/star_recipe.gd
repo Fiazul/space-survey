@@ -55,7 +55,7 @@ static func resolve(spec: Dictionary) -> Dictionary:
 				radius = lerpf(low[2],high[2],mix_t)
 				mass = lerpf(low[3],high[3],mix_t)
 				break
-	var mode := 0 # photosphere, brown bands, white dwarf, neutron remnant, stellar wind
+	var mode := 0 # photosphere, brown clouds, white dwarf, neutron remnant, stellar wind
 	var activity := .3
 	var cells := 350.0
 	var spots := .15
@@ -119,6 +119,19 @@ static func resolve(spec: Dictionary) -> Dictionary:
 		"corona_falloff": 9.0 if mode in [1, 2] else (2.6 if mode == 4 else 3.8),
 		"estimated": not solar, "composition": ["hydrogen", "helium"],
 	}
+	stellar["visual"] = _visual(overrides.get("visual", {}), family)
+	stellar["display_color"] = color
+	stellar["display_hot_color"] = stellar.hot_color
+	if family == "brown_dwarf" and stellar.visual.sensor_mode == "enhanced_visible":
+		# Reference-inspired atmospheric display; physical continuum stays in color_a.
+		stellar.display_color = Color("b12712")
+		stellar.display_hot_color = Color("f1763d")
+	elif stellar.visual.sensor_mode == "uv":
+		stellar.display_color = Color("ba890f")
+		stellar.display_hot_color = Color("ffdc70")
+	elif stellar.visual.sensor_mode == "xray":
+		stellar.display_color = Color("59b5ff")
+		stellar.display_hot_color = Color("b6e5ff")
 	if family == "white_dwarf": stellar.composition = ["degenerate_carbon_oxygen", "hydrogen_or_helium_envelope"]
 	if mode == 3: stellar.composition = ["neutron_rich_matter"]
 	if family == "carbon_star": stellar.composition = ["hydrogen", "helium", "carbon"]
@@ -129,6 +142,42 @@ static func resolve(spec: Dictionary) -> Dictionary:
 		"land_amount": 0.0, "cloud_amount": 0.0, "ice_amount": 0.0, "air_amount": 0.0,
 		"city_amount": 0.0, "water_shine": 0.0, "surface": {"solid": false},
 		"materials": {"crust": [], "ocean": [], "atmosphere": [], "salvage": []}}
+
+static func _visual(authored: Variant, family: String) -> Dictionary:
+	var options: Dictionary = authored if authored is Dictionary else {}
+	var sensor := str(options.get("sensor_mode", "visible"))
+	var issues: Array[String] = []
+	var photosphere := family in ["main_sequence", "subdwarf", "subgiant", "giant", "bright_giant", "supergiant", "carbon_star", "wolf_rayet"]
+	var remnant := family in ["neutron_star", "pulsar", "magnetar"]
+	if sensor not in ["visible", "enhanced_visible", "uv", "xray"] or (sensor == "uv" and not photosphere) or (sensor == "xray" and not remnant):
+		issues.append("unsupported sensor mode for family")
+		sensor = "visible"
+	var result := {"sensor_mode":sensor, "aurora":false, "debris_disk":false, "wind_nebula":false,
+		"disk_inner_radii":4.0, "disk_outer_radii":26.0, "wind_extent_radii":0.0,
+		"validation":issues}
+	for option in ["aurora", "debris_disk", "wind_nebula"]:
+		if options.get(option, false) != true:
+			continue
+		var allowed: bool = (option == "aurora" and family == "brown_dwarf") or (option == "debris_disk" and family == "white_dwarf") or (option == "wind_nebula" and remnant)
+		if not allowed:
+			issues.append(option + " requires its stellar family")
+			continue
+		if option == "wind_nebula":
+			var extent := _positive(options.get("wind_extent_radii", 0.0), 0.0)
+			if sensor != "xray" or extent <= 1.0 or extent > 1e13:
+				issues.append("wind_nebula requires xray mode and authored extent (1..1e13 stellar radii)")
+				continue
+			result.wind_extent_radii = extent
+		if option == "debris_disk":
+			var inner := _positive(options.get("disk_inner_radii", 4.0), 0.0)
+			var outer := _positive(options.get("disk_outer_radii", 26.0), 0.0)
+			if inner <= 1.0 or outer <= inner or outer > 10000.0:
+				issues.append("debris_disk requires 1 < inner < outer <= 10000 stellar radii")
+				continue
+			result.disk_inner_radii = inner
+			result.disk_outer_radii = outer
+		result[option] = true
+	return result
 
 static func _subtype(sp: String) -> float:
 	var digits := ""
@@ -156,6 +205,8 @@ static func color_at(temperature: float) -> Color:
 		.0556434 * xyz.x - .2040259 * xyz.y + 1.0572252 * xyz.z).max(Vector3.ZERO)
 	rgb /= maxf(rgb.x, maxf(rgb.y, rgb.z))
 	var color := Color(rgb.x, rgb.y, rgb.z).linear_to_srgb()
+	if _color_cache.size() >= 256:
+		_color_cache.erase(_color_cache.keys()[0])
 	_color_cache[kelvin] = color
 	return color
 

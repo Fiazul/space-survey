@@ -159,8 +159,6 @@ func _initialize() -> void:
 				failed += _check("layout_fire_corner_%s" % tag, fire_nearest)
 				failed += _check("layout_no_zoom_%s" % tag, not rects.has("ZOOM+") and not rects.has("ZOOM−"))
 
-	var stretch := Transform2D(Vector2(1.5, 0.0), Vector2(0.0, 1.5), Vector2.ZERO)
-	failed += _check("event_to_canvas_unstretches_window_pixels", TC.event_to_canvas(Vector2(1770.0, 930.0), stretch) == Vector2(1180.0, 620.0))
 	failed += await _live_input_checks()
 
 	if failed == 0:
@@ -180,6 +178,8 @@ func _check(name: String, ok: bool) -> int:
 
 func _live_input_checks() -> int:
 	var failed := 0
+	root.content_scale_size = Vector2i(1280, 720)
+	root.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	var ship := ShipStub.new()
 	root.add_child(ship)
 	var controls := TC.new()
@@ -226,7 +226,7 @@ func _button_named(controls: CanvasLayer, text: String) -> Dictionary:
 func _send_mouse(controls: CanvasLayer, position: Vector2, pressed: bool) -> void:
 	var event := InputEventMouseButton.new()
 	event.button_index = MOUSE_BUTTON_LEFT
-	event.position = controls.get_viewport().get_final_transform() * position
+	event.position = position
 	event.global_position = event.position
 	event.pressed = pressed
-	controls._input(event)
+	controls.get_viewport().push_input(event, true)

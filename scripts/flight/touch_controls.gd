@@ -148,39 +148,25 @@ func _process(_delta: float) -> void:
 	var blocked: bool = main != null and main.hud != null and main.hud.is_systems_open()
 	var docked: bool = main != null and main.docked
 	for b in _buttons:
-		b.node.visible = not docked and ((_menu_open and b.menu and (b.node.text != "DEV" or ship.dev_speed)) or (not _menu_open and not blocked and not b.menu))
-	if _menu_open or blocked:
+		b.node.visible = not docked and not blocked and ((_menu_open and b.menu and (b.node.text != "DEV" or ship.dev_speed)) or (not _menu_open and not b.menu))
+	if blocked or docked:
 		_reset()
 		return
 	_highlight(_cruise, ship.auto_cruise)
 
 func _input(event: InputEvent) -> void:
+	# Godot delivers viewport coordinates here, after window stretch is applied.
 	if event is InputEventScreenTouch:
-		_touch(event.index, _canvas_position(event.position), event.pressed)
+		_touch(event.index, event.position, event.pressed)
 	elif event is InputEventScreenDrag:
-		_drag(event.index, _canvas_position(event.position), _canvas_relative(event.position, event.relative))
+		_drag(event.index, event.position, event.relative)
 	elif _use_mouse and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
-		var _m = null
-		for b in _buttons:
-			if b.node.text == "MENU": _m = b.node.get_global_rect()
-		print("TOUCHDBG raw=", event.position, " conv=", _canvas_position(event.position), " vis=", get_viewport().get_visible_rect(), " ft=", get_viewport().get_final_transform(), " menu=", _m, " layer=", get_parent().get_class(), " win=", get_window().size)
-		_touch(MOUSE_FINGER, _canvas_position(event.position), event.pressed)
+		_touch(MOUSE_FINGER, event.position, event.pressed)
 	elif _use_mouse and event is InputEventMouseMotion and event.button_mask & MOUSE_BUTTON_MASK_LEFT:
-		_drag(MOUSE_FINGER, _canvas_position(event.position), _canvas_relative(event.position, event.relative))
+		_drag(MOUSE_FINGER, event.position, event.relative)
 	if ship != null:
 		ship.touch_held = not _finger.is_empty()
 
-
-func _canvas_position(position: Vector2) -> Vector2:
-	return event_to_canvas(position, get_viewport().get_final_transform())
-
-
-func _canvas_relative(position: Vector2, relative: Vector2) -> Vector2:
-	return _canvas_position(position + relative) - _canvas_position(position)
-
-
-static func event_to_canvas(position: Vector2, final_transform: Transform2D) -> Vector2:
-	return final_transform.affine_inverse() * position
 
 func _touch(index: int, pos: Vector2, pressed: bool) -> void:
 	if pressed:

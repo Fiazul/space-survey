@@ -1,4 +1,4 @@
-"""Builds the seven Astryx v2 hulls (contract: docs/specs/2026-09-26-ship-roster-and-modules.md).
+"""Builds the Astryx modular hulls (contract: docs/specs/2026-09-26-ship-roster-and-modules.md).
 
   blender -b --python tools/blender/build_ships.py -- [--ship <tier>] [--out <dir>] [--blend-out <dir>]
 
@@ -28,6 +28,7 @@ ROSTER = {
 	5: dict(slug="osprey", name="Osprey", length=120, BOOSTER=3, RCS=8, WEAPON=4, PAD=4, LANDJET=6),
 	6: dict(slug="condor", name="Condor", length=150, BOOSTER=4, RCS=8, WEAPON=6, PAD=6, LANDJET=8),
 	7: dict(slug="albatross", name="Albatross", length=200, BOOSTER=4, RCS=8, WEAPON=6, PAD=6, LANDJET=8),
+	8: dict(slug="sovereign", name="Sovereign", length=240, BOOSTER=4, RCS=8, WEAPON=8, PAD=6, LANDJET=8, tri_budget=30000),
 }
 
 X, UP, DOWN = Vector((1, 0, 0)), Vector((0, 0, 1)), Vector((0, 0, -1))
@@ -394,7 +395,11 @@ def albatross(k):
 	k.pair("LANDJET", lambda s: k.belly(8 * s, -54))
 
 
-BUILDERS = {1: wren, 2: kestrel, 3: swift, 4: harrier, 5: osprey, 6: condor, 7: albatross}
+def sovereign(k):
+	from sovereign import build as build_sovereign
+	build_sovereign(k)
+
+BUILDERS = {1: wren, 2: kestrel, 3: swift, 4: harrier, 5: osprey, 6: condor, 7: albatross, 8: sovereign}
 
 
 def build(tier, out_dir, blend_dir=SOURCES):
@@ -427,7 +432,10 @@ def export_current(tier, out_dir):
 		print("TRIS", sorted(per.items(), key=lambda kv: -kv[1]))
 	bpy.context.view_layer.update()
 	empty_transforms = {ob: ob.matrix_world.copy() for ob in bpy.data.objects if ob.type == "EMPTY"}
-	hull_ob = C.finalize("Hull_" + spec["name"], smooth_angle=32.0)
+	hull_ob = C.finalize("Hull_" + spec["name"], smooth_angle=28.0 if tier == 8 else 32.0)
+	if tier == 8:
+		from sovereign import polish_export
+		polish_export(hull_ob)
 	# Manual object edits and parented sockets must share scene space before centring.
 	hull_ob.data.transform(hull_ob.matrix_world)
 	hull_ob.parent = None
@@ -446,7 +454,7 @@ def export_current(tier, out_dir):
 	hull_ob.data.update()
 	ext *= f
 	tris = C.tri_count(hull_ob)
-	if tris > 25000:
+	if tris > spec.get("tri_budget", 25000):
 		raise RuntimeError("%s: %d tris over budget" % (spec["slug"], tris))
 	out = os.path.join(out_dir, spec["slug"], spec["slug"] + ".glb")
 	os.makedirs(os.path.dirname(out), exist_ok=True)

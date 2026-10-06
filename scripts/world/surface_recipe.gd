@@ -177,6 +177,8 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 		"snow_polar_drop_m": 0.0, "sea_ice_latitude": 1.0, "vegetation_density": 0.0,
 		"vegetation_from_albedo": false, "tree_line_m": 3500.0,
 		"tree_spacing_m": 22.0, "tree_height_m": 30.0,
+		"reclamation": 0.0,
+		"giant_tree_fraction": 0.0, "grove_clearings": 0.0,
 		"wave_strength": 0.09,
 	}
 	if solid and kind != "ice" and float(recipe.get("water_shine", 0.0)) > 0.3:
@@ -216,7 +218,7 @@ static func resolve(recipe: Dictionary) -> Dictionary:
 	p.wave_scale = clampf(float(p.wave_scale), 0.1, 8.0)
 	p.vegetation_density = clampf(float(p.vegetation_density), 0.0, 1.0)
 	p.tree_spacing_m = clampf(float(p.tree_spacing_m), 12.0, 200.0)
-	p.tree_height_m = clampf(float(p.tree_height_m), 2.0, 80.0)
+	p.tree_height_m = clampf(float(p.tree_height_m), 2.0, 200.0)
 	p.tree_line_m = clampf(float(p.tree_line_m), 0.0, 12000.0)
 	p.snow_polar_drop_m = clampf(float(p.snow_polar_drop_m), 0.0, 12000.0)
 	p.sea_ice_latitude = clampf(float(p.sea_ice_latitude), 0.0, 1.0)

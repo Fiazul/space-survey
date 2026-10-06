@@ -49,7 +49,7 @@ func _ready() -> void:
 	earth = PlanetGenerator.terrain_sampler(PlanetGenerator.recipe_for({"name":"Earth"}))
 	site = earth.facilities[0]
 	xf = site.transform
-	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true
+	for unlock in GameState.SHIP_UNLOCK[-1]: GameState.visited["test_system_%d" % unlock] = true
 	ship = Ship.new()
 	add_child(ship)
 	ship._set_capture(false)

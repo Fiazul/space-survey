@@ -8,6 +8,7 @@ The Class II cruiser is the reference for this layered arrangement.
 | File | Role |
 |---|---|
 | `build_ships.py` | Builds editable sources and exports fleet hulls |
+| `sovereign.py` | Tier 8 beveled armor, packed brushed-metal maps, panoramic bridge, half-length outer housings with ventilators, layered octagonal drives |
 | `ship_common.py`, `sleek.py` | Shared modelling helpers |
 | `sources/*.blend` | Editable hull parts, engine shoulders, armor and sockets |
 | `render_ships.py` | Side, rear, top and three-quarter views of game exports |
@@ -27,7 +28,7 @@ blender -b tools/blender/sources/kestrel.blend --python-exit-code 1 --python too
 ```
 
 The exporter joins the game mesh, centres it, normalizes its roster length, checks the
-25,000-triangle limit and writes `assets/ships/kestrel/kestrel.glb`. The source stays editable.
+25,000-triangle limit (30,000 for Sovereign) and writes `assets/ships/kestrel/kestrel.glb`. The source stays editable.
 
 Regenerate a source from its procedural definition (this replaces manual source edits):
 
@@ -35,7 +36,7 @@ Regenerate a source from its procedural definition (this replaces manual source 
 blender -b --python-exit-code 1 --python tools/blender/build_ships.py -- --ship 2
 ```
 
-Ship tiers 2–7 are Kestrel, Swift, Harrier, Osprey, Condor and Albatross. Tier 1 in this
+Ship tiers 2–8 are Kestrel, Swift, Harrier, Osprey, Condor, Albatross and Sovereign. Tier 1 in this
 builder is the unrostered Wren; the playable first ship is the authored Class II cruiser.
 
 Render the exported geometry:

@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode unshaded, cull_disabled, depth_draw_opaque;
+render_mode unshaded, cull_back, depth_draw_opaque;
 
 #include "res://shaders/planet_color.gdshaderinc"
 
@@ -19,6 +19,8 @@ uniform float stellar_brightness = 1.0;
 uniform float stellar_limb_floor = .72;
 uniform float stellar_detail_contrast = .20;
 uniform float stellar_temperature_k = 5772.0;
+uniform vec4 stellar_cool_color : source_color = vec4(1.0, .94, .88, 1.0);
+uniform vec4 stellar_hot_color : source_color = vec4(1.0, .97, .94, 1.0);
 uniform float seed = 0.0;
 uniform float ice_amount = 0.12;
 uniform float land_amount = 0.32;
@@ -224,7 +226,7 @@ void vertex() {
 	float lon = atan(v_mdl.z, v_mdl.x);
 	float lat = asin(clamp(v_mdl.y, -1.0, 1.0));
 	v_map_uv = vec2(lon / TAU + 0.5, 0.5 - lat / PI);
-	float h = sample_height(v_map_uv, v_mdl);
+	float h = kind == 3 ? 0.0 : sample_height(v_map_uv, v_mdl);
 	v_height = h;
 	float wat = 0.0;
 	if (has_spec > 0.5) {
@@ -269,26 +271,30 @@ void fragment() {
 			vec3 flow = vec3(stellar_noise(n*12.0+seed+drift*.15),
 				stellar_noise(n*12.0+seed+19.7), stellar_noise(n*12.0+seed-8.3));
 			vec3 gp = n*stellar_cells+(flow-.5)*.8+drift+seed;
-			float convection = stellar_noise(gp*.15);
-			float granules = stellar_granules(gp*2.0);
-			float fine = stellar_noise(gp*4.0);
+			float footprint = length(fwidth(gp));
+			float convection = .5;
+			float granules = .5;
+			float fine = .5;
+			float coarse_weight = 1.0-smoothstep(.4,1.5,footprint*.15);
+			float granule_weight = 1.0-smoothstep(.4,1.5,footprint*2.0);
+			float fine_weight = 1.0-smoothstep(.4,1.5,footprint*4.0);
+			if (coarse_weight > .01) convection = mix(.5,stellar_noise(gp*.15),coarse_weight);
+			if (granule_weight > .01) granules = mix(.5,stellar_granules(gp*2.0),granule_weight);
+			if (fine_weight > .01) fine = mix(.5,stellar_noise(gp*4.0),fine_weight);
 			float giant = 1.0-smoothstep(8.0,25.0,stellar_cells);
 			float cells = mix(.5, mix(granules*.50+convection*.40+fine*.10,
 				convection*.80+granules*.10+fine*.10,giant), granulation);
 			float heat = clamp(.5+(cells-.43)*2.3, 0.0, 1.0);
-			float magnetic = stellar_noise(n*11.0+seed+drift*.08);
+			float magnetic_scale = mix(110.0,16.0,clamp(stellar_spots*2.0,0.0,1.0));
+			float magnetic = stellar_noise(n*magnetic_scale+seed+drift*.08);
+			float active_region = smoothstep(.59,.75,stellar_noise(n*7.0+seed));
 			float penumbra = smoothstep(.68,.79,magnetic);
 			float umbra = smoothstep(.77,.86,magnetic);
-			float spot = (penumbra*.30+umbra*.55)*clamp(stellar_spots*2.0,0.0,1.0);
-			float cool = 1.0-smoothstep(3200.0,5200.0,stellar_temperature_k);
-			float warm = 1.0-smoothstep(6200.0,8500.0,stellar_temperature_k);
-			vec3 low = mix(vec3(.85,.12,.008),vec3(.65,.006,.001),cool);
-			vec3 high = mix(vec3(1.5,.75,.20),vec3(1.5,.12,.008),cool);
-			vec3 plasma = mix(low,high,heat);
-			phot = mix(color_a*(.8+heat*.45),plasma,warm);
-			phot *= (1.0+(cells-.43)*stellar_detail_contrast)*(1.0-spot);
+			float spot = (penumbra*.30+umbra*.55)*clamp(stellar_spots*2.0,0.0,1.0)*active_region;
+			phot = mix(stellar_cool_color.rgb,stellar_hot_color.rgb,heat);
+			phot *= (1.0+(cells-.5)*stellar_detail_contrast)*(1.0-spot);
 			float plage = smoothstep(.57,.72,magnetic)*(1.0-penumbra);
-			phot += mix(color_a,vec3(1.5,.65,.12),warm)*plage*stellar_activity*.10;
+			phot += stellar_hot_color.rgb*plage*stellar_activity*.10;
 		} else if (stellar_mode == 1) {
 			float clouds = stellar_noise(n*18.0+seed+drift*.25);
 			float bands = sin(n.y*34.0+stellar_noise(n*6.0+seed)*5.0);

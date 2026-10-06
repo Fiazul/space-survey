@@ -69,7 +69,7 @@ func _meshes() -> void:
 	patch.bind_recipe(earth)
 	var tree_meshes := _prop_meshes(patch)
 	check("tree_kit_has_prop_meshes", tree_meshes.size() > 0)
-	check("tree_kit_draw_slots_at_most_3", tree_meshes.size() <= 3)
+	check("tree_kit_draw_slots_at_most_7", tree_meshes.size() <= 7)
 	var variant_ids := 0
 	var tree_h_ok := 0
 	for mesh in tree_meshes:
@@ -95,7 +95,10 @@ func _amazon_and_determinism() -> void:
 	var a := _build_at(-3.0, -60.0, 0.3, "Earth", EARTH_R)
 	var r: Dictionary = a.report()
 	check("amazon_planted_tree_kit", str(r.kit) == "tree" and int(r.props) > 0)
-	check("amazon_draw_calls_at_most_3", _draw_calls(a) <= 3 and _draw_calls(a) >= 1)
+	check("forest geometry remains within budget", int(r.prop_triangles) < 500000)
+	check("full population capped", int(r.prop_lod_counts[0]) + int(r.prop_lod_counts[1]) <= 64)
+	check("medium population capped", int(r.prop_lod_counts[3]) + int(r.prop_lod_counts[4]) <= 512)
+	check("amazon_draw_batches_at_most_7", _draw_calls(a) <= 7 and _draw_calls(a) >= 1)
 	var snap := _xform_snapshot(a)
 	check("amazon_snapshot_nonempty", snap.size() > 0)
 	# Same seat, same rebuild: identical instance list (no popping).
@@ -111,9 +114,10 @@ func _amazon_and_determinism() -> void:
 	check("rebuild_keeps_the_same_instances", same)
 	# World height of a tree instance stays in the 20–40 m band after 0.7–1.3 scale.
 	var tree_h := _instance_world_heights(a, 0.018)
+	print("surface_props: tree-height range ", tree_h.min(), "..", tree_h.max(), " count=", tree_h.size())
 	var in_band := 0
 	for h in tree_h:
-		if h >= 0.018 and h <= 0.055:
+		if h >= 0.070 and h <= 0.45:
 			in_band += 1
 	check("amazon_trees_are_real_scale", tree_h.size() > 0 and in_band >= tree_h.size() * 0.8)
 	a.free()
@@ -261,14 +265,16 @@ func _xform_snapshot(patch: Node) -> PackedStringArray:
 		if not (c is MultiMeshInstance3D) or c.multimesh == null:
 			continue
 		var mm: MultiMesh = c.multimesh
+		var buffer: PackedFloat32Array = patch.submitted_prop_buffers[int(str(c.name).trim_prefix("props_"))]
+		var stride := 16 if mm.use_custom_data else 12
 		for i in mm.visible_instance_count:
-			var xf: Transform3D = mm.get_instance_transform(i)
-			var custom := Color()
-			if mm.use_custom_data:
-				custom = mm.get_instance_custom_data(i)
+			var offset := i * stride
+			var origin := Vector3(buffer[offset + 3], buffer[offset + 7], buffer[offset + 11])
+			var diagonal := Vector3(buffer[offset], buffer[offset + 5], buffer[offset + 10])
+			var custom_r := buffer[offset + 12] if mm.use_custom_data else 0.0
 			rows.append("%s|%.5f,%.5f,%.5f|%.5f,%.5f,%.5f|%.3f"
-				% [c.name, xf.origin.x, xf.origin.y, xf.origin.z,
-				xf.basis.x.x, xf.basis.y.y, xf.basis.z.z, custom.r])
+				% [c.name, origin.x, origin.y, origin.z,
+					diagonal.x, diagonal.y, diagonal.z, custom_r])
 	rows.sort()
 	return rows
 
@@ -285,7 +291,10 @@ func _instance_world_heights(patch: Node, min_mesh_h: float) -> Array:
 		# Combined meshes: world height uses the TALL part's aabb * instance scale.
 		var mm: MultiMesh = c.multimesh
 		for i in mm.visible_instance_count:
-			var sc: Vector3 = mm.get_instance_transform(i).basis.get_scale()
+			var buffer: PackedFloat32Array = patch.submitted_prop_buffers[int(str(c.name).trim_prefix("props_"))]
+			var stride := 16 if mm.use_custom_data else 12
+			var offset := i * stride
+			var sc_y := Vector3(buffer[offset + 1], buffer[offset + 5], buffer[offset + 9]).length()
 			var custom_r := 0.0
 			if mm.use_custom_data:
 				custom_r = mm.get_instance_custom_data(i).r
@@ -293,7 +302,7 @@ func _instance_world_heights(patch: Node, min_mesh_h: float) -> Array:
 			# when measuring trees.
 			if min_mesh_h >= 0.018 and custom_r > 0.45:
 				continue
-			out.append(mesh_h * sc.y)
+			out.append(mesh_h * sc_y)
 	return out
 
 

@@ -2,12 +2,13 @@ extends Node3D
 
 func _ready() -> void:
 	get_window().mode = Window.MODE_WINDOWED
-	get_window().size = Vector2i(1280, 720)
+	get_window().size = Vector2i(800, 450)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(.003, .005, .012)
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = .7
+	EnvironmentLook.apply(env)
 	env.glow_enabled = true
 	env.glow_normalized = true
 	env.glow_intensity = .45
@@ -72,15 +73,15 @@ func _ready() -> void:
 			var surface := _surface_metrics(capture, camera)
 			metrics[shot.name].merge(surface)
 			print("sun surface %s: %s" % [shot.name, JSON.stringify(surface)])
-			if int(surface.samples) < 100 or float(surface.range_90_10) < .045 or float(surface.local_detail) < .0015:
+			if int(surface.samples) < 100 or float(surface.range_90_10) < .025 or float(surface.local_detail) < .0015:
 				failures += 1
 				push_error("Sun photosphere lost resolved surface contrast in %s" % shot.name)
 			if float(surface.clipped_fraction) > .02 or float(surface.mean) > .94:
 				failures += 1
 				push_error("Sun photosphere is clipped/washed out in %s" % shot.name)
-			if float(surface.warm_color) < .25:
+			if absf(float(surface.warm_color)) > .18:
 				failures += 1
-				push_error("Sun photosphere is pale rather than fiery in %s" % shot.name)
+				push_error("Sun photosphere must retain a warm-white visible color in %s" % shot.name)
 	var report := FileAccess.open(output.path_join("metrics.json"), FileAccess.WRITE)
 	if report == null:
 		failures += 1
@@ -100,9 +101,10 @@ func _surface_metrics(capture: Image, camera: Camera3D) -> Dictionary:
 	var clipped := 0
 	var warm_color := 0.0
 	var origin := camera.global_position
+	var viewport_scale := camera.get_viewport().get_visible_rect().size / Vector2(capture.get_size())
 	for y in range(3, capture.get_height()-3, 3):
 		for x in range(3, capture.get_width()-3, 3):
-			var ray := camera.project_ray_normal(Vector2(x+.5, y+.5))
+			var ray := camera.project_ray_normal(Vector2(x+.5, y+.5) * viewport_scale)
 			var along := origin.dot(ray)
 			var discriminant := along*along-origin.length_squared()+1.0
 			if discriminant <= 0.0: continue

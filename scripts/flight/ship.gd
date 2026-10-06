@@ -21,7 +21,7 @@ const _AF := preload("res://scripts/flight/anchor_frame.gd")
 # fly(delta) is called by main.gd (explicit order); mouse look is read in _input.
 
 # ============================ TWEAK ME ============================
-# Ships you can fly, tier 1 -> 7 (docs/specs/2026-09-26-ship-roster-and-modules.md).
+# Ships you can fly, tier 1 -> 8 (docs/specs/2026-09-26-ship-roster-and-modules.md).
 # `length` keeps the old convention (HULL_KM at HULL_REF_LENGTH), so length = metres
 # * 0.0075: Class II Galactic Cruiser 122.7 m; Kestrel 70 m ... Albatross 200 m.
 # The cruiser retains its authored OBJ propulsion; the remaining hulls use named GLB sockets.
@@ -34,6 +34,7 @@ const SHIP_MODELS := [
 	{ "name": "Osprey", "path": "res://assets/ships/osprey/osprey.glb", "modular": true, "length": 0.9, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.86, "hp": 250, "bolt_scale": 1.30, "fire_cd": 0.082, "dmg": 4, "energy_max": 165.0, "energy_use": 0.78, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "silver" },
 	{ "name": "Condor", "path": "res://assets/ships/condor/condor.glb", "modular": true, "length": 1.125, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.80, "hp": 290, "bolt_scale": 1.40, "fire_cd": 0.076, "dmg": 5, "energy_max": 180.0, "energy_use": 0.82, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "emerald" },
 	{ "name": "Albatross", "path": "res://assets/ships/albatross/albatross.glb", "modular": true, "length": 1.5, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.74, "hp": 340, "bolt_scale": 1.50, "fire_cd": 0.070, "dmg": 6, "energy_max": 200.0, "energy_use": 0.86, "light_accent": Color(0.35, 0.70, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "champagne" },
+	{ "name": "Sovereign", "path": "res://assets/ships/sovereign/sovereign.glb", "modular": true, "length": 1.8, "yaw": 0.0, "pitch": 0.0, "engine_pitch": 0.68, "hp": 440, "bolt_scale": 1.65, "fire_cd": 0.060, "dmg": 8, "energy_max": 250.0, "energy_use": 0.86, "light_accent": Color(0.45, 0.85, 1.0), "light_energy": 0.35, "color_pick": true, "finish_pick": true, "default_color": "silver" },
 ]
 
 # Saved per-ship hull colours. Booster surfaces never enter the paint pass.

@@ -4,7 +4,7 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 
 | File | Type | Role |
 |---|---|---|
-| `ship.gd` | feature area | Flight physics, visuals (boosters/streaks), warp, autopilot, customization; `SHIP_MODELS` = tier-1 Class II Galactic Cruiser plus six tiered modular hulls, tier-gated `swap_ship`, `set_weapon_set`/`set_pad_set` |
+| `ship.gd` | feature area | Flight physics, visuals (boosters/streaks), warp, autopilot, customization; `SHIP_MODELS` = tier-1 Class II Galactic Cruiser plus seven tiered modular hulls, tier-gated `swap_ship`, `set_weapon_set`/`set_pad_set` |
 | `modular_hull.gd` | feature area | `ModularHull` — static socket-driven styler for the GLB hulls/modules: maps materials by name (`Hull_Paint` tint, `Glass`, `Accent_Emit`, `Nozzle_Emit` → throttle shader), collects `SOCKET_*` empties by prefix, builds booster plumes and RCS puffs |
 | `ship_systems.gd` | feature area | Landing pads, weapon mounts and belly support jets. Modular hulls: pad/weapon GLB modules (`assets/modules/`, mk1/mk2) on the hull's sockets, feet on one shared plane, `MUZZLE`/`FOOT` driven. Primitive fallback ship: procedural legs + `PlasmaMountMesh` guns |
 | `landing_thrusters.gd` | feature area | Belly support outlets (one per `SOCKET_LANDJET_n`), canted from each outlet's own position |

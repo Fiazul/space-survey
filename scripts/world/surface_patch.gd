@@ -84,6 +84,17 @@ const PROP_MAX := 400
 const FOREST_MAX := 8192
 var _forest_budget := 0
 var _forest_cache := {}
+var _forest_task := -1
+var _forest_pending := false
+var _forest_result := {}
+var _forest_anchor := Vector3.INF
+var _forest_xforms: Array = []
+var _forest_variants := PackedByteArray()
+var _forest_latency := .75
+var _forest_started := 0
+var _forest_stride := 0
+var _forest_population_budget := 0
+var _props_dirty := false
 var _props_task := -1
 var _props_pending := false
 var _props_result := {}
@@ -91,6 +102,10 @@ var perf_commit_us := 0
 var perf_props_us := 0
 var _profile := OS.get_environment("PERF_PROFILE") == "1"
 const PROP_SLOTS := 3
+var _tree_kit: SurfaceTreeKit
+var _props_observer := Vector3.INF
+var _props_repack_ms := 0
+var submitted_prop_buffers: Array = []
 # Unscaled kit meshes are real size (1 scene unit = 1 km). Instance scale is
 # then 0.7–1.3 from the seat hash, so a 30 m tree stays in the 20–40 m band.
 
@@ -315,6 +330,12 @@ func bind_body(recipe: Dictionary, sampler: TerrainSampler) -> void:
 func bind_recipe(recipe: Dictionary) -> void:
 	_district_index = -2
 	_forest_cache.clear()
+	_forest_anchor = Vector3.INF
+	_forest_stride = 0
+	_forest_population_budget = 0
+	_forest_xforms.clear()
+	_forest_variants = PackedByteArray()
+	_props_dirty = false
 	_himg = _img_of(str(recipe.get("height", "")))
 	_simg = _img_of(str(recipe.get("specular", "")))
 	_aimg = _img_of(str(recipe.get("albedo", "")))
@@ -343,8 +364,16 @@ func bind_recipe(recipe: Dictionary) -> void:
 	# even though both bodies use the same morphology.
 	_kit = kit
 	_rebuild_prop_nodes(kit)
-	for node in _prop_nodes:
-		node.material_override = _prop_mat
+	for slot in _prop_nodes.size():
+		_prop_nodes[slot].material_override = _prop_mat if kit != "tree" or slot == 2 else null
+	if _tree_kit != null:
+		_tree_kit.set_parameter("air_amount", float(recipe.get("air_amount", 0.0)))
+		_tree_kit.set_parameter("color_air", recipe.get("color_air", Color(.3, .56, 1)))
+		_tree_kit.set_parameter("exposure", minf(exposure, 1.6))
+	_land_mat.set_shader_parameter("reclamation", float(recipe.get("surface", {}).get("reclamation", 0.0)))
+	_props_observer = Vector3.INF
+	_pending_prop_xforms.clear()
+	_pending_prop_vars = PackedByteArray()
 	for i in RING_COUNT:
 		_ring_anchor[i] = Vector3.ZERO      # force every ring to rebuild
 	_complete_anchor = Vector3.ZERO
@@ -516,7 +545,7 @@ func update_for(ship_pos: Vector3, body: String, radius: float,
 	if _structures == null:
 		_structures = SurfaceStructures.new()
 		add_child(_structures)
-	_structures.update_for(sampler, hit, radius, alt)
+	_structures.update_for(sampler, hit, radius, alt, ship_vel)
 	if _facilities == null:
 		_facilities = SurfaceFacilities.new()
 		add_child(_facilities)
@@ -526,6 +555,17 @@ func update_for(ship_pos: Vector3, body: String, radius: float,
 	# needed, so a rebuild that completed between frames is never held an
 	# extra frame past when it could have shown.
 	_poll_rebuild()
+	_poll_forest()
+	var desired_stride := SurfaceForest.streaming_stride(ship_vel.slide(hit.normalized()).length(), _forest_latency, float(_sampler.surface.tree_spacing_m), _forest_budget)
+	if _kit == "tree" and _forest_budget > 0 and not _forest_pending \
+			and (_forest_anchor == Vector3.INF or desired_stride != _forest_stride or _forest_budget != _forest_population_budget \
+			or hit.distance_to(_forest_anchor) > float(_sampler.surface.tree_spacing_m) * .004):
+		_start_forest(hit, radius, ship_vel)
+	if _props_dirty and not _props_pending and has_ground():
+		_place_props(_pending_prop_xforms, _pending_prop_vars, hit, _pending_prop_east, _pending_prop_north)
+	if _kit == "tree" and not _props_pending and not _forest_xforms.is_empty() \
+			and ship_pos.distance_to(_props_observer) > .06 and Time.get_ticks_msec() - _props_repack_ms >= 150:
+		_place_props(_pending_prop_xforms, _pending_prop_vars, hit, _pending_prop_east, _pending_prop_north)
 	_advance_fade()
 	# Ring scale follows the horizon, so a change of altitude invalidates them all.
 	# AGL can be tiny above a mountain while the sea-level horizon is far away.
@@ -611,16 +651,53 @@ func _start_rebuild(hit: Vector3, radius: float, base: float, ship_vel: Vector3)
 	_built_sun_dir = sun_dir
 	_shadow_build_ms = Time.get_ticks_msec()
 	var kit := _kit
-	if _forest_cache.size() > 24576:
-		_forest_cache.clear()
-	var forest_budget := _forest_budget
 	_thread_group_id = WorkerThreadPool.add_group_task(
-		func(ring: int) -> void: results[ring] = _compute_ring(ring, pred, radius, base, sun_dir, kit, forest_budget),
+		func(ring: int) -> void: results[ring] = _compute_ring(ring, pred, radius, base, sun_dir, kit),
 		RING_COUNT, -1, false, "surface_patch_ring_rebuild")
 
 
 func _rebuild_busy() -> bool:
-	return _thread_pending or _commit_next < RING_COUNT or _props_pending
+	return _thread_pending or _commit_next < RING_COUNT
+
+func _start_forest(hit: Vector3, radius: float, velocity: Vector3) -> void:
+	var tangent := velocity.slide(hit.normalized())
+	var stride := SurfaceForest.streaming_stride(tangent.length(), _forest_latency, float(_sampler.surface.tree_spacing_m), _forest_budget)
+	_forest_stride = stride
+	_forest_population_budget = _forest_budget
+	var reach := float(_sampler.surface.tree_spacing_m) / 1000.0 * sqrt(float(_forest_budget)) * .5 * stride
+	var lead := minf(tangent.length() * (_forest_latency + .35), reach * .45)
+	var center := (hit + tangent.normalized() * lead).normalized() * radius
+	var sampler := _sampler
+	var budget := _forest_budget
+	var cache := _forest_cache
+	var result := {"anchor": hit, "center": center}
+	_forest_result = result
+	_forest_pending = true
+	_forest_started = Time.get_ticks_msec()
+	_forest_task = WorkerThreadPool.add_task(func():
+		if cache.size() > 24576:
+			cache.clear()
+		var near := SurfaceForest.scatter(sampler, center, radius, budget, false, cache, -1, stride)
+		var far := SurfaceForest.scatter(sampler, center, radius, budget, true, cache, -1, stride)
+		near.xforms.append_array(far.xforms)
+		near.variants.append_array(far.variants)
+		result["xforms"] = near.xforms
+		result["variants"] = near.variants, false, "surface_forest_prefetch")
+
+func _poll_forest() -> void:
+	if not _forest_pending or not WorkerThreadPool.is_task_completed(_forest_task):
+		return
+	WorkerThreadPool.wait_for_task_completion(_forest_task)
+	_publish_forest()
+
+func _publish_forest() -> void:
+	_forest_pending = false
+	_forest_latency = clampf(float(Time.get_ticks_msec() - _forest_started) / 1000.0, .1, 3.0)
+	_forest_anchor = _forest_result.anchor
+	_forest_xforms = _forest_result.xforms
+	_forest_variants = _forest_result.variants
+	_forest_result = {}
+	_props_dirty = true
 
 
 func rings_committed_this_update() -> int:
@@ -694,6 +771,9 @@ func _queue_batch_commits() -> void:
 func force_ready() -> void:
 	if _structures != null:
 		_structures.force_ready()
+	if _forest_pending:
+		WorkerThreadPool.wait_for_task_completion(_forest_task)
+		_publish_forest()
 	if _thread_pending:
 		WorkerThreadPool.wait_for_group_task_completion(_thread_group_id)
 		var msec: int = Time.get_ticks_msec() - _batch_t0_msec
@@ -705,6 +785,10 @@ func force_ready() -> void:
 	while _commit_next < RING_COUNT:
 		_commit_one_ring(true)
 	if _props_pending:
+		WorkerThreadPool.wait_for_task_completion(_props_task)
+		_publish_props()
+	if _props_dirty:
+		_place_props(_pending_prop_xforms, _pending_prop_vars, _last_ship_pos.normalized() * _radius, _pending_prop_east, _pending_prop_north)
 		WorkerThreadPool.wait_for_task_completion(_props_task)
 		_publish_props()
 	_snap_fades()
@@ -738,10 +822,15 @@ func _commit_one_ring(snap_fade: bool) -> void:
 # was computed against a sampler/recipe we are about to stop using.
 func _workers_running() -> bool:
 	return (_thread_pending and not WorkerThreadPool.is_group_task_completed(_thread_group_id)) \
-		or (_props_pending and not WorkerThreadPool.is_task_completed(_props_task))
+		or (_props_pending and not WorkerThreadPool.is_task_completed(_props_task)) \
+		or (_forest_pending and not WorkerThreadPool.is_task_completed(_forest_task))
 
 
 func _abandon_rebuild() -> void:
+	if _forest_pending:
+		WorkerThreadPool.wait_for_task_completion(_forest_task)
+		_forest_pending = false
+		_forest_result = {}
 	if _props_pending:
 		WorkerThreadPool.wait_for_task_completion(_props_task)
 		_props_pending = false
@@ -759,6 +848,10 @@ func _abandon_rebuild() -> void:
 # rebuild and exited without collecting it hung past its timeout.
 func _exit_tree() -> void:
 	_abandon_rebuild()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_PREDELETE:
+		_abandon_rebuild()
 
 
 # Write one already-computed ring into its live mesh nodes. The ONLY place
@@ -850,6 +943,8 @@ func _apply_ring_fade(ring: int) -> void:
 func _apply_prop_fade() -> void:
 	if _prop_mat != null:
 		_prop_mat.set_shader_parameter("stream_fade", _prop_fade)
+	if _tree_kit != null:
+		_tree_kit.set_parameter("stream_fade", _prop_fade)
 
 
 func _tri_buffer() -> Dictionary:
@@ -1027,6 +1122,8 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 					var variant := _prop_variant(h_var, kit)
 					if kit == "tree" and not _vegetation_at((p00.p as Vector3).normalized(), (p00.p as Vector3).length() - radius):
 						variant = 3  # barren ground uses the kit's boulder, never a tree
+					elif kit == "tree":
+						continue
 					var sc: float = 0.7 + h_sc * 0.6
 					var stand: Vector3 = p00.n
 					var t := Transform3D()
@@ -1040,13 +1137,6 @@ func _compute_ring(ring: int, hit: Vector3, radius: float, base_quad: float,
 					t.origin = p00.p - stand * 0.00015
 					prop_xforms.append(t)
 					prop_vars.append(variant)
-	if ring == 0 and kit == "tree" and forest_budget > 0:
-		var forest := preload("res://scripts/world/surface_forest.gd").scatter(_sampler, hit, radius, forest_budget, false, _forest_cache)
-		prop_xforms.append_array(forest.xforms)
-		prop_vars.append_array(forest.variants)
-		var canopy := preload("res://scripts/world/surface_forest.gd").scatter(_sampler, hit, radius, forest_budget, true, _forest_cache)
-		prop_xforms.append_array(canopy.xforms)
-		prop_vars.append_array(canopy.variants)
 	return {
 		"land_buf": land_buf,
 		"skirt_buf": skirt_buf if skirted else null,
@@ -1384,18 +1474,21 @@ func _mat(water: bool) -> StandardMaterial3D:
 
 
 func _rebuild_prop_nodes(kit: String) -> void:
-	if _prop_nodes.size() != PROP_SLOTS:
+	var slots := 7 if kit == "tree" else PROP_SLOTS
+	_tree_kit = SurfaceTreeKit.new() if kit == "tree" else null
+	if _prop_nodes.size() != slots:
 		for node in _prop_nodes:
 			if node != null:
+				remove_child(node)
 				node.queue_free()
 		_prop_nodes.clear()
-		for slot in PROP_SLOTS:
+		for slot in slots:
 			var n := MultiMeshInstance3D.new()
 			n.name = "props_%d" % slot
 			n.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 			add_child(n)
 			_prop_nodes.append(n)
-	for slot in PROP_SLOTS:
+	for slot in slots:
 		_prop_nodes[slot].multimesh = _make_prop_multimesh(kit, slot)
 	_props = _prop_nodes[0]
 
@@ -1416,11 +1509,9 @@ func _make_prop_multimesh(kit: String, slot: int = 0) -> MultiMesh:
 func _kit_mesh(kit: String, slot: int = 0) -> ArrayMesh:
 	match kit:
 		"tree":
-			if slot == 0:
-				return _tree_mesh(0)
-			if slot == 1:
-				return _tree_mesh(1)
-			return _tree_with_boulder_mesh()
+			if slot == 2:
+				return _rock_mesh(1)
+			return _tree_kit.mesh(slot if slot < 2 else slot - 1)
 		"rock":
 			return _rock_mesh(slot)
 		"ice":
@@ -1627,38 +1718,80 @@ func _icosphere(st: SurfaceTool, origin: Vector3, radius: float, subdiv: int, co
 # candidates arrive in row-major order, so a plain cut would dress the first few
 # rows and leave the rest of the ground empty.
 func _place_props(xforms: Array, variants: PackedByteArray, hit: Vector3, east: Vector3, north: Vector3) -> void:
+	if _props_pending:
+		_props_dirty = true
+		return
+	_props_dirty = false
+	_props_repack_ms = Time.get_ticks_msec()
+	var merged := xforms.duplicate()
+	var merged_variants := variants.duplicate()
+	if _kit == "tree" and _forest_budget > 0:
+		merged.append_array(_forest_xforms)
+		merged_variants.append_array(_forest_variants)
 	var capacity := PROP_MAX + mini(FOREST_MAX, _forest_budget * 2)
 	var kit := _kit
+	var observer := _last_ship_pos
+	_props_observer = observer
 	var result := {}
 	_props_result = result
 	_props_pending = true
 	_props_task = WorkerThreadPool.add_task(func():
-		result["data"] = pack_prop_buffers(xforms, variants, hit, east, north, capacity, kit),
+		result["data"] = pack_prop_buffers(merged, merged_variants, hit, east, north, capacity, kit, observer),
 		false, "surface_prop_buffers")
 
 
 static func pack_prop_buffers(xforms: Array, variants: PackedByteArray, hit: Vector3,
-		east: Vector3, north: Vector3, capacity: int, kit: String) -> Dictionary:
+		east: Vector3, north: Vector3, capacity: int, kit: String, observer: Vector3 = Vector3.INF) -> Dictionary:
 	var buffers: Array = [[], [], []]
+	if kit == "tree":
+		buffers.append_array([[], [], [], []])
+	if observer == Vector3.INF:
+		observer = hit
 	var count := mini(xforms.size(), capacity)
+	var picks := []
+	for i in count:
+		var pick := mini(int(float(i) * float(xforms.size()) / float(count)), xforms.size() - 1)
+		picks.append([xforms[pick].origin.distance_squared_to(observer), pick])
+	if kit == "tree":
+		picks.sort_custom(func(a, b): return a[0] < b[0] if a[0] != b[0] else a[1] < b[1])
+	var full := 0
+	var medium := 0
+	var ordinary := 0
 	var lo := Vector2(INF, INF)
 	var hi := Vector2(-INF, -INF)
 	for i in count:
-		var pick := mini(int(float(i) * float(xforms.size()) / float(count)), xforms.size() - 1)
+		var pick := int(picks[i][1])
 		var xf: Transform3D = xforms[pick]
 		var variant := int(variants[pick]) if pick < variants.size() else 0
 		var slot := mini(variant, PROP_SLOTS - 1)
+		if kit == "tree" and variant >= 2:
+			if ordinary >= PROP_MAX:
+				continue
+			ordinary += 1
+		if kit == "tree" and variant < 2:
+			var size := maxf(xf.basis.y.length(), 1.0)
+			var distance: float = picks[i][0] / (size * size)
+			if distance < SurfaceTreeKit.FULL_REACH * SurfaceTreeKit.FULL_REACH and full < SurfaceTreeKit.FULL_MAX:
+				full += 1
+			elif distance < SurfaceTreeKit.MEDIUM_REACH * SurfaceTreeKit.MEDIUM_REACH and medium < SurfaceTreeKit.MEDIUM_MAX:
+				slot = variant + 3
+				medium += 1
+			else:
+				slot = variant + 5
 		var b := xf.basis
 		# MultiMesh GPU format is three row-major vec4s, followed by optional RGBA.
 		buffers[slot].append_array([b.x.x, b.y.x, b.z.x, xf.origin.x,
 			b.x.y, b.y.y, b.z.y, xf.origin.y, b.x.z, b.y.z, b.z.z, xf.origin.z])
 		if kit == "tree" and slot == 2:
-			buffers[slot].append_array([1.0 if variant >= 3 else 0.0, 0.0, 0.0, 1.0])
+			buffers[slot].append_array([0.0, 0.0, 0.0, 1.0])
 		var off := xf.origin - hit
 		var point := Vector2(off.dot(east), off.dot(north))
 		lo = lo.min(point)
 		hi = hi.max(point)
-	return {"buffers": [PackedFloat32Array(buffers[0]), PackedFloat32Array(buffers[1]), PackedFloat32Array(buffers[2])],
+	var packed := []
+	for buffer in buffers:
+		packed.append(PackedFloat32Array(buffer))
+	return {"buffers": packed,
 		"cover": hi - lo if count else Vector2.ZERO, "pool": xforms.size()}
 
 
@@ -1671,11 +1804,12 @@ func _poll_props() -> void:
 func _publish_props() -> void:
 	var start := Time.get_ticks_usec() if _profile else 0
 	var data: Dictionary = _props_result.data
+	submitted_prop_buffers = data.buffers
 	_props_pending = false
 	_props_result = {}
 	_prop_pool = data.pool
 	_prop_cover = data.cover
-	for slot in PROP_SLOTS:
+	for slot in _prop_nodes.size():
 		var mm := _prop_nodes[slot].multimesh
 		var buffer: PackedFloat32Array = data.buffers[slot]
 		var stride := 16 if mm.use_custom_data else 12
@@ -1719,6 +1853,9 @@ func set_view(sun_dir: Vector3, alt_km: float, atmo_top_km: float) -> void:
 	if _prop_mat != null:
 		_prop_mat.set_shader_parameter("sun_dir", d)
 		_prop_mat.set_shader_parameter("haze_density", density)
+	if _tree_kit != null:
+		_tree_kit.set_parameter("sun_dir", d)
+		_tree_kit.set_parameter("haze_density", density)
 
 
 # What the committed normals look like. Test hook: flat shading gives every
@@ -1803,6 +1940,21 @@ func _prop_visible_count() -> int:
 
 
 func report() -> Dictionary:
+	var prop_triangles := 0
+	var prop_surfaces := 0
+	var lod_counts := []
+	for node in _prop_nodes:
+		var mm := node.multimesh
+		var count := maxi(mm.visible_instance_count, 0)
+		lod_counts.append(count)
+		if count == 0:
+			continue
+		prop_surfaces += mm.mesh.get_surface_count()
+		for surface in mm.mesh.get_surface_count():
+			var arrays := mm.mesh.surface_get_arrays(surface)
+			var indices: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
+			var vertices: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+			prop_triangles += count * (indices.size() if not indices.is_empty() else vertices.size()) / 3
 	return {
 		"body": _body,
 		"kit": _kit,
@@ -1811,6 +1963,7 @@ func report() -> Dictionary:
 		"albedo_source": "map" if _aimg != null else "recipe-colors",
 		"seed": _seed,
 		"props": _prop_visible_count(),
+		"prop_triangles": prop_triangles, "prop_surfaces": prop_surfaces, "prop_lod_counts": lod_counts,
 		"visible": visible,
 		# Geometry actually committed. Zero here means the rings are empty meshes —
 		# which is exactly the state the band sat in before it was ever reachable.

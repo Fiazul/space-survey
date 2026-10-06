@@ -146,3 +146,48 @@ Open decisions for the player, not yet written down anywhere: (a) support jets g
 only (roadmap) vs terrain avoidance also gear-up (code + tests) — recommend updating this
 roadmap to the code; (b) whether a bare-ground touchdown is ever allowed or the 35 m
 gear-down hover stays the rule (current rule: locks only on pads).
+
+## Fleet update (2026-10-05)
+
+Sovereign added as tier 8: 240 m, eight modular weapon mounts, four fusion drives,
+440 HP and 250 energy; unlocks after 16 systems beyond Sol. Hull budget increases
+from 25k to 30k only for this ship. Angular continuous armor, swept black ray inlays, a panoramic bridge and upper/lower
+stepped engine hoods and lower cradles follow the concept and player feedback;
+dense square tiles and raised bumps removed. No armor
+extends behind the nozzle mouths; socket checks enforce exhaust clearance.
+Final polish adds narrow exposed-metal bevels, weighted normals, restrained brushed
+surface maps and lower bridge aprons. Outer housings shortened to approximately 120 m
+with recessed, chamfered ventilators and swept louvers on their front ends.
+The final export uses 18,168 triangles, six material surfaces and approximately 1.05 MiB.
+Extra canards/tail blades and the central underside stern keel are removed; one
+continuous swept wing pair remains.
+Authored metallic/roughness maps now retain their factors through hull recoloring.
+Editable source and concept live in `tools/blender/`; final studio and Godot previews
+are in `docs/reference/sovereign/`. Player judgment of the revised look is still pending.
+
+## Reclaimed Earth and stellar rendering (2026-10-06)
+
+Imported the local mmo-rpg oak/pine kit with full, medium and card detail levels.
+Earth has uneven groves, 80–140 m trees and rare 250–440 m giants, plus vegetation
+between powerless ruins, moss and overgrown streets. TerrainSampler still controls
+all seating and collision. A shared restrained color grade adds vibrance.
+
+Forest jobs run separately from terrain; velocity/worker latency widen coverage at
+speed and stopped flight restores density. Ruins prefetch ahead and both retain
+previous instances until replacement data arrives. Population and geometry caps
+are tested, including 4 km/s scenery and 78.6 km/s terrain streaming.
+
+Stars now use cached visible blackbody/CIE colors and temperature-based surface
+variation instead of the orange plasma override. Surface detail filters away below
+pixel size, hot stars have subdued convection, and optical halos tend toward white.
+The Sun's sixfold exposure boost is removed. A reproduced shared asynchronous-map
+bug that disabled completed textures during staggered loading is fixed and covered
+by a regression. Star destinations and mesh/sky handoffs pass their existing checks.
+Rendered previews are in `docs/reference/reclaimed-earth/` and `stellar-colors/`;
+device GPU frame rate and final player judgment remain unverified.
+
+Actual in-game review also found far-side triangles corrupting distant opaque
+stellar spheres. The common cook shader now culls those faces; its pixel regression
+fails with the old mode and passes for the Sun/Sirius cores with the fix. Space
+background is black. Current nearby destinations remain predominantly warm/white
+because their catalogue includes no O/B stars; hot-star recipes support blue-white.

@@ -94,14 +94,13 @@ void fragment() {
 	// Soft radial support reaches zero before every edge of the quad.
 	float mask = smoothstep(.972, 1.012, r)*(1.0-smoothstep(extent*.72, extent*.98, r));
 	float poles = pow(abs(p.y/max(r,.001)),24.0)*(.7+.3*sin(TIME*3.0+seed));
-	float warmth = clamp((tint.r-tint.b)*5.0+.2, 0.0, 1.0);
-	vec3 halo_color = tint*mix(vec3(1.0), vec3(1.0,.28,.025), warmth);
+	vec3 halo_color = mix(tint,vec3(1.0),.65);
 	if (stellar_mode == 4) {
 		corona *= 1.3+strands*.25;
 		halo_color = mix(tint,vec3(.45,.65,1.0),.45);
 	}
 	float hot_rim = exp(-height*45.0)*(.5+.5*wisps);
-	vec3 loop_color = mix(tint,vec3(1.0,.65,.22),warmth);
+	vec3 loop_color = mix(tint,vec3(1.0),.25);
 	float eruption = 0.0;
 	if (stellar_mode == 0) {
 		vec2 axis = vec2(cos(seed*1.37+.13),sin(seed*1.37+.13));

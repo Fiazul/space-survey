@@ -17,11 +17,17 @@ func _ready() -> void:
 	var planets := PS.new()
 	add_child(planets)
 	var moon := Ephemeris.scene_pos("Moon")
-	var local := Vector3.RIGHT * (1737.4 + 1.0)
+	# One kilometre above the actual terrain, independent of the Moon's current
+	# spin phase. A kilometre above mean radius can be >3 km above a basin.
+	var moon_sampler := planets.terrain_sampler_for("Moon")
+	var local_dir := planets.surface_basis("Moon").inverse() * Vector3.RIGHT
+	var local := Vector3.RIGHT * (moon_sampler.ground_radius_km(local_dir, 1737.4) + 1.0)
 	planets.refresh(moon + local, 0.0)
 	var patch: Node3D = planets.get("_surface")
 	check("moon_ground_centered_on_moon", patch.position.distance_to(planets.rel_of("Moon")) < 0.1)
-	var moved := moon + local.rotated(Vector3.UP, 0.002)
+	var moved_dir := Vector3.RIGHT.rotated(Vector3.UP, 0.002)
+	var moved_local := planets.surface_basis("Moon").inverse() * moved_dir
+	var moved := moon + moved_dir * (moon_sampler.ground_radius_km(moved_local, 1737.4) + 1.0)
 	planets.refresh(moved, 0.5)
 	var anchors: Array = patch.get("_ring_anchor")
 	for anchor in anchors:

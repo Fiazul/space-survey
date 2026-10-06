@@ -1,11 +1,12 @@
 extends SceneTree
-# Checks the six rostered modular hull GLBs from tools/blender/build_ships.py against the socket/material/
+# Checks the seven rostered modular hull GLBs from tools/blender/build_ships.py against the socket/material/
 # orientation contract in docs/specs/2026-09-26-ship-roster-and-modules.md.
 
 const ROSTER := [
 	["kestrel", 2, 4, 2, 3, 4], ["swift", 2, 6, 2, 4, 4],
 	["harrier", 2, 6, 4, 4, 6], ["osprey", 3, 8, 4, 4, 6], ["condor", 4, 8, 6, 6, 8],
 	["albatross", 4, 8, 6, 6, 8],
+	["sovereign", 4, 8, 8, 6, 8],
 ]
 const MATS := ["Hull_Paint", "Hull_Dark", "Hull_Steel", "Glass", "Accent_Emit", "Nozzle_Emit"]
 const TRI_MAX := 25000
@@ -78,7 +79,10 @@ func _init() -> void:
 					if w.z < nose.z:
 						nose = w
 		var length := aabb.size.z
-		check(tris <= TRI_MAX, "%s: %d tris > %d" % [slug, tris, TRI_MAX])
+		var budget := 30000 if slug == "sovereign" else TRI_MAX
+		check(tris <= budget, "%s: %d tris > %d" % [slug, tris, budget])
+		if slug == "sovereign":
+			check(absf(length - 240.0) < 0.1, "sovereign: expected 240 m hull")
 		for m in MATS:
 			check(mats.has(m), "%s: material %s missing" % [slug, m])
 		for m in mats:
@@ -93,6 +97,8 @@ func _init() -> void:
 			if k.begins_with("SOCKET_BOOSTER"):
 				check(p.z > aabb.end.z - 0.15 * length, "%s: %s not under aft hull (z=%.1f)" % [slug, k, p.z])
 				check(st.basis.z.normalized().dot(Vector3.BACK) > 0.99, "%s: %s exhaust not +Z" % [slug, k])
+				if slug == "sovereign":
+					check(p.z >= aabb.end.z - 0.01, "%s: aft armor overlaps exhaust behind %s" % [slug, k])
 			elif k.begins_with("SOCKET_WEAPON"):
 				check(st.basis.z.normalized().dot(Vector3.BACK) > 0.99, "%s: %s not firing -Z" % [slug, k])
 			elif k.begins_with("SOCKET_PAD") or k.begins_with("SOCKET_LANDJET"):

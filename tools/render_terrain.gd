@@ -28,6 +28,17 @@ var _wait := 0
 
 
 func _ready() -> void:
+	get_window().mode = Window.MODE_WINDOWED
+	get_window().size = Vector2i(800, 450)
+	var world := WorldEnvironment.new()
+	var environment := Environment.new()
+	environment.background_mode = Environment.BG_COLOR
+	environment.background_color = Color.BLACK
+	environment.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+	environment.tonemap_exposure = .7
+	EnvironmentLook.apply(environment)
+	world.environment = environment
+	add_child(world)
 	var cq_env := OS.get_environment("CLOUD_QUALITY")
 	if not cq_env.is_empty():
 		GameState.cloud_quality = clampi(int(cq_env), 0, CLOUD_QUALITY_MULT.size() - 1)
@@ -42,6 +53,9 @@ func _ready() -> void:
 	# lat, lon, altitude km, pitch down degrees, label
 	# lat, lon, altitude km, LOOK-AHEAD km, label
 	_shots = [
+		[-3.0, -60.0, .08, .20, "amazon_80m", "Earth", {"sun_elev_deg": 35.0}],
+		[51.51, -0.12, .18, .6, "london_reclaimed", "Earth", {"sun_elev_deg": 35.0}],
+		[23.81, 90.41, .18, .6, "dhaka_reclaimed", "Earth", {"sun_elev_deg": 35.0}],
 		[28.608402, -80.604201, .3, 0.0, "kennedy_overview", "Earth", {"facility_view": Vector3(.48,.34,.54)}],
 		[28.608402, -80.604201, .1, 0.0, "kennedy_landing", "Earth", {"facility_view": Vector3(.075,.045,.105)}],
 		[51.51, -0.12, 0.4, 1.4, "london_ruins", "Earth"],
@@ -176,6 +190,10 @@ func _process(_dt: float) -> void:
 	if _wait > 6:
 		var img := get_viewport().get_texture().get_image()
 		var path: String = OUT % str(_shots[_i][4])
+		var shot_dir := OS.get_environment("SHOT_DIR")
+		if not shot_dir.is_empty():
+			DirAccess.make_dir_recursive_absolute(shot_dir)
+			path = shot_dir.path_join("terrain_%s.png" % str(_shots[_i][4]))
 		img.save_png(path)
 		print("render_terrain: %s -> %s" % [str(_shots[_i][4]), ProjectSettings.globalize_path(path)])
 		_i += 1
@@ -224,6 +242,7 @@ func _setup(shot: Array) -> void:
 	var ship: Vector3 = dir * (s.ground_radius_km(dir, radius) + alt)
 	patch.update_for(ship, body, radius, alt, 0.02, ceiling, earth, s)
 	patch.force_ready()
+	print("render_terrain: props ", patch.report().props, " triangles ", patch.report().prop_triangles, " levels ", patch.report().prop_lod_counts)
 	# Floating origin, exactly as PlanetSystem does it.
 	patch.position = -ship
 	# Default sun elevation (~28.7 deg, the fixed 0.48/0.88 mix) reads fine for

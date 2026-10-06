@@ -11,7 +11,7 @@ class FlatWorld extends TerrainSampler:
 var failures := 0
 
 func _ready() -> void:
-	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
+	for unlock in GameState.SHIP_UNLOCK[-1]: GameState.visited["test_system_%d" % unlock] = true
 	var ship := Ship.new()
 	add_child(ship)
 	var flat := FlatWorld.new({})

@@ -84,7 +84,9 @@ const RECIPES := {
 		"evidence": "Solar System Scope / NASA Blue Marble",
 		"cloud_amount": 1.0,
 		"city_amount": 0.0,
-		"surface": {"settlement_preset": "earth_graveyard", "facility_preset": "earth_spaceports"},
+		"surface": {"settlement_preset": "earth_graveyard", "facility_preset": "earth_spaceports",
+			"tree_height_m": 110.0, "tree_spacing_m": 90.0, "giant_tree_fraction": .018,
+			"grove_clearings": .8, "reclaimed_settlements": true, "reclamation": .85},
 		"water_shine": 0.85,
 		"ice_amount": 0.1,
 		"air_amount": 1.0,
@@ -700,12 +702,15 @@ static func ensure_close_maps(mat: Material, recipe: Dictionary, async: bool = t
 	# Array instead — Arrays are reference types, so `poll_box[0]` written AFTER capture
 	# is still visible inside the closure that captured `poll_box`.
 	var poll_box: Array[Callable] = [Callable()]
+	# Reassigning a captured Array resets on the next call; keep progress in a mutable box.
+	var load_state := {"pending": pending}
 	poll_box[0] = func() -> void:
 		if not is_instance_valid(sm):
 			loop.process_frame.disconnect(poll_box[0])
+			poll_box[0] = Callable()
 			return
 		var still: Array[String] = []
-		for key in pending:
+		for key in load_state.pending:
 			var path := globe_height_path(recipe) if key == "height" else str(recipe.get(key, ""))
 			var status := ResourceLoader.load_threaded_get_status(path)
 			if status == ResourceLoader.THREAD_LOAD_LOADED:
@@ -720,9 +725,10 @@ static func ensure_close_maps(mat: Material, recipe: Dictionary, async: bool = t
 				still.append(key)
 			else:
 				sm.set_shader_parameter(_flag_for(key), 0.0)
-		pending = still
-		if pending.is_empty():
+		load_state.pending = still
+		if still.is_empty():
 			loop.process_frame.disconnect(poll_box[0])
+			poll_box[0] = Callable()
 	loop.process_frame.connect(poll_box[0])
 
 
@@ -1022,6 +1028,8 @@ static func _cook_material(recipe: Dictionary, spec: Dictionary, close: bool) ->
 	if recipe.has("stellar"):
 		var stellar: Dictionary = recipe.stellar
 		for key in ["mode", "cells", "spots", "activity", "brightness", "limb_floor", "detail_contrast", "temperature_k"]:
+			mat.set_shader_parameter("stellar_"+key, stellar[key])
+		for key in ["cool_color", "hot_color"]:
 			mat.set_shader_parameter("stellar_"+key, stellar[key])
 	mat.set_shader_parameter("granulation", surface.granulation)
 	mat.set_shader_parameter("storm_strength", surface.storm_strength)

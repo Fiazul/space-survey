@@ -30,6 +30,11 @@ The **3D ship & prop models** are free assets, sourced mainly from:
 - Model and textures by **Herminio Nieves** ([CGTrader designer page](https://www.cgtrader.com/designers/herminio?utm_source=credit&utm_source=credit_item_page)).
 - The included author readme permits commercial and non-commercial use with appropriate credit.
 
+**Sovereign** (`assets/ships/sovereign/sovereign.glb`):
+
+- Original procedural Blender model authored for Astryx (`tools/blender/sovereign.py`).
+- Concept generated with OpenAI's built-in image generation tool; reference and prompt in `tools/blender/concepts/sovereign-*`.
+
 **Snarkrans Starship** (`assets/snarkrans_starship/*`):
 
 - Model by **Denis Polyakov / Snarkrans** ([CGTrader designer page](https://www.cgtrader.com/designers/snarkrans?utm_source=credit&utm_source=credit_item_page)).
@@ -84,3 +89,8 @@ image (dark shadow + fuzzy orange photon ring + Doppler-bright side). No model a
 > down where each one came from. I'll go back, track down the originals, and fill in
 > proper per-model creator + license credits here later. If you made one of these and
 > want specific attribution (or a takedown), open an issue and I'll sort it.
+## Reclaimed forest kit
+
+Oak and pine models, foliage atlases and detail levels from the locally authored
+mmo-rpg nature_vale kit. Bark textures derive from Poly Haven's
+[bark_willow_02](https://polyhaven.com/a/bark_willow_02), licensed CC0.

@@ -5,7 +5,7 @@ extends RefCounted
 const SOLAR_RADIUS_KM := 695700.0
 const SIGMA := 5.670374419e-8
 # Sun HDR brightness control; the shader compresses photosphere exposure.
-const SUN_BRIGHTNESS_MULTIPLIER := 6
+const SUN_BRIGHTNESS_MULTIPLIER := 1
 # Representative dwarf anchors: Teff K, radius / Sun, mass / Sun.
 const DWARFS := {
 	"O": [44000.0, 13.0, 58.0], "B": [31000.0, 7.2, 17.7],
@@ -15,6 +15,7 @@ const DWARFS := {
 	"T": [1300.0, .10, .04], "Y": [450.0, .10, .02],
 }
 const SEQUENCE := "OBAFGKMLTY"
+static var _color_cache: Dictionary = {}
 # Late M dwarfs shrink steeply; one linear M→L span greatly oversizes Proxima.
 const M_ANCHORS := [[0.0,3850.0,.59,.57], [5.0,3060.0,.196,.162],
 	[5.5,2930.0,.156,.123], [8.0,2570.0,.114,.085], [10.0,2300.0,.10,.07]]
@@ -56,7 +57,7 @@ static func resolve(spec: Dictionary) -> Dictionary:
 				break
 	var mode := 0 # photosphere, brown bands, white dwarf, neutron remnant, stellar wind
 	var activity := .3
-	var cells := 95.0
+	var cells := 350.0
 	var spots := .15
 	match family:
 		"subdwarf": radius *= .75
@@ -80,7 +81,7 @@ static func resolve(spec: Dictionary) -> Dictionary:
 			if not spec.has("spectral"): sp = "REMNANT"
 	if letter == "M" and family in ["main_sequence", "subdwarf"]:
 		activity = .75; spots = .35
-	if letter in ["O", "B", "A"]: spots = .02; cells = 140.0
+	if letter in ["O", "B", "A"]: spots = .02
 	var solar := name in ["Sun", "Sol"]
 	if solar:
 		temperature = 5772.0; radius = 1.0; mass = 1.0
@@ -88,12 +89,17 @@ static func resolve(spec: Dictionary) -> Dictionary:
 	radius = _positive(overrides.get("radius_solar", radius), radius)
 	mass = _positive(overrides.get("mass_solar", mass), mass)
 	activity = clampf(float(overrides.get("activity", activity)), 0, 1)
+	var radiative := smoothstep(7000.0, 10000.0, temperature)
+	if mode == 0 and family not in ["giant", "bright_giant", "supergiant", "carbon_star"]:
+		cells = clampf(350.0 * pow(radius, .35), 175.0, 1200.0)
+		spots *= 1.0 - radiative * .9
+		activity *= 1.0 - radiative * .75
 	var color := color_at(temperature)
 	# Authored HDR display response, independent of the physical flux/hazard model.
 	# The extended glow represents camera glare as well as the much fainter corona.
 	var brightness := clampf(7.0*pow(temperature/5772.0, .65), 2.5, 14.0)
 	if mode == 0:
-		brightness = clampf(.82*pow(temperature/5772.0, .25), .65, 1.3)
+		brightness = clampf(2.2*pow(temperature/5772.0, .20), 1.8, 3.2)
 	if mode == 1:
 		brightness = clampf(pow(temperature/5772.0, 1.2), .015, 1.4)
 	if solar:
@@ -105,7 +111,8 @@ static func resolve(spec: Dictionary) -> Dictionary:
 		"activity": activity, "mode": mode, "cells": cells, "spots": spots,
 		"brightness": brightness,
 		"limb_floor": .35 if mode == 1 else (.48 if mode == 0 else .72),
-		"detail_contrast": .55 if mode == 0 else .20,
+		"detail_contrast": lerpf(.32, .025, radiative) if mode == 0 else .20,
+		"cool_color": color_at(temperature * .94), "hot_color": color_at(temperature * 1.06),
 		"corona_strength": brightness*(.11+activity*.32) if mode == 0 else
 			(brightness*.025 if mode == 1 else (.075 if mode == 2 else (.22 if mode == 3 else .6))),
 		"corona_extent": 2.8,
@@ -135,14 +142,33 @@ static func _positive(value: Variant, fallback: float) -> float:
 	return n if is_finite(n) and n > 0 else fallback
 
 static func color_at(temperature: float) -> Color:
-	# Display palette; not a photometric colour/false claim of blackbody integration.
-	var knots := [800.0, 2300.0, 3800.0, 5772.0, 9700.0, 30000.0]
-	var colors := [Color(.32,.055,.015), Color(1,.38,.14), Color(1,.66,.40),
-		Color(1,.95,.86), Color(.82,.88,1), Color(.56,.71,1)]
-	for i in range(1,knots.size()):
-		if temperature < knots[i]:
-			return colors[i-1].lerp(colors[i], clampf((temperature-knots[i-1])/(knots[i]-knots[i-1]),0,1))
-	return colors[-1]
+	var kelvin := int(round(clampf(temperature if is_finite(temperature) else 5772.0, 500.0, 1000000.0)))
+	if _color_cache.has(kelvin):
+		return _color_cache[kelvin]
+	var xyz := Vector3.ZERO
+	var reference := exp(14387769.0 / (550.0 * kelvin)) - 1.0
+	for wavelength in range(380, 781, 5):
+		var power := pow(550.0 / wavelength, 5.0) * reference / (exp(14387769.0 / (wavelength * kelvin)) - 1.0)
+		xyz += _cie_xyz(wavelength) * power
+	var rgb := Vector3(
+		3.2404542 * xyz.x - 1.5371385 * xyz.y - .4985314 * xyz.z,
+		-.9692660 * xyz.x + 1.8760108 * xyz.y + .0415560 * xyz.z,
+		.0556434 * xyz.x - .2040259 * xyz.y + 1.0572252 * xyz.z).max(Vector3.ZERO)
+	rgb /= maxf(rgb.x, maxf(rgb.y, rgb.z))
+	var color := Color(rgb.x, rgb.y, rgb.z).linear_to_srgb()
+	_color_cache[kelvin] = color
+	return color
+
+# Wyman et al. (2013), CIE 1931 multi-lobe fit: https://cwyman.org/papers/jcgt13_xyzApprox.pdf
+static func _cie_xyz(wavelength: float) -> Vector3:
+	return Vector3(
+		.362 * _cie_lobe(wavelength, 442.0, .0624, .0374) + 1.056 * _cie_lobe(wavelength, 599.8, .0264, .0323) - .065 * _cie_lobe(wavelength, 501.1, .0490, .0382),
+		.821 * _cie_lobe(wavelength, 568.8, .0213, .0247) + .286 * _cie_lobe(wavelength, 530.9, .0613, .0322),
+		1.217 * _cie_lobe(wavelength, 437.0, .0845, .0278) + .681 * _cie_lobe(wavelength, 459.0, .0385, .0725))
+
+static func _cie_lobe(wavelength: float, center: float, left: float, right: float) -> float:
+	var t := (wavelength - center) * (left if wavelength < center else right)
+	return exp(-.5 * t * t)
 
 static func scene_radius(recipe: Dictionary) -> float:
 	# Legacy non-Sol arenas use compressed distances. Never insert km into those layouts.

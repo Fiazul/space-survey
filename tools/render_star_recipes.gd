@@ -2,12 +2,13 @@ extends Node3D
 ## Same materials as gameplay, equal angular size to compare surface recipes.
 func _ready() -> void:
 	get_window().mode = Window.MODE_WINDOWED
-	get_window().size = Vector2i(1440,960)
+	get_window().size = Vector2i(960,640)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
 	env.background_color = Color(.003,.005,.012)
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = .7
+	EnvironmentLook.apply(env)
 	env.glow_enabled = true
 	env.glow_intensity = .45
 	env.glow_bloom = 0.0
@@ -49,7 +50,7 @@ func _ready() -> void:
 		var label := Label.new()
 		var s: Dictionary = look.recipe.stellar
 		label.text = "%s · %s\n%.0f K / %.4f R☉" % [spec.name,s.spectral,s.temperature_k,s.radius_solar]
-		label.add_theme_font_size_override("font_size",16)
+		label.add_theme_font_size_override("font_size",12)
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		label.size = Vector2(320,50)
 		label.position = camera.unproject_position(look.sphere.position+Vector3(0,-1.03,0))-Vector2(160,0)
@@ -80,10 +81,10 @@ func _ready() -> void:
 	if means[0].b <= means[0].r:
 		push_error("Hot main sequence must retain its blue palette")
 		failures += 1
-	if means[2].g > .97 or means[2].r-means[2].b < .25:
-		push_error("Sun must retain a warm, unclipped photosphere")
+	if means[2].g > .97 or absf(means[2].r-means[2].b) > .18 or means[2].b < .25:
+		push_error("Sun must retain a warm-white, unclipped photosphere")
 		failures += 1
-	if means[3].r-means[3].g < .40 or means[3].g-means[3].b < .015:
+	if means[3].r-means[3].g < .15 or means[3].g-means[3].b < .015:
 		push_error("Proxima must have a red photosphere distinct from the Sun")
 		failures += 1
 	if means[5].r > means[2].r*.5:

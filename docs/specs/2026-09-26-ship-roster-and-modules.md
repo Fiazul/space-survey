@@ -1,7 +1,7 @@
 # Ship roster + replaceable modules (2026-09-26)
 
-The Class II Galactic Cruiser occupies tier 1; six procedurally authored modular hulls
-occupy tiers 2–7. The modular hulls, weapons and landing pads are separate GLBs joined by
+The Class II Galactic Cruiser occupies tier 1; seven procedurally authored modular hulls
+occupy tiers 2–8. The modular hulls, weapons and landing pads are separate GLBs joined by
 NAMED SOCKETS, so weapons and pads are swappable upgrades.
 
 ## Roster (tier 1 → 7, unlocked in order)
@@ -15,6 +15,7 @@ NAMED SOCKETS, so weapons and pads are swappable upgrades.
 | 5 | Osprey | Corvette | 120 | 3 | 8 | 4 | 4 |
 | 6 | Condor | Strike cruiser | 150 | 4 | 8 | 6 | 6 |
 | 7 | Albatross | Flagship | 200 | 4 | 8 | 6 | 6 |
+| 8 | Sovereign | Endgame flagship (added 2026-10-05) | 240 | 4 | 8 | 8 | 6 |
 
 The cruiser uses its authored OBJ propulsion and no modular sockets. Wren remains on disk
 as an unrostered GLB.
@@ -24,7 +25,7 @@ as an unrostered GLB.
 - Nose points **-Z**, up is **+Y**, right is **+X**. Origin at hull centre of mass.
   Blender authors model nose along Blender **+Y** (glTF export maps Blender +Y → Godot -Z; verified 2026-09-26: empty at Blender (0,1,0) lands at Godot (0,0,-1)).
 - 1 Blender unit = 1 m. `Ship.fit_model` rescales at runtime; proportions are what matter.
-- Triangle budget: hull ≤ 25k tris, module ≤ 3k tris (Android).
+- Triangle budget: hull ≤ 25k tris, module ≤ 3k tris (Android). Sovereign alone allows 30k hull tris.
 
 ## Sockets (glTF empties, imported as `Node3D`, names exact)
 
@@ -63,7 +64,7 @@ hull length (`length_km * factor`), never per-hull.
 
 ## Runtime (integration slice, follows the asset slices)
 
-- `SHIP_MODELS` lists the cruiser first, followed by six `"modular": true` hulls in tier order.
+- `SHIP_MODELS` lists the cruiser first, followed by seven `"modular": true` hulls in tier order.
 - The cruiser retains its authored material and propulsion path; modular hulls use the
   socket-driven styler to collect sockets, attach modules, and wire plume rigs.
 - Unlock: tier `t` unlocks when `GameState` progression reaches `SHIP_UNLOCK[t]`
@@ -72,7 +73,7 @@ hull length (`length_km * factor`), never per-hull.
 
 ### Runtime as built (2026-09-26)
 
-- Unlock thresholds: `GameState.SHIP_UNLOCK = [0, 1, 2, 4, 6, 9, 12]`, counted as distinct systems in
+- Unlock thresholds: `GameState.SHIP_UNLOCK = [0, 1, 2, 4, 6, 9, 12, 16]`, counted as distinct systems in
   `GameState.visited` excluding Sol (Sol is always visited, so counting it would unlock tier 2 at boot).
   `Ship.swap_ship` refuses locked tiers; the hangar row shows "Locked: reach N systems".
 - Module set keys: `GameState.weapon_set` / `GameState.pad_set`, each `"mk1"` (default) or `"mk2"`,

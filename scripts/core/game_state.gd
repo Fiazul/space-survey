@@ -27,7 +27,7 @@ var pad_set := "mk1"
 var cloud_quality := 1
 
 # Ship tier t (1-based) unlocks once this many distinct systems beyond Sol are reached.
-const SHIP_UNLOCK := [0, 1, 2, 4, 6, 9, 12]
+const SHIP_UNLOCK := [0, 1, 2, 4, 6, 9, 12, 16]
 
 func profile_path() -> String:
 	return ProfileDir.path("profile.cfg")

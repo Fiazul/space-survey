@@ -40,6 +40,7 @@ static func resolve(recipe: Dictionary) -> Array:
 			"radius": clampf(float(item.get("radius_km", 3)), 0.3, 12.0),
 			"density": clampf(float(item.get("density", 0.78)), 0.0, 1.0),
 			"seed": int(item.get("seed", 1)),
+			"reclaimed": bool(config.get("reclaimed_settlements", false)),
 			"materials": item.get("materials", recipe.get("materials", {}).get("salvage", [])).duplicate()})
 	return result
 
@@ -48,6 +49,36 @@ static func occupied(regions: Array, dir: Vector3, radius: float) -> bool:
 		if dir.distance_squared_to(region.dir) * radius * radius < pow(float(region.radius), 2):
 			return true
 	return false
+
+static func vegetation_occupied(sampler, dir: Vector3, radius: float) -> bool:
+	for region in sampler.settlements:
+		if dir.distance_squared_to(region.dir) * radius * radius >= pow(float(region.radius), 2):
+			continue
+		if not region.get("reclaimed", false):
+			return true
+		var local: Vector3 = region.basis.transposed() * (dir * radius - region.dir * radius)
+		var x := int(floor(local.x / STEP))
+		var z := int(floor(local.z / STEP))
+		var h := SurfaceForest.cell_hash(x, z, 0, float(region.seed))
+		if h > float(region.density) or posmod(x, 9) == 0 or posmod(z, 11) == 0:
+			continue
+		var h2 := SurfaceForest.cell_hash(x, z, 1, float(region.seed))
+		var offset := Vector2(local.x - (x + .5) * STEP, local.z - (z + .5) * STEP)
+		offset = offset.rotated(float(int(h2 * 4)) * PI * .5) / (.85 + h2 * .3)
+		var variant := 0 if h2 > .68 else (1 if h2 > .37 else 2)
+		for part in parts(variant):
+			var footprint := Rect2(Vector2(part.position.x, part.position.z), Vector2(part.size.x, part.size.z)).grow(.012)
+			if footprint.has_point(offset):
+				return true
+	return false
+
+static func reclamation_at(regions: Array, dir: Vector3, radius: float) -> float:
+	for region in regions:
+		if region.get("reclaimed", false):
+			var distance := dir.distance_to(region.dir) * radius
+			if distance < float(region.radius):
+				return 1.0 - smoothstep(float(region.radius) - .3, float(region.radius), distance)
+	return 0.0
 
 # Boxes are in km, with bottom below the plot to embed foundations. Missing
 # floors/walls are real gaps, not transparent textures on solid cube colliders.

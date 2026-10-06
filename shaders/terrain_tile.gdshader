@@ -66,6 +66,7 @@ uniform vec3 district_center = vec3(0.0);
 uniform vec3 district_east = vec3(1.0, 0.0, 0.0);
 uniform vec3 district_north = vec3(0.0, 0.0, 1.0);
 uniform float district_radius = 0.0;
+uniform float reclamation = 0.0;
 // Per-ring fade for streamed commits. Default 1 so a cold bind matches the
 // pre-stream look; only a freshly swapped ring ever writes a value below 1.
 instance uniform float stream_fade : hint_range(0.0, 1.0) = 1.0;
@@ -301,6 +302,10 @@ void fragment() {
 		vec3 worn = mix(vec3(0.095, 0.09, 0.072), vec3(0.18, 0.16, 0.13), wear);
 		alb = mix(alb, worn, district * slab * 0.7);
 		alb = mix(alb, vec3(0.043, 0.045, 0.042) * (0.8 + wear * 0.4), district * street * (0.45 + wear * 0.42));
+		float roots = .5 + .5 * sin(city.x * 420.0 + sin(city.y * 180.0) * 2.8);
+		float encroach = smoothstep(.3, .78, wear) * (.4 + .6 * roots);
+		vec3 regrowth = mix(vec3(.035, .085, .016), vec3(.085, .17, .03), wear);
+		alb = mix(alb, regrowth, district * reclamation * (.32 + .58 * encroach));
 	}
 	vec3 p = v_surface + vec3(surface_seed);
 	float exposed = rock_amount * (1.0 - wet) * (1.0 - ice_surface) * (1.0 - ice_mask) * (1.0 - snow);

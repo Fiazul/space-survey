@@ -4,11 +4,11 @@ extends SceneTree
 # white, gain-scaled propulsion pass with one shaping socket per booster.
 
 const TEST_TINT := Color(0.10, 0.66, 0.66)
-const HULLS := {"kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4}
+const HULLS := {"kestrel": 2, "swift": 2, "harrier": 2, "osprey": 3, "condor": 4, "albatross": 4, "sovereign": 4}
 
 
 func _initialize() -> void:
-	var failed := 0
+	var failed := _check_authored_finish()
 	for slug in HULLS:
 		var scene := load("res://assets/ships/%s/%s.glb" % [slug, slug]) as PackedScene
 		failed += _check("%s_imported" % slug, scene != null)
@@ -59,10 +59,10 @@ func _initialize() -> void:
 	var hud_source := FileAccess.get_file_as_string("res://scripts/ui/hud.gd")
 	var state_source := FileAccess.get_file_as_string("res://scripts/core/game_state.gd")
 	failed += _check("whole_roster_is_colorable",
-		ship_source.count("\"color_pick\": true") == 7 \
+		ship_source.count("\"color_pick\": true") == 8 \
 		and ship_source.count("\"color_pick\": false") == 0)
 	failed += _check("whole_roster_offers_finish",
-		ship_source.count("\"finish_pick\": true") == 7 \
+		ship_source.count("\"finish_pick\": true") == 8 \
 		and ship_source.contains("func current_has_finish_pick()") \
 		and hud_source.contains("var has_finish: bool"))
 	failed += _check("saved_customization_api", ship_source.contains("func customization_state()") \
@@ -116,6 +116,40 @@ func _initialize() -> void:
 
 func _rgb_equal(a: Color, b: Color) -> bool:
 	return is_equal_approx(a.r, b.r) and is_equal_approx(a.g, b.g) and is_equal_approx(a.b, b.b)
+
+
+func _check_authored_finish() -> int:
+	var source := StandardMaterial3D.new()
+	source.resource_name = "Hull_Paint"
+	source.roughness = 0.8
+	source.metallic = 0.9
+	var texture := ImageTexture.create_from_image(Image.create(8, 8, false, Image.FORMAT_RGB8))
+	source.roughness_texture = texture
+	source.metallic_texture = texture
+	source.normal_enabled = true
+	source.normal_texture = texture
+	var mesh := BoxMesh.new()
+	mesh.material = source
+	var instance := MeshInstance3D.new()
+	instance.mesh = mesh
+	var model := Node3D.new()
+	model.add_child(instance)
+	ModularHull.style(model, TEST_TINT, "metallic")
+	var active := instance.get_surface_override_material(0) as StandardMaterial3D
+	var failed := _check("textured_finish_preserves_authored_factors",
+		is_equal_approx(active.roughness, 0.8) and is_equal_approx(active.metallic, 0.9))
+	failed += _check("recolor_preserves_surface_maps", active.normal_enabled \
+		and active.normal_texture == texture and active.roughness_texture == texture \
+		and active.metallic_texture == texture and _rgb_equal(active.albedo_color, TEST_TINT))
+	failed += _check("recolor_leaves_source_intact", source.albedo_color != TEST_TINT \
+		and is_equal_approx(source.roughness, 0.8) and is_equal_approx(source.metallic, 0.9))
+	ModularHull.style(model, TEST_TINT, "glassy")
+	active = instance.get_surface_override_material(0) as StandardMaterial3D
+	failed += _check("textured_finish_still_offers_lacquer", active.clearcoat_enabled \
+		and active.roughness < 0.1 and active.metallic < 0.1 \
+		and active.transparency == BaseMaterial3D.TRANSPARENCY_DISABLED)
+	model.free()
+	return failed
 
 
 func _check(label: String, condition: bool) -> int:

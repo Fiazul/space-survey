@@ -1,0 +1,35 @@
+{
+	"approach": {
+		"clipped_fraction": 0.0,
+		"local_detail": 0.00183391081573592,
+		"mean": 0.850884164142381,
+		"peak": 1.0,
+		"range_90_10": 0.028284704196453,
+		"samples": 829,
+		"warm_color": 0.0498781871450537
+	},
+	"close": {
+		"clipped_fraction": 0.0,
+		"local_detail": 0.00242010000824989,
+		"mean": 0.850521103476229,
+		"peak": 1.0,
+		"range_90_10": 0.0383976447701453,
+		"samples": 6866,
+		"warm_color": 0.0505086129030472
+	},
+	"far": {
+		"peak": 1.0
+	},
+	"grazing": {
+		"peak": 0.920447063565254
+	},
+	"limb": {
+		"peak": 0.978421177756786
+	},
+	"photosphere": {
+		"peak": 0.875307458412647
+	},
+	"polar_limb": {
+		"peak": 0.91260392677784
+	}
+}

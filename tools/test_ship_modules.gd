@@ -7,13 +7,13 @@ var failures := 0
 
 func _ready() -> void:
 	var saved := [GameState.visited.duplicate(), GameState.weapon_set, GameState.pad_set]
-	for i in 12:
+	for i in 16:
 		GameState.visited["test_system_%d" % i] = true
 	GameState.weapon_set = "mk1"
 	GameState.pad_set = "mk1"
 	var ship := Ship.new()
 	add_child(ship)
-	for index in [1, 3, 6]:
+	for index in [1, 3, 6, 7]:
 		ship.swap_ship(index)
 		ship.set_weapon_set("mk1")
 		ship.set_pad_set("mk1")

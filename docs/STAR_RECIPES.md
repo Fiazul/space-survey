@@ -41,18 +41,44 @@ mining, atmosphere gathering or landing surface. Crafting extraction is not impl
 
 Main-sequence photospheres combine filtered fine granulation with broader convection,
 sparse spots and bright magnetic regions; giants emphasize broader convection.
-Cool red dwarfs have a red display palette and stronger clustered prominence loops.
+Cool red dwarfs have warmer amber/red colors and stronger clustered prominence loops.
 Brown dwarfs have dim banded surfaces, white dwarfs smooth compact surfaces,
 Wolf–Rayet stars blue turbulent wind envelopes, and neutron remnants hot polar
 regions and narrow polar glare. A single billboard quad adds a soft corona and
 localized prominence filaments; brown dwarfs and compact remnants omit solar loops.
 Surface exposure is compressed separately from halo strength to preserve resolved
-texture even with the Sun brightness multiplier. Spectral temperature guides the
-authored display palette. Star meshes are 96×48 spheres,
+texture. The Sun uses the same exposure response as other photospheres; its previous
+sixfold boost is removed. Effective temperature selects a visible blackbody continuum,
+integrated from 380–780 nm at 5 nm intervals through the CIE 1931 observer and converted
+from XYZ to linear sRGB, normalized by peak channel, then encoded for Godot's
+`source_color` uniforms. Cached colors are shared across recipes.
+The solar photosphere is warm white, A/F stars white, O/B stars blue-white, and K/M
+stars increasingly warm. Local surface temperature colors span ±6%; the shader no
+longer replaces G/K/M colors with orange plasma. Optical corona tint tends toward
+white instead of applying an orange multiplier. Star meshes are 96×48 spheres,
 with no particle populations, CPU-generated textures or per-frame texture loads.
 Existing dot/mesh/Sun-sky LOD remains active. Display exposure is intentionally
 compressed to retain detail; these are not photometric observations. Cool brown
 dwarfs retain a faint visible representation for playability.
+
+Solar granule spacing is approximately `R_sun / (2 × cells)` = 994 km at 350 cells.
+Derivative filtering suppresses unresolved fine detail and skips its expensive
+noise evaluations. Hot radiative-envelope stars have reduced convection contrast,
+while giant presets retain broad cells. Magnetic regions gate smaller spot groups;
+their activity and coverage are display estimates, not observations of these stars.
+Stars skip terrain height sampling in the shared vertex shader.
+
+Opaque cook spheres cull far-side faces. At large scene distances, drawing both
+hemispheres produced depth conflicts and large triangular patches in compatibility
+rendering. In-game disc checks reproduce this with `STAR_DOUBLE_SIDED=1` and pass
+with the production draw mode. `STAR_TELEPORT_SYSTEMS=sol,sirius` restricts that
+capture to the two regression cases. Main space background is black; atmospheric
+color still comes from the air shell around the observer.
+
+The current travel catalogue mostly contains nearby M/K dwarfs, with G/F/A stars,
+brown dwarfs and white dwarfs; it has no O/B destinations. Its warm/white balance
+therefore persists despite the corrected renderer. The gallery includes O/B recipe
+examples to verify blue-white support, without changing real catalogue metadata.
 
 ## Scale and hazards
 
@@ -88,7 +114,10 @@ the roadmap's equipment and environment mechanics.
 Representative dwarf anchors are rounded from the
 [Pecaut–Mamajek stellar sequence](https://www.pas.rochester.edu/~emamajek/EEM_dwarf_UBVIJHK_colors_Teff.txt),
 with extra late-M anchors to avoid oversizing nearby red dwarfs. Interpolation,
-giant/remnant defaults, activity and display colours are our approximations.
+giant/remnant defaults and activity are our approximations. Visible continuum colors
+use the [Wyman, Sloan and Shirley CIE fit](https://cwyman.org/papers/jcgt13_xyzApprox.pdf).
+Blackbody colors omit absorption lines, composition-dependent spectra, reddening and
+instrument response; normalizing color does not set physical luminosity.
 Family distinctions follow [NASA's stellar overview](https://science.nasa.gov/universe/stars/types/).
 Brown-dwarf visibility is deliberately enhanced; their energy is predominantly
 infrared, as explained by [NASA Webb](https://science.nasa.gov/mission/webb/science-overview/science-explainers/what-makes-brown-dwarfs-unique/).
@@ -109,3 +138,9 @@ Ctrl+P jump path, including selected renderer, arrival state and saved position.
 `tools/render_star_teleport.tscn` drives Ctrl+P and the picker buttons in the real
 game, then captures Sol, Proxima, Wolf 359, Sirius, Luhman 16 and Gliese 440 in
 `/tmp/star-teleport`; `STAR_TELEPORT_SHOTS` changes the output directory.
+
+## Red dwarf colour and K2-18
+
+K2-18 b is the planet; K2-18 is its M2.5V host star. The current spectral interpolation gives the host an estimated temperature of 3,455 K, close to the 3,457 ± 39 K solution in the [NASA Exoplanet Archive](https://exoplanetarchive.ipac.caltech.edu/overview/K2-18). This is a spectral estimate, not a per-object measured override.
+
+Orange visible colour is consistent with the classification: [NASA's star types guide](https://science.nasa.gov/universe/stars/types/) explains that red dwarfs appear more orange than red. The renderer approximates a blackbody continuum through a standard observer and display colour space. It does not calculate full stellar atmosphere absorption spectra or human visual adaptation. Surface patterns, spots, activity and glare are procedural estimates, not observations of K2-18's surface.

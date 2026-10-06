@@ -1595,7 +1595,7 @@ func _setup_environment() -> void:
 
 	# Clean black space (no sky gradient — the Sun key light defines form now).
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.01, 0.01, 0.03)
+	env.background_color = Color.BLACK
 
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	env.ambient_light_color = Color(0.22, 0.25, 0.34)
@@ -1641,6 +1641,7 @@ func _setup_environment() -> void:
 
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.7   # global -30% brightness (keeps colour + specular)
+	EnvironmentLook.apply(env)
 
 	var we := WorldEnvironment.new()
 	we.environment = env

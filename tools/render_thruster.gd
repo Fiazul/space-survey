@@ -18,6 +18,7 @@ const SHIPS := [
 	{ "label": "osprey", "swatch": Color(0.42, 0.60, 0.95) },
 	{ "label": "condor", "swatch": Color(0.06, 0.52, 0.26) },
 	{ "label": "albatross", "swatch": Color(0.83, 0.69, 0.42) },
+	{ "label": "sovereign", "swatch": Color(0.75, 0.75, 0.78) },
 ]
 
 # power, surge - the two values Ship._update_authored_propulsion feeds the shaders.
@@ -149,6 +150,7 @@ func _build_environment() -> void:
 		% [_glow, _glow_threshold, _glow_intensity, _glow_strength, _glow_bloom])
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.tonemap_exposure = 0.7
+	EnvironmentLook.apply(env)
 	if _detail:
 		# Show the HDR content instead of the clipped result: no glow, linear tonemap,
 		# exposure far down. This is a diagnostic view, not what the game looks like.
@@ -372,6 +374,11 @@ func _build_ship(ship: Dictionary):
 			chase, chase * (Vector3(0.0, _cam_up, _cam_back) * hull_len * _envf("CAM_ZOOM", 1.0)))
 		print("render: VIEW=chase fov=%.1f back=%.2f up=%.2f pitch=%.1f"
 			% [_cam_fov, _cam_back, _cam_up, _cam_pitch])
+	elif _view == "front":
+		var hull_center := hull_box.get_center()
+		_camera.position = hull_center + Vector3(-0.85, 0.60, -0.95).normalized() \
+			* hull_box.size.length() * _envf("FRAME_SCALE", 0.70)
+		_camera.look_at(hull_center, Vector3.UP)
 	elif _detail:
 		# Frame the exhaust column itself, not the ship: push aft of the hull and
 		# close in, so one plume spans the frame.

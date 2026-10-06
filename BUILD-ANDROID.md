@@ -95,3 +95,18 @@ godot --headless --export-debug "Android" builds/android/Astryx.apk
 The flight screen has a visible **TELEPORT** button beside **SYSTEMS**. It opens the Sol planet/landmark picker without enabling DEV; large destination rows and a **CLOSE** button work by touch. The keyboard shortcut remains Ctrl+P.
 
 `test-2026-09-23` uses version `0.12.0-dev.20260923` (Android version code `2026092301`), sensor landscape and the Mobile renderer. The APK is a signed debug build for sideload testing. Weapon defaults are 32× speed and damage, with one thin additive ray and stable converging gun aim.
+
+## Prepared test build 2026-10-06
+
+Version `0.14.0-dev.20261006.1`, Android version code `2026100601`, intended prerelease tag `test-2026-10-06`. The arm64 APK is signed with the local debug key for sideload testing.
+
+This build includes the Sovereign tier-eight hull, reclaimed Earth forests and ruins, faster shared scenery/map loading, temperature-based stellar colours and the opaque-sphere flicker fix. Touch events use Godot's existing viewport coordinates so stretched-screen taps align with buttons; menu pitch and boost remain held until release.
+
+Touch regression commands:
+
+```sh
+godot --headless --log-file /tmp/astryx-touch-unit.log --script tools/test_touch_controls.gd
+godot --headless --log-file /tmp/astryx-touch-runtime.log tools/test_touch_runtime.tscn
+```
+
+The runtime test dispatches native touch events through the viewport and exercises the actual ship gear action, menu holds, simultaneous stick/fire and systems-panel transitions. It uses a scratch player profile. Physical Android hardware was not connected during verification.

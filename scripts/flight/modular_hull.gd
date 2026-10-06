@@ -159,8 +159,10 @@ static func _paint(source: Material, tint: Color, finish: String) -> StandardMat
 		paint.clearcoat_roughness = 0.02
 		paint.rim = 0.5
 	else:
-		paint.metallic = 0.58
-		paint.roughness = 0.24
+		if paint.metallic_texture == null:
+			paint.metallic = 0.58
+		if paint.roughness_texture == null:
+			paint.roughness = 0.24
 		paint.clearcoat_enabled = false
 		paint.rim = 0.24
 	return paint

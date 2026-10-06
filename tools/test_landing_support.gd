@@ -8,7 +8,7 @@ var failures := 0
 func _ready() -> void:
 	var sampler := PlanetGenerator.terrain_sampler(PlanetGenerator.recipe_for({"name":"Earth"}))
 	var xf: Transform3D = sampler.facilities[0].transform
-	for unlock in 12: GameState.visited["test_system_%d" % unlock] = true # every tier swappable
+	for unlock in GameState.SHIP_UNLOCK[-1]: GameState.visited["test_system_%d" % unlock] = true
 	var ship := Ship.new()
 	add_child(ship)
 	ship._set_capture(false)

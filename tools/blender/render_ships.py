@@ -150,6 +150,10 @@ def restyle():
 		p.inputs["Base Color"].default_value = (*d["color"], 1)
 		p.inputs["Metallic"].default_value = d["metallic"]
 		p.inputs["Roughness"].default_value = d["rough"]
+		if arg("--ship", None) in ("sovereign", "8") and m.name == "Hull_Paint":
+			p.inputs["Base Color"].default_value = (.55, .58, .64, 1)
+			p.inputs["Metallic"].default_value = .65
+			p.inputs["Roughness"].default_value = .32
 		if "coat" in d:
 			p.inputs["Coat Weight"].default_value = d["coat"]
 			p.inputs["Coat Roughness"].default_value = 0.08
@@ -193,6 +197,7 @@ def look_at(cam, loc, target, up=(0, 0, 1)):
 
 def frame(sc, cam, pts, c, d, up=(0, 0, 1), fill=0.86):
 	"""Place camera along d from centre c so projected points fill `fill` of the frame."""
+	cam.data.shift_x = cam.data.shift_y = 0
 	aspect = sc.render.resolution_x / sc.render.resolution_y
 	if cam.data.type == "ORTHO":
 		look_at(cam, c + d * 3000, c, up)
@@ -204,17 +209,18 @@ def frame(sc, cam, pts, c, d, up=(0, 0, 1), fill=0.86):
 		cam.data.ortho_scale = max(w, h * aspect) / fill if aspect >= 1 else max(w / aspect, h) / fill
 		cam.matrix_world.translation = cam.matrix_world @ Vector((cx, cy, 0))
 		return
-	dist = (max((p - c).length for p in pts)) * 3.0
-	for _ in range(4):
-		look_at(cam, c + d * dist, c, up)
-		bpy.context.view_layer.update()
-		inv = cam.matrix_world.inverted()
-		half = math.tan(cam.data.angle / 2)
-		ext = 0
-		for p in pts:
-			q = inv @ p
-			ext = max(ext, abs(q.x / -q.z) / half, abs(q.y / -q.z) / half * aspect)
-		dist *= ext / fill
+	look_at(cam, c + d, c, up)
+	bpy.context.view_layer.update()
+	rot = cam.matrix_world.to_3x3().inverted()
+	half_x = math.tan(cam.data.angle_x / 2)
+	half_y = half_x / aspect
+	local = [rot @ (p - c) for p in pts]
+	dist = max(q.z + max(abs(q.x) / half_x, abs(q.y) / half_y) / fill for q in local)
+	look_at(cam, c + d * dist, c, up)
+	xs = [q.x / (dist - q.z) for q in local]
+	ys = [q.y / (dist - q.z) for q in local]
+	cam.data.shift_x = (max(xs) + min(xs)) / (4 * half_x)
+	cam.data.shift_y = (max(ys) + min(ys)) / (4 * half_x)
 
 
 def shoot(sc, path):
@@ -232,6 +238,9 @@ VIEW_DIRS = {
 
 def render_ship(slug):
 	sc, cam = scene_setup(RES, RES)
+	if slug == "sovereign":
+		sc.render.resolution_y = int(RES * .72)
+		sc.view_settings.exposure = -.5
 	lo, hi, pts = bounds(import_ship(slug))
 	c = (lo + hi) * 0.5
 	lights(sc, (hi - lo).length)

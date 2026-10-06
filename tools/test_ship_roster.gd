@@ -13,6 +13,7 @@ const ROSTER := [
 	{"name": "Osprey", "metres": 120.0, "boosters": 3, "rcs": 8, "weapons": 4, "pads": 4, "landjets": 6},
 	{"name": "Condor", "metres": 150.0, "boosters": 4, "rcs": 8, "weapons": 6, "pads": 6, "landjets": 8},
 	{"name": "Albatross", "metres": 200.0, "boosters": 4, "rcs": 8, "weapons": 6, "pads": 6, "landjets": 8},
+	{"name": "Sovereign", "metres": 240.0, "boosters": 4, "rcs": 8, "weapons": 8, "pads": 6, "landjets": 8},
 ]
 var failures := 0
 
@@ -30,20 +31,24 @@ func _ready() -> void:
 	_check("cruiser_module_toggles_do_not_rebuild", ship.systems == cruiser_systems and not ship.systems.modular)
 	ship.set_weapon_set("mk1")
 	ship.set_pad_set("mk1")
-	for tier in range(2, 8):
+	for tier in range(2, ROSTER.size() + 1):
 		_check("tier_%d_locked_on_fresh_profile" % tier, not GameState.ship_unlocked(tier))
 	_check("sol_does_not_count", GameState.systems_reached() == 0)
 	_check("locked_swap_refused", not ship.swap_ship(1) and ship.current_index() == 0)
 	_check("lock_text_names_threshold", ship.ship_lock_text(1) == "Locked: reach 1 systems" \
-		and ship.ship_lock_text(6) == "Locked: reach 12 systems")
+		and ship.ship_lock_text(6) == "Locked: reach 12 systems" \
+		and ship.ship_lock_text(7) == "Locked: reach 16 systems")
 	GameState.visited["alpha_centauri"] = true
 	_check("one_system_unlocks_tier_2", GameState.ship_unlocked(2) and not GameState.ship_unlocked(3))
 	_check("unlocked_swap_allowed", ship.swap_ship(1) and ship.current_index() == 1)
 	_check("higher_tier_still_refused", not ship.swap_ship(3) and ship.current_index() == 1)
 	ship.swap_ship(0)
 
-	for i in 12:
+	for i in 14:
 		GameState.visited["test_system_%d" % i] = true
+	_check("tier_8_locked_before_threshold", not GameState.ship_unlocked(8))
+	GameState.visited["test_system_14"] = true
+	_check("tier_8_unlocks_at_16_systems", GameState.ship_unlocked(8))
 	var previous := {}
 	for i in ROSTER.size():
 		var spec: Dictionary = ROSTER[i]

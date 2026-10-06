@@ -1,0 +1,4 @@
+[    2586ms] [WARNING] Error with Permissions-Policy header: Origin trial controlled feature not enabled: 'tools'. @ :0
+[    3140ms] [ERROR] Error: <feBlend> attribute mode: Unrecognized enumerated value, "plus-lighter". @ https://higgsfield.ai/:114
+[    3140ms] [ERROR] Error: <feBlend> attribute mode: Unrecognized enumerated value, "plus-lighter". @ https://higgsfield.ai/:114
+[    9370ms] [LOG] [Compliance transition] {transitionType: NEW_USER, newComplianceType: opt-in, isImplicitConsentEnabled: false, isGpcActive: false, shouldShowBannerAgain: true} @ https://assets.higgsfield.ai/tanstack/assets/cd8179dd-dd0g1pTCH-p6-Nfr.js:18

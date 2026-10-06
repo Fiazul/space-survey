@@ -49,9 +49,35 @@ func _ready() -> void:
 		main.hud._lore.hide()
 		main.ship._set_capture(false)
 		for i in 8: await get_tree().process_frame
+		var primary_body: Dictionary = {}
+		for body in main.planets._bodies:
+			if body.name == star: primary_body = body
+		var glare_reference: Image = null
+		var point: Sprite3D = primary_body.dot
+		if id in ["arcturus", "aldebaran"] and point.visible:
+			push_error("Resolved giant has point glare: " + id)
+			failures += 1
+		if id in ["vela_pulsar", "crab_pulsar"]:
+			if not point.visible:
+				push_error("Unresolved neutron core has no point glare: " + id)
+				failures += 1
+			else:
+				point.visible = false
+				for i in 4: await get_tree().process_frame
+				await RenderingServer.frame_post_draw
+				glare_reference = get_viewport().get_texture().get_image()
+				point.visible = true
+				for i in 4: await get_tree().process_frame
 		await RenderingServer.frame_post_draw
 		var path := output.path_join(id+".png")
 		var capture := get_viewport().get_texture().get_image()
+		if glare_reference != null:
+			var metrics := _glare_metrics(capture, glare_reference, main.ship.camera, point)
+			print("star point glare: ", id, " ", metrics)
+			if capture.get_size() != Vector2i(800,450) or not metrics.in_frame \
+					or metrics.changed < 2 or metrics.changed > 20 or metrics.outside != 0 or metrics.blue_white < 2:
+				push_error("Unresolved core needs a localized blue-white point (2..20 pixels within 6px): " + id)
+				failures += 1
 		var result := capture.save_png(path)
 		if result != OK:
 			push_error("Star teleport capture failed: "+path)
@@ -70,6 +96,27 @@ func _ready() -> void:
 			id,star,main.ship.anchor_off.length()/Ephemeris.body_radius_km(star),path])
 	print("star_teleport_render: ","OK" if failures == 0 else "FAIL %d" % failures)
 	get_tree().quit(1 if failures else 0)
+
+func _glare_metrics(capture: Image, reference: Image, camera: Camera3D, point: Sprite3D) -> Dictionary:
+	var pixel_scale := Vector2(capture.get_size()) / get_viewport().get_visible_rect().size
+	var center := camera.unproject_position(point.global_position) * pixel_scale
+	var in_frame := not camera.is_position_behind(point.global_position) \
+		and Rect2(Vector2.ZERO, Vector2(capture.get_size())).grow(-12.0).has_point(center)
+	var changed := 0
+	var outside := 0
+	var blue_white := 0
+	for y in range(maxi(0, int(center.y) - 12), mini(capture.get_height(), int(center.y) + 13)):
+		for x in range(maxi(0, int(center.x) - 12), mini(capture.get_width(), int(center.x) + 13)):
+			var delta := capture.get_pixel(x,y) - reference.get_pixel(x,y)
+			if maxf(absf(delta.r), maxf(absf(delta.g), absf(delta.b))) <= .01: continue
+			if (Vector2(x,y) + Vector2(.5,.5)).distance_to(center) > 6.0:
+				outside += 1
+				continue
+			changed += 1
+			if delta.r > .01 and delta.g > .01 and delta.b > .01 \
+					and delta.b >= delta.r * .9 and delta.g >= delta.r * .9:
+				blue_white += 1
+	return {"center":center, "in_frame":in_frame, "changed":changed, "outside":outside, "blue_white":blue_white}
 
 func _disc_metrics(capture: Image, camera: Camera3D, disc: MeshInstance3D) -> Dictionary:
 	var pixel_scale := Vector2(capture.get_size()) / get_viewport().get_visible_rect().size

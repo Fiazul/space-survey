@@ -76,13 +76,20 @@ static var STARS := [
 	{ "id": "omicron2_eridani", "name": "Omicron-2 Eridani", "ly": 16.33, "ra": 63.818, "dec": -7.653, "spectral": "K0.5V", "color": Color(1.00, 0.76, 0.42) },
 ]
 
-# Hand-built systems with custom bodies. Metadata mirrors a STARS row (so the shared
-# helpers work); `map` overrides the 2D chart position for the imaginary Alien zone.
+# Authored metadata; non-Sol worlds use the shared seeded generator.
+# `map` overrides the 2D chart position for the imaginary Alien zone.
 static var AUTHORED := [
 	{ "id": SOL, "name": "Sol", "ly": 0.0, "ra": 0.0, "dec": 0.0, "spectral": "G2V", "color": Color(1.00, 0.85, 0.30) },
 	{ "id": PROXIMA, "name": "Proxima b", "star_name": "Proxima Centauri", "planet_prefix": "Proxima", "ly": 4.24, "ra": 217.429, "dec": -62.679, "spectral": "M5.5V", "color": Color(1.00, 0.40, 0.24) },
 	{ "id": TRAPPIST, "name": "TRAPPIST-1", "ly": 39.0, "ra": 346.622, "dec": -5.041, "spectral": "M8V", "color": Color(1.00, 0.50, 0.30) },
 	{ "id": K2_18, "name": "K2-18", "ly": 124.0, "ra": 172.560, "dec": 7.588, "spectral": "M2.5V", "color": Color(1.00, 0.45, 0.28) },
+	# Arcturus: Ramirez & Allende Prieto 2011, https://arxiv.org/abs/1109.4425.
+	{ "id": "arcturus", "name": "Arcturus", "ly": 36.7, "ra": 213.915, "dec": 19.182, "spectral": "K1.5III", "stellar": {"type": "giant", "temperature_k": 4286.0, "radius_solar": 25.4, "mass_solar": 1.08} },
+	# Aldebaran: A&A 553 A3 (2013); rounded mass is a modeling estimate (docs/STAR_RECIPES.md).
+	{ "id": "aldebaran", "name": "Aldebaran", "ly": 66.6, "ra": 68.980, "dec": 16.509, "spectral": "K5III", "stellar": {"type": "giant", "temperature_k": 3900.0, "radius_solar": 44.0, "mass_solar": 1.2} },
+	# Chandra Vela (2013) / Crab (2008), NASA SVS 13737; core physics uses family estimates.
+	{ "id": "vela_pulsar", "name": "Vela Pulsar", "ly": 1000.0, "ra": 128.836, "dec": -45.176, "spectral": "REMNANT", "stellar_type": "pulsar" },
+	{ "id": "crab_pulsar", "name": "Crab Pulsar", "ly": 6500.0, "ra": 83.633, "dec": 22.014, "spectral": "REMNANT", "stellar_type": "pulsar" },
 	{ "id": ALIEN, "name": "Alien Zone", "star_name": "Hostile Star", "ly": 666.0, "ra": 0.0, "dec": 0.0, "spectral": "—", "color": Color(0.95, 0.15, 0.12), "hostile": true, "map": Vector2(-30.0, -26.0) },
 ]
 
@@ -127,6 +134,15 @@ static func light_years(id: String) -> float:
 
 static func spectral(id: String) -> String:
 	return str(_row(id).get("spectral", ""))
+
+static func family_label(id: String) -> String:
+	var stellar: Dictionary = StarRecipe.resolve(_row(id)).stellar
+	var family := str(stellar.type)
+	if family == "giant" and float(stellar.temperature_k) <= 5000.0:
+		return "Red Giant"
+	if family in ["pulsar", "magnetar"]:
+		return "Neutron Star · " + family.capitalize()
+	return family.capitalize()
 
 static func star_color(id: String) -> Color:
 	return StarRecipe.resolve(_row(id)).color_a
@@ -198,8 +214,8 @@ static func sol_from(worlds: Array) -> Array:
 			b["model"] = p.model
 		if p.has("parent"):
 			b["parent"] = p.parent
-		for k in ["kind", "air_amount", "spectral"]:
+		for k in ["kind", "air_amount", "spectral", "stellar_type", "stellar"]:
 			if p.has(k):
-				b[k] = p[k]
+				b[k] = p[k].duplicate(true) if p[k] is Dictionary or p[k] is Array else p[k]
 		out.append(b)
 	return out

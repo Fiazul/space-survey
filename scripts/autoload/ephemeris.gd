@@ -23,6 +23,7 @@ const AU_TO_UNITS := KM_PER_AU          # 1 unit = 1 km
 const EARTH_RADIUS_KM := _SOL.EARTH_RADIUS_KM
 const SUN_RADIUS_KM := _SOL.SUN_RADIUS_KM
 const GEO_RADIUS_KM := _SOL.GEO_RADIUS_KM
+const MIN_STELLAR_PARK_PERIOD_S := 60.0
 const GM_EARTH := _SOL.GM_EARTH
 const GM_SUN := _SOL.GM_SUN
 const GM_MOON := _SOL.GM_MOON
@@ -320,7 +321,9 @@ func sweet_spot_off(body_name: String) -> Vector3:
 	# The generic +120 km park is a 28 g trap at the Sun: even boosted
 	# 3 g engines cannot climb out. At 4 stellar radii ordinary thrust can leave.
 	if body_name == primary_star:
-		park = rad * 4.0
+		# Compact-star inspection must remain stable with the ship's 0.25 s substeps.
+		var period_floor := pow(gm(body_name) * pow(MIN_STELLAR_PARK_PERIOD_S / TAU, 2.0), 1.0 / 3.0)
+		park = maxf(rad * 4.0, period_floor)
 	var out: Vector3 = -rel_km(primary_star, body_name)
 	if out.length_squared() < 0.0001:
 		out = Vector3(1.0, 0.0, 0.0)

@@ -148,6 +148,29 @@ They never replace `color_a`, bolometric luminosity, temperature, mass or hazard
 Optional aurora approximates red emission and is fainter in plain visible mode.
 Optional dust disk colors approximate heated dust. Neither option is universal.
 
+## Authored giant and neutron-star destinations
+
+Ctrl+P accepts `red giant`, `neutron`, and `pulsar`, as well as names and IDs.
+The family label comes from the shared recipe; only cool giant-family stars
+(temperature ≤ 5,000 K) receive the Red Giant label. Hot giants and carbon stars
+keep their own labels. These four rows live in `SystemDB.AUTHORED`, outside the
+regenerable nearest-star list. Authored `stellar_type` and nested `stellar`
+metadata are copied through generation and body specs into the live shared recipe.
+Their planetary systems remain seeded inventions, not claims of observed planets.
+
+| Destination | Adopted physics and source |
+|---|---|
+| Arcturus (`arcturus`) | K1.5III; 4,286 K, 25.4 solar radii, 1.08 solar masses from [Ramírez & Allende Prieto (2011)](https://arxiv.org/abs/1109.4425). [SIMBAD](https://simbad.cds.unistra.fr/simbad/sim-id?Ident=Arcturus) supplies coordinates, class and 88.83 mas parallax (36.7 ly). |
+| Aldebaran (`aldebaran`) | K5III; 44 solar radii and a rounded 3,900 K from the reported 3,874 ± 100 K in [A&A 553 A3 (2013)](https://www.aanda.org/articles/aa/pdf/2013/05/aa21207-13.pdf). The adopted 1.2 solar masses is a rounded modeling estimate. [SIMBAD](https://simbad.cds.unistra.fr/simbad/sim-id?Ident=Aldebaran) supplies coordinates, K5+III class and 48.94 mas parallax (66.6 ly). |
+| Vela Pulsar (`vela_pulsar`) | [Chandra (2013)](https://chandra.harvard.edu/photo/2013/vela/) gives 1,000 ly, RA 08h35m20.60s / Dec −45°10′35″, and more than 11 rotations per second. |
+| Crab Pulsar (`crab_pulsar`) | Approximate nebula-center coordinates from [Chandra (2008)](https://chandra.harvard.edu/photo/2008/crab/), and 6,500 ly from [NASA SVS](https://svs.gsfc.nasa.gov/13737/). |
+
+Both pulsars use the existing family's generic **12 km radius, 1.4 solar masses,
+600,000 K** estimates; these are not measured values for either object. They load
+bare visible cores with no authored wind nebula or false-color sensor mode.
+Surface patterns and glare are procedural approximations. Spin periods are not
+authored here; rotation retains the generator's existing estimate.
+
 ## Scale and hazards
 
 Sol's Sun remains 695,700 km in radius. Catalogue destinations use generated
@@ -156,12 +179,23 @@ from the recipe, plus seeded planetary orbits. The compressed
 `5 × R_solar^0.45` radius remains a display helper for distant catalogue markers;
 it does not set the local primary star's radius after a system jump.
 
-Ctrl+P's star rows jump to the selected system's primary star at four stellar
-radii, face it, set circular-orbit velocity, clear time warp, and save the stellar park.
+Ctrl+P's star rows jump to the selected system's primary star at
+`max(4R, cbrt(GM × (60s / TAU)²))`, face it, set circular-orbit velocity,
+clear time warp, and save the stellar park. The 60-second minimum orbital period
+keeps compact-star arrivals stable with the ship's 0.25-second integration steps;
+ordinary stars and white dwarfs retain their four-radius park. Physical radii stay
+unchanged: a 12 km neutron core appears as a tiny bright point from this distance.
 The current star can be selected again. Normal platform travel still uses its
 planetary arrival. Near meshes and distant stellar spheres share the primary's
 recipe and rotation; resolved stars use their recipe corona without additional
 point-source glare.
+
+Bare local stars below 0.001 rad in angular core radius use a soft, depth-tested
+body sprite with a 0.010 rad display diameter (about 3 pixels at 800×450 and 70°
+vertical field of view). This unresolved-source glare is a display PSF approximation;
+the physical sphere, radius, gravity, arrival and hazard calculations retain their
+true values. Resolved stars hide this sprite. Authored wind nebulae and debris disks
+are excluded so their extent and resolution rules remain authoritative.
 
 For distance expressed in stellar radii `q`, incident flux is `σ T⁴ / q²` and the
 zero-albedo, uniformly reradiating equilibrium temperature is `T / sqrt(2q)`.
@@ -206,6 +240,12 @@ Ctrl+P jump path, including selected renderer, arrival state and saved position.
 `tools/render_star_teleport.tscn` drives Ctrl+P and the picker buttons in the real
 game, then captures Sol, Proxima, Wolf 359, Sirius, Luhman 16 and Gliese 440 in
 `/tmp/star-teleport`; `STAR_TELEPORT_SHOTS` changes the output directory.
+Set `STAR_TELEPORT_SYSTEMS=arcturus,aldebaran,vela_pulsar,crab_pulsar` to capture the
+new destinations. Pulsar checks compare the projected center against a frame with
+only its glare hidden: 2–20 changed pixels within 6 pixels, including blue-white
+light, with no changes in the surrounding 12-pixel region. The final PNG restores
+the glare; resolved giants must keep their dot hidden. Headless checks verify state
+and scale, while these pixel checks require the parent's windowed renderer.
 
 ## Red dwarf colour and K2-18
 

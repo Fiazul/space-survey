@@ -34,7 +34,7 @@ var _orbits := {}   # name -> { a_km, phase0, n, inc }
 static func build(system_id: String, row: Dictionary, unix_s: float) -> GeneratedEphemeris:
 	var e := GeneratedEphemeris.new()
 	e.id = system_id
-	e.star_row = row
+	e.star_row = row.duplicate(true)
 	e.system_seed = hash("%s|%s" % [system_id, str(row.get("name", system_id))])
 	e._generate()
 	e.place_at(unix_s)
@@ -45,20 +45,24 @@ func _generate() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = system_seed
 	primary_star = str(star_row.get("star_name", star_row.get("name", id)))
-	var star_spec := star_row.duplicate()
+	var star_spec := star_row.duplicate(true)
 	star_spec["name"] = primary_star
 	var recipe := _STAR.resolve(star_spec)
 	var stellar: Dictionary = recipe.stellar
 	var star_gm := float(stellar.mass_solar) * GM_SUN
 	var star_r := float(stellar.radius_km)
 	var lum := maxf(float(stellar.luminosity_solar), 1.0e-5)
-	_catalog.append({
+	var star_body := {
 		"name": primary_star, "radius": star_r, "mu": star_gm,
 		"spin": TAU / (rng.randf_range(20.0, 90.0) * DAY_S),
 		"mass": float(stellar.mass_solar) * 333000.0, "color": recipe.color_a,
 		"spectral": str(star_row.get("spectral", "")), "glow": 2.0,
 		"star": true, "physical": true,
-	})
+	}
+	for key in ["stellar_type", "stellar"]:
+		if star_row.has(key):
+			star_body[key] = star_row[key].duplicate(true) if star_row[key] is Dictionary or star_row[key] is Array else star_row[key]
+	_catalog.append(star_body)
 	var count := rng.randi_range(2, 6)
 	var hz_au := sqrt(lum)
 	var a_au := maxf(hz_au * rng.randf_range(0.25, 0.6), star_r * MIN_ORBIT_STAR_RADII / KM_PER_AU)

@@ -76,6 +76,8 @@ const AIR_SHELL_KM := 200000.0
 const STAR_RADIUS := 22.0     # visual size when you arrive
 const STAR_SKY := 28000.0    # far dots clamp here so they read as sky points
 const STAR_NEAR := 4200.0    # within this -> growing emissive sphere
+const UNRESOLVED_STAR_ANGULAR_RADIUS := 0.001
+const UNRESOLVED_STAR_GLARE_DIAMETER := 0.010
 
 
 # Names of bodies that can be navigation targets (planets, then named stars).
@@ -568,7 +570,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 				rc.a = 0.6
 				b.ring.material_override.albedo_color = rc
 
-		b.dot.visible = false
+		_place_unresolved_stellar_point(b, rel, dist, too_far)
 
 		if too_far and dist > 0.001:
 			var sdir: Vector3 = rel / dist
@@ -686,6 +688,23 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 				nearest_radius, salt, eph.surface_kill_km(nearest_name),
 				ceiling, deck_recipe, to_star, _cloud_time_s, body_basis)
 		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, from_centre)
+
+
+func _place_unresolved_stellar_point(b: Dictionary, rel: Vector3, dist: float, too_far: bool) -> void:
+	b.dot.visible = false
+	if not b.star or not b.recipe.has("stellar") or dist <= 0.001:
+		return
+	var visual: Dictionary = b.recipe.stellar.visual
+	if visual.wind_nebula or visual.debris_disk:
+		return
+	if atan(float(b.radius) / dist) >= UNRESOLVED_STAR_ANGULAR_RADIUS:
+		return
+	# A display PSF, independent of the exact physical sphere and authored structures.
+	var render_dist: float = eph.sky_impostor_km(dist) if too_far else dist
+	b.dot.position = rel * (render_dist / dist)
+	b.dot.pixel_size = render_dist * UNRESOLVED_STAR_GLARE_DIAMETER / b.dot.texture.get_width()
+	b.dot.modulate = b.recipe.stellar.display_color
+	b.dot.visible = true
 
 
 # A body's render-space offset from the ship. Worlds go through Ephemeris.rel_km

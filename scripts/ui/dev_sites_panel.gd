@@ -132,13 +132,14 @@ func _add_systems(needle: String) -> void:
 		var catalog := SystemDB.star_row(id)
 		var star := "Sun" if id == SystemDB.SOL else str(catalog.get("star_name", label))
 		var spectral := SystemDB.spectral(id)
-		if not needle.is_empty() and not ("%s %s %s %s star system" % [star, label, id, spectral]).to_lower().contains(needle):
+		var family := SystemDB.family_label(id)
+		if not needle.is_empty() and not ("%s %s %s %s %s star system" % [star, label, id, spectral, family]).to_lower().contains(needle):
 			continue
 		if not added:
 			_add_head("STAR SYSTEMS")
 			added = true
 		var ly := SystemDB.light_years(id)
-		var row := _row("    %s · %s   —  %s" % [star, spectral, "%.2f ly" % ly if ly > 0.0 else "home"])
+		var row := _row("    %s · %s · %s   —  %s" % [star, spectral, family, "%.2f ly" % ly if ly > 0.0 else "home"])
 		row.tooltip_text = "Jump to a safe viewing position around this star"
 		row.pressed.connect(_pick_system.bind(id))
 		_list.add_child(row)

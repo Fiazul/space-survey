@@ -63,6 +63,9 @@ var _surface: Node3D           # skin-band bird-view ground (rings / water / kit
 var _cloud_layer: Node3D       # deck between the band ceiling and the ground,
 								# alive exactly while _surface is (see CloudLayer.should_show)
 var _cloud_time_s := 0.0       # deterministic sim clock (accumulated `delta`, not wall-clock
+var _black_hole_epoch := 0.0
+var black_hole_background: BlackHoleBackground
+var black_hole_visible := false
 								# TIME) shared by the shell and the globe's cook material — see
 								# CloudLayer.cloud_uv_offset() / PlanetGenerator.set_cloud_drift()
 var _samplers := {}            # body name -> TerrainSampler, built on first need
@@ -481,6 +484,7 @@ func _build_star_shell() -> void:
 # (navigator, minimap, HUD, surface band) has to know an anchor exists.
 func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = Vector3.ZERO) -> void:
 	_cloud_time_s += delta
+	var black_hole_in_view := false
 	stellar_hazard = {}
 	nearest_dist = INF
 	nearest_name = ""
@@ -493,6 +497,10 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 	var star_true := _star_true()
 	var anchored := anchor != ""
 	var ship_pos: Vector3 = _AF.absolute(eph.pos64(anchor), ship_off) if anchored else ship_off
+	var hole_distance := INF
+	if eph.is_black_hole(eph.primary_star):
+		var hole_rel: Vector3 = eph.rel_km(eph.primary_star,anchor)-ship_off if anchored else star_true-ship_off
+		hole_distance = hole_rel.length()
 	for b in _bodies:
 		var rad: float = b.radius
 		var bpos: Vector3
@@ -505,7 +513,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var dist := rel.length()
 		if b.star and b.recipe.has("stellar"):
 			var exposure := StarRecipe.exposure(b.recipe, dist, rad)
-			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
+			if _stronger_exposure(exposure, stellar_hazard):
 				stellar_hazard = exposure
 
 		b.dot.position = rel
@@ -516,6 +524,21 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 			nearest_dist = dist
 			nearest_name = b.name
 			nearest_radius = rad
+		if b.recipe.get("stellar", {}).get("type", "") == "black_hole":
+			if _black_hole_epoch == 0.0: _black_hole_epoch = eph.rotation_clock.unix_s
+			BlackHoleRenderer.update(b.sphere, rel, rad, maxf(eph.rotation_clock.unix_s-_black_hole_epoch,0.0))
+			var camera := get_viewport().get_camera_3d()
+			if b.sphere.visible and camera != null and (b.mat.get_shader_parameter("full_screen") or not camera.is_position_behind(b.sphere.global_position)):
+				black_hole_in_view = true
+				if black_hole_background == null:
+					black_hole_background = BlackHoleBackground.new()
+					add_child(black_hole_background)
+				black_hole_background.refresh(camera, ship_off, anchor, b.mat)
+			b.dot.visible = false
+			b.label.visible = false
+			cook_n += 1
+			cook_sky_n += 1
+			continue
 
 		if b.get("mat") != null and b.mat is ShaderMaterial:
 			var to_sun: Vector3 = eph.rel_km(eph.primary_star, str(b.name)) \
@@ -570,6 +593,8 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 				rc.a = 0.6
 				b.ring.material_override.albedo_color = rc
 
+		if b.star and hole_distance < INF:
+			_set_stellar_lens_priority(b,-110 if dist > hole_distance else 0)
 		_place_unresolved_stellar_point(b, rel, dist, too_far)
 
 		if too_far and dist > 0.001:
@@ -592,11 +617,19 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 
 	# Named catalogue stars: sky points in their real direction (clamped to the sky
 	# shell), labelled with their real distance.
+	black_hole_visible = black_hole_in_view
+	if black_hole_background != null and not black_hole_in_view: black_hole_background.suspend()
 	for st in _stars:
 		# Interstellar scale (~1e13 km): the ship's own magnitude is a rounding
 		# error against it, so the anchor buys nothing here and the sky point's
 		# precision is bounded by st.true_pos itself either way.
-		var srel: Vector3 = st.true_pos - ship_pos
+		var srel: Vector3 = st.true_pos - SystemDB.coord(eph.system_id)*Ephemeris.UNITS_PER_LY - ship_pos
+		if eph.system_id == SystemDB.SAGITTARIUS_A:
+			st.dot.visible = false
+			st.label.visible = false
+			if st.sphere != null: st.sphere.visible = false
+			_rel[st.name] = srel
+			continue
 		var sdist := srel.length()
 		_rel[st.name] = srel
 		if sdist < nearest_dist:
@@ -606,7 +639,7 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		var sdir: Vector3 = srel.normalized()
 		if sdist < STAR_NEAR:
 			var exposure := StarRecipe.exposure(st.recipe,sdist,st.radius)
-			if stellar_hazard.is_empty() or float(exposure.flux_w_m2) > float(stellar_hazard.flux_w_m2):
+			if _stronger_exposure(exposure, stellar_hazard):
 				stellar_hazard = exposure
 			if st.sphere == null:
 				st.sphere = PlanetGenerator.paint(st.spec, st.radius).sphere
@@ -690,6 +723,21 @@ func refresh(ship_off: Vector3, delta: float, anchor := "", ship_vel: Vector3 = 
 		_update_air(to_star, salt, ceiling, deck_recipe, nearest_name, from_centre)
 
 
+func _set_stellar_lens_priority(b: Dictionary, priority: int) -> void:
+	if b.get("_lens_priority",0) == priority: return
+	b._lens_priority = priority
+	b.dot.render_priority = priority
+	b.label.render_priority = priority
+	if b.sphere.get_child_count() == 0: return
+	var corona := b.sphere.get_child(0) as MeshInstance3D
+	if corona == null or corona.material_override == null: return
+	corona.material_override.render_priority = priority
+	for structures in corona.get_children():
+		for batch in structures.get_children():
+			if batch is MeshInstance3D and batch.material_override != null:
+				batch.material_override.render_priority = priority
+
+
 func _place_unresolved_stellar_point(b: Dictionary, rel: Vector3, dist: float, too_far: bool) -> void:
 	b.dot.visible = false
 	if not b.star or not b.recipe.has("stellar") or dist <= 0.001:
@@ -705,6 +753,11 @@ func _place_unresolved_stellar_point(b: Dictionary, rel: Vector3, dist: float, t
 	b.dot.pixel_size = render_dist * UNRESOLVED_STAR_GLARE_DIAMETER / b.dot.texture.get_width()
 	b.dot.modulate = b.recipe.stellar.display_color
 	b.dot.visible = true
+
+static func _stronger_exposure(candidate: Dictionary, previous: Dictionary) -> bool:
+	if previous.is_empty(): return true
+	if int(candidate.level) != int(previous.level): return int(candidate.level) > int(previous.level)
+	return float(candidate.flux_w_m2) > float(previous.flux_w_m2)
 
 
 # A body's render-space offset from the ship. Worlds go through Ephemeris.rel_km
@@ -860,6 +913,10 @@ func _star_true() -> Vector3:
 
 func _place_sun_sky(ship_off: Vector3, anchor := "") -> void:
 	if _sun_sky == null:
+		return
+	if _sun_sky.get_meta("stellar_recipe", {}).get("stellar", {}).get("type", "") == "black_hole":
+		_sun_sky.visible = false
+		if _sun_corona != null: _sun_corona.visible = false
 		return
 	var star := eph.primary_star
 	var star_r := eph.body_radius_km(star)

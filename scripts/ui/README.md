@@ -5,6 +5,7 @@ Everything the player reads/clicks: HUD readouts and every overlay panel.
 | File | Type | Role |
 |---|---|---|
 | `hud.gd` | feature area | Main HUD (readouts, tip/quest banners, layout editor) |
+| `humano_runner.gd` | feature area | Human endless runner drawn on the dinosaur's physical arcade screen; jump, collision, score and restart |
 | `hud_scale.gd` | helper | `HudScale` (static): touch-target scale from screen dpi, display-cutout safe insets, and re-docking 1280x720-authored positions onto the real canvas; TouchControls uses it for its bottom-right controls and top-right MENU pill, converting raw input through the viewport transform before hit-testing or drawing the joystick |
 | `mini_map.gd` | feature area | Corner radar (ship-relative blips) |
 | `crosshair.gd` | feature area | The aiming reticle |

@@ -45,6 +45,7 @@ var _dist_label: Label
 var _speed_label: Label
 var _tape_label: Label
 var _near_label: Label
+var _sensor_label: Label
 var _prompt: Label    # "Press F to dock" near the station
 var _menu: Label      # centered overlay text (teleport / death)
 var _flash: ColorRect # full-screen colour flash (core damage / death kick); alpha eased down
@@ -169,6 +170,9 @@ func _ready() -> void:
 	_near_label = _add_line(destination.body, 13, C_TEXT)
 	_near_label.custom_minimum_size.x = 180
 	_near_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_sensor_label = _add_line(destination.body, 11, C_ACCENT)
+	_sensor_label.text = "SENSOR VIEW · TIME-LAPSE ×%d" % int(BlackHoleRenderer.TIME_LAPSE)
+	_sensor_label.visible = false
 	_codex_label = _add_line(destination.body, 11, C_DIM)
 	_codex_label.visible = false
 	_objective_label = _add_line(destination.body, 11, C_ACCENT)
@@ -1667,7 +1671,8 @@ func refresh() -> void:
 	var g := ship.last_newton_g.length() / 0.00980665
 	var altitude := "—" if agl == INF else ("%.0f m" % (agl * 1000.0) if absf(agl) < 1.0 else "%.2f km" % agl)
 	if stellar:
-		_tape_label.text = "PHOTO ALT  %s\nRADIAL  %s %s   /   %.2f g" % [altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
+		var black_hole: bool = planets.stellar_recipe_for(ship.nearest_name).get("stellar", {}).get("type", "") == "black_hole"
+		_tape_label.text = "%s  %s\nRADIAL  %s %s   /   %.2f g" % ["HORIZON ALT" if black_hole else "PHOTO ALT", altitude, "OUT" if vertical >= 0 else "IN", _fmt_speed(absf(vertical)), g]
 		if vertical < 0 and ship.last_thrust_accel.dot(outward) > 0 \
 				and (ship.last_thrust_accel+ship.support_accel+ship.last_newton_g).dot(outward) < 0:
 			_tape_label.text += "\nFALLING — THRUST BELOW GRAVITY"
@@ -1715,7 +1720,12 @@ func refresh() -> void:
 	if planets != null and not ship.frozen and not planets.stellar_hazard.is_empty():
 		var hazard: Dictionary = planets.stellar_hazard
 		if int(hazard.level) > 0:
-			_tape_label.text += "\n%s  /  %.0f kW/m²" % [hazard.state, float(hazard.flux_w_m2)/1000.0]
+			if hazard.get("type", "") == "black_hole":
+				_tape_label.text += "\n" + str(hazard.state)
+			else:
+				_tape_label.text += "\n%s  /  %.0f kW/m²" % [hazard.state, float(hazard.flux_w_m2)/1000.0]
+	if not ship.frozen and not ship.hole_orbit.is_empty():
+		_tape_label.text += hole_warnings(ship.hole_orbit)
 	_combat_panel.visible = _edit or firing
 
 	if combat != null:
@@ -1755,6 +1765,7 @@ func refresh() -> void:
 		if lore_t <= 0.0:
 			_lore.visible = false
 
+	_sensor_label.visible = planets != null and planets.black_hole_visible
 	if planets != null and planets.nearest_name != "":
 		var near_au := planets.nearest_dist * AU_PER_UNIT
 		_near_label.text = "%s   ·   %s" % [planets.nearest_name, _fmt_dist(near_au)]
@@ -1765,6 +1776,26 @@ func refresh() -> void:
 			details_button.text = "[G]  Inspect body"
 	elif details_button != null:
 		details_button.visible = false
+
+
+# Zone warnings from the ship's real orbit under the pseudo-Newtonian Kerr force
+# (BlackHoleGravity.orbit): energy and angular momentum against the potential barrier.
+func hole_warnings(o: Dictionary) -> String:
+	if bool(o.get("captured",false)):
+		return "\nCORE CAPTURE — NO ESCAPE"
+	var t := ""
+	if o.plunging:
+		if o.has("capture_radius_au"):
+			t += "\nPLUNGE — CAPTURE AHEAD AT %.1f AU" % float(o.capture_radius_au)
+		else:
+			t += "\nPLUNGE — NO ESCAPE AT CURRENT THRUST" if o.no_escape else "\nPLUNGE — BURN %s TO ESCAPE" % _fmt_speed(o.dv_kms)
+	elif o.r < o.isco_km:
+		t += "\nORBIT DECAYING — BELOW STABLE ORBIT"
+	if o.r < o.photon_km:
+		t += "\nINSIDE PHOTON ORBIT — NO ORBIT EXISTS HERE"
+	if o.clock_rate < .99:
+		t += "\nSHIP CLOCK  %.3f s PER DISTANT s" % o.clock_rate
+	return t
 
 
 func _fmt_speed(km_s: float) -> String:

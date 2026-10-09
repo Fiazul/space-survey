@@ -1,6 +1,17 @@
+`test_black_hole_capture.tscn` checks forced capture from 0.585 AU with arbitrary speed/thrust and NODEATH, swept entry, exterior flybys and the 2 AU return.
+
 # tools/
 
+`test_galactic_core.tscn` checks Ctrl+P, physical scale, orbital inspection, nearby recipe stars, horizon capture/recovery, core density, saves and return travel. `test_black_hole_views.tscn` renders close outward/rolled flow and foreground-exhaust regressions. `test_black_hole_motion.tscn` verifies visible plasma turbulence over four normal-speed half-second intervals with a fixed observer; captures use optional `MOTION_SHOT_DIR`. `render_galactic_core.tscn` captures the real close/polar/wide/overview arrivals and checks for visible, rotating plasma; use a windowed renderer, with optional `CORE_SHOT_DIR`. `test_black_hole_plunge.tscn` checks the pseudo-Newtonian ship gravity (circular orbits under warp at 60/20 fps, capture below the ISCO, force-law ISCO vs recipe, Sol untouched) and the HUD/audio/camera plunge cues. See `docs/GALACTIC_CORE.md`.
+
 Dev-only scripts: none of this ships in a build. See CLAUDE.md for exact invocation forms.
+
+`test_black_hole_portal.tscn` checks horizon entry without hull loss, cinematic
+coasting, safe 2 AU saves/return, real Escape input, the return button, mouse
+steering restoration, persistent audio cleanup and the Humano picker entry.
+`test_humano_runner.tscn` checks jump, landing, collisions, restart and scoring.
+`render_black_hole_portal.tscn` captures entry, cubic mist, loading, the dinosaur
+arcade at desktop/portrait sizes, keyboard jumping and return; writes `/tmp/astryx-humano`.
 
 ## test_* — headless tests (pass/fail contracts)
 

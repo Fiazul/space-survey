@@ -70,6 +70,7 @@ func update_lod(angular_radius: float, shown: bool) -> void:
 		mesh.mesh = batch.mesh
 		mesh.rotation_degrees = batch.get("rotation", Vector3.ZERO)
 		var mat := ShaderMaterial.new()
+		mat.render_priority = halo.render_priority
 		match str(batch.kind):
 			"disk": mat.shader = DISK
 			"aurora": mat.shader = AURORA

@@ -11,7 +11,10 @@ func _ready() -> void:
 		var a := PlanetGenerator.recipe_for(spec)
 		var b := PlanetGenerator.recipe_for(spec)
 		check("deterministic "+row.name, a == b)
-		check("valid physical metadata "+row.name, a.stellar.radius_km > 0 and a.stellar.temperature_k > 0 and a.stellar.luminosity_solar > 0)
+		if a.stellar.type == "black_hole":
+			check("event horizon without stellar photosphere", absf(a.stellar.radius_km/(a.stellar.gravitational_radius_km*(1.0+sqrt(1.0-a.stellar.spin*a.stellar.spin))) - 1.0) < 1e-6 and a.stellar.radius_km > 9e6 and a.stellar.temperature_k == 0.0 and a.stellar.luminosity_solar == 0.0)
+		else:
+			check("valid physical metadata "+row.name, a.stellar.radius_km > 0 and a.stellar.temperature_k > 0 and a.stellar.luminosity_solar > 0)
 		check("stars aren't landable/minable", not preload("res://scripts/world/surface_recipe.gd").resolve(a).solid and a.materials.crust.is_empty())
 	for pair in [["F5IV","subgiant"],["M1.5VI","subdwarf"],["K3III","giant"],["A2II","bright_giant"],["M2Iab","supergiant"],["DQ6","white_dwarf"],["DZ7","white_dwarf"],["L8","brown_dwarf"],["T9","brown_dwarf"],["Y1","brown_dwarf"],["WC8","wolf_rayet"],["C5","carbon_star"]]:
 		check("classify "+pair[0], StarRecipe.resolve({"spectral":pair[0]}).stellar.type == pair[1])

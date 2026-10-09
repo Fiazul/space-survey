@@ -1,4 +1,4 @@
-# Astryx · v0.12.0-dev.20260923.3
+# Astryx · v0.15.0-dev.20261009.1
 
 A potato-friendly **third-person space explorer** in Godot 4 / GDScript. Launch
 from Earth, fly the **real** solar system, survey its worlds into the Codex, and
@@ -142,6 +142,15 @@ See [`CREDITS.md`](CREDITS.md).
 
 See `CLAUDE.md` and the per-folder `README.md`s under `scripts/` for architecture
 and code layout.
+
+## Known bugs
+
+The Sagittarius A* developer fly-through report is recorded as **BH-001** and
+fixed in this test release. Entering **0.6 AU** now forces inward capture at any
+speed, including DEV/NODEATH, then opens Humano at the horizon. Exiting the
+arcade returns to a circular orbit at 2 AU. This boundary is a gameplay rule.
+A Mobile close-core preview can still obscure the ship (**BH-002**); Android
+hardware impact is unverified. See the [bug record](docs/KNOWN-BUGS.md) and [release notes](docs/releases/test-2026-10-09.md).
 
 ---
 Hobby / educational project. See [`docs/SESSION-2026-09-04-skin-band.md`](docs/SESSION-2026-09-04-skin-band.md) for the most recent session's per-system notes.

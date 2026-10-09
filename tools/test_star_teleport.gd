@@ -62,7 +62,8 @@ func _ready() -> void:
 	check("Proxima button selected", selected)
 	check("picker closes after arrival", not panel._open and not get_tree().paused)
 	check("Proxima button arrives at star", ship.anchor_name == "Proxima Centauri" and ship.nearest_name == "Proxima Centauri")
-	for id in panel.system_ids():
+	# Black holes have a lensing renderer and horizon parks, covered by test_galactic_core.
+	for id in panel.system_ids().filter(func(id): return SystemDB.star_row(id).get("stellar_type", "") != "black_hole"):
 		ship.velocity = Vector3(10,20,30)
 		ship.time_rate = 100.0
 		ship.auto_cruise = true

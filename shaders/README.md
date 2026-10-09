@@ -6,6 +6,8 @@ GDShader source, all `shader_type spatial` except `hud_text.gdshader` (canvas_it
 |---|---|---|
 | `planet_cook.gdshader` | feature area | The one shared planet/star cook shader — kind 0 rocky, 1 gas, 2 ice, 3 star. `sample_height()` must mirror `PlanetGenerator.crust_height()` (see CLAUDE.md) |
 | `stellar_surface.gdshaderinc` | shared functions | Stellar photospheres, giant convection, sheared brown clouds and explicit sensor display inside the shared cook |
+| `black_hole.gdshader` | feature area | Bounded Kerr (a = 0.9) null geodesics in Kerr-Schild form, flow intersections, lopsided shadow, lensing, Kerr redshift/beaming, hotspots and flares |
+| `core_stars.gdshader`, `core_gas.gdshader` | feature area | Depth-tested projections of physical 3D core positions and gas batches |
 | `stellar_corona.gdshader` | feature area | Irregular camera glare and faint halo with far-plane projection and foreground occlusion |
 | `stellar_filament.gdshader`, `stellar_shell.gdshader` | feature area | Batched plasma strands and diffuse giant envelopes |
 | `stellar_disk.gdshader`, `stellar_aurora.gdshader`, `stellar_cloud.gdshader` | feature area | Optional debris disks, polar curtains and diffuse X-ray wind emission |

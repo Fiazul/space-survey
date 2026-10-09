@@ -71,6 +71,7 @@ func _refresh() -> void:
 	for c in _list.get_children():
 		c.queue_free()
 	var needle := _filter.text.to_lower()
+	_add_core_views(needle)
 	_add_systems(needle)
 	if not in_sol:
 		return
@@ -149,6 +150,57 @@ func _pick_system(id: String) -> void:
 	_close()
 	go_system(id)
 
+func _add_core_views(needle: String) -> void:
+	if not needle.is_empty() and not ("sagittarius_a sagittarius a* milky way galactic core black hole humano dinosaur").contains(needle):
+		return
+	_add_head("MILKY WAY GALACTIC CORE")
+	for view in core_views():
+		var row := _row("    Sagittarius A* · %s" % view.name)
+		row.tooltip_text = "26,673 ly from Sol · enhanced plasma display"
+		row.pressed.connect(_pick_core.bind(view))
+		_list.add_child(row)
+	var arcade := _row("    Sagittarius A* · through the horizon → Humano")
+	arcade.tooltip_text = "Cubic mist, then a dinosaur playing a human. Exit returns at 2 AU."
+	arcade.pressed.connect(_pick_humano)
+	_list.add_child(arcade)
+
+func _pick_humano() -> void:
+	_close()
+	go_humano()
+
+func go_humano() -> bool:
+	if not go_core({"au":2.0,"polar":false}): return false
+	var direction := ship.anchor_off.normalized()
+	ship.relocate(direction*Ephemeris.body_radius_km("Sagittarius A*")*.98)
+	ship.velocity = -direction*100000.0
+	ship._update_camera(0.0)
+	main._update_black_hole_horizon(0.0)
+	return main.black_hole_portal != null
+
+static func core_views() -> Array:
+	return [{"name": "7.9 AU · lensed accretion flow", "au": 7.9, "polar": false},
+		{"name": "2 AU · close inspection", "au": 2.0, "polar": false},
+		{"name": "7.9 AU · polar view", "au": 7.9, "polar": true},
+		{"name": "79 AU · wide view", "au": 79.0, "polar": false},
+		{"name": "Galactic Core · 500 ly overview", "ly": 500.0, "polar": false}]
+
+func _pick_core(view: Dictionary) -> void:
+	_close()
+	go_core(view)
+
+func go_core(view: Dictionary) -> bool:
+	if not go_system(SystemDB.SAGITTARIUS_A): return false
+	var radius := float(view.get("ly", 0.0))*Ephemeris.UNITS_PER_LY if view.has("ly") else float(view.au)*Ephemeris.KM_PER_AU
+	var direction := Vector3(.05, 1.0, .05) if view.get("polar", false) else Vector3(1.0, .12, 0.0)
+	ship.relocate(direction.normalized()*radius)
+	ship.velocity = Ephemeris.circular_velocity(ship.anchor_name, ship.anchor_off, ship.anchor_off.normalized().cross(Vector3.FORWARD))
+	ship.reset_mesh_pose()
+	ship.face_toward(-ship.anchor_off)
+	_finish_jump()
+	main.galactic_core.refresh(ship.anchor_off, ship.anchor_name)
+	main._save_profile()
+	return true
+
 
 func go_system(id: String) -> bool:
 	if main == null or ship == null or SystemDB.star_row(id).is_empty():
@@ -166,11 +218,13 @@ func go_system(id: String) -> bool:
 	# A stationary arrival falls into compact stars before the player can inspect them.
 	var radial := ship.anchor_off.normalized()
 	var up := Vector3.UP if absf(radial.dot(Vector3.UP)) < .99 else Vector3.RIGHT
-	ship.velocity = radial.cross(up).normalized()*sqrt(Ephemeris.gm(star)/ship.anchor_off.length())
+	ship.velocity = Ephemeris.circular_velocity(star, ship.anchor_off, radial.cross(up))
 	ship.reset_mesh_pose()
 	ship.face_toward(-ship.anchor_off)
 	_finish_jump()
 	main.hud.toast = "STAR VIEW — %s" % star
+	if id == SystemDB.SAGITTARIUS_A:
+		main.hud.toast = "SAGITTARIUS A* · ENHANCED PLASMA VIEW"
 	main.hud.toast_t = 3.0
 	main._save_profile()
 	return true
@@ -231,6 +285,7 @@ func go(site: Dictionary) -> void:
 
 
 func _finish_jump() -> void:
+	if main.has_method("cancel_horizon_recovery"): main.cancel_horizon_recovery()
 	ship.time_rate = 1.0
 	ship._time_idx = 0
 	ship._shell_edge_known = false

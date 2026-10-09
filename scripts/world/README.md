@@ -9,6 +9,10 @@ backdrop/landmark dressing. See `PLANET_GENERATOR.md` for the pipeline contract.
 | `planet_generator.gd` | feature area | The cook: recipe → painted ball (map or invented), for Sun/planets/moons; lazy close extras |
 | `surface_recipe.gd` | data | `SurfaceRecipe` — resolves per-body geology profile (world defaults + overrides) |
 | `star_recipe.gd` | data | Spectral estimates, visible colors, physical exposure and validated optional stellar visuals |
+| `black_hole_recipe.gd`, `black_hole_renderer.gd` | recipe / rendering | Kerr horizon, ISCO, photon-orbit and flow parameters; bounded Kerr ray rendering, deterministic hotspots and display-compressed flares |
+| `galactic_core.gd`, `galactic_core_ephemeris.gd` | world / ephemeris | Seeded 3D bulge, nuclear stars and gas; anchored Sagittarius A* system |
+| `galactic_core_distribution.gd` | data | Pure cached physical samples shared by core rendering and ephemeris |
+| `black_hole_background.gd` | rendering | Small, conditional core background pass that includes gas and excludes the ship |
 | `stellar_structures.gd` | feature area | Lazy, bounded 3D corona, dust, wind and aurora batches shared by near and sky stars |
 | `terrain_sampler.gd` | feature area | `TerrainSampler` — the ONE height function; mesh, contact kill, and props all sample it |
 | `surface_patch.gd` | feature area | Local bird-view ground tile just above the kill line (hills, water, lit real-scale kit props). Off-thread ring batches; one ring committed per frame; globe stays under a lagging tile |

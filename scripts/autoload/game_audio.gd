@@ -101,6 +101,14 @@ const AIR_RUMBLE_FULL_LOAD := _FM.AIR_LOAD_TARGET_FRAC
 # rather than competing with it (mirrors the old -13 vs -9 relative gap).
 const AIR_RUMBLE_MAX_DB := -26.0
 const AIR_SMOOTH := 3.0   # dB glide rate per second toward whichever target above
+# Black-hole drone: the local Kerr orbital frequency × 2^17 is the heard pitch. Sgr A*
+# runs ~19 Hz at 6 ISCO radii (where it fades in), 221 Hz at the ISCO, 376 Hz at the
+# horizon. The loop's fundamental is HOLE_DRONE_BASE_HZ; pitch_scale moves it there.
+const HOLE_DRONE_TIME_SCALE := 131072.0
+const HOLE_DRONE_BASE_HZ := 55.0
+const HOLE_DRONE_OFF_DB := -60.0
+const HOLE_DRONE_ONSET_DB := -40.0
+const HOLE_DRONE_MAX_DB := -12.0
 
 var _fire: Array[AudioStreamPlayer] = []
 var _fire_i := 0
@@ -122,6 +130,7 @@ var _engine_duck_db := 0.0      # dB the engine is pulled back (set by main whil
 
 var _air_wind: AudioStreamPlayer
 var _air_rumble: AudioStreamPlayer
+var _hole_drone: AudioStreamPlayer
 
 
 # Pull the engine back under the interstellar ship music. Main feeds this each frame,
@@ -209,6 +218,11 @@ func _ready() -> void:
 	_air_rumble.stream = _make_rumble()
 	_air_rumble.volume_db = AIR_RUMBLE_OFF_DB
 	add_child(_air_rumble)
+
+	_hole_drone = AudioStreamPlayer.new()
+	_hole_drone.stream = _make_hole_drone()
+	_hole_drone.volume_db = HOLE_DRONE_OFF_DB
+	add_child(_hole_drone)
 
 
 # Load an OGG and flag it as looping (no-op / null if the file is missing).
@@ -464,6 +478,57 @@ func update_air(air_load: float, mach: float, delta: float) -> void:
 	elif rumble_target <= AIR_RUMBLE_OFF_DB + 1.0 and _air_rumble.playing \
 			and _air_rumble.volume_db <= AIR_RUMBLE_OFF_DB + 1.0:
 		_air_rumble.stop()
+
+
+# 55 Hz with a 55.5 Hz beat partner, its octave, fifth-above-octave and a sub-octave:
+# every partial completes whole cycles in 2.0 s, so the loop has no seam.
+func _make_hole_drone() -> AudioStreamWAV:
+	var rate := 22050
+	var n := rate * 2
+	var data := PackedByteArray()
+	data.resize(n * 2)
+	for i in n:
+		var t := float(i) / float(rate)
+		var s := sin(TAU * 55.0 * t) * .42 + sin(TAU * 55.5 * t) * .26 + sin(TAU * 27.5 * t) * .22 \
+			+ sin(TAU * 110.0 * t) * .16 + sin(TAU * 165.0 * t) * .08
+		data.encode_s16(i * 2, int(clampf(s * .9, -1.0, 1.0) * 32767.0))
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = rate
+	wav.stereo = false
+	wav.data = data
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_end = n
+	return wav
+
+
+static func hole_drone_db(level: float) -> float:
+	if level <= .001:
+		return HOLE_DRONE_OFF_DB
+	return lerpf(HOLE_DRONE_ONSET_DB, HOLE_DRONE_MAX_DB, clampf(level, 0.0, 1.0))
+
+
+static func hole_drone_pitch(orbit_hz: float) -> float:
+	return clampf(orbit_hz * HOLE_DRONE_TIME_SCALE / HOLE_DRONE_BASE_HZ, .25, 8.0)
+
+
+# orbit_hz: Kerr Keplerian frequency at the ship; level 0..1 proximity (0 = silent,
+# stopped). Driven from Ship._update_hole_cues every frame.
+func update_black_hole(orbit_hz: float, level: float, delta: float) -> void:
+	if _hole_drone == null:
+		return
+	var target := hole_drone_db(level)
+	if target <= HOLE_DRONE_OFF_DB + 1.0 and not _hole_drone.playing:
+		return
+	var k := clampf(2.0 * delta, 0.0, 1.0)
+	_hole_drone.volume_db = lerpf(_hole_drone.volume_db, target, k)
+	if orbit_hz > 0.0:
+		_hole_drone.pitch_scale = lerpf(_hole_drone.pitch_scale, hole_drone_pitch(orbit_hz), k)
+	if target > HOLE_DRONE_OFF_DB + 1.0 and not _hole_drone.playing:
+		_hole_drone.pitch_scale = hole_drone_pitch(orbit_hz)
+		_hole_drone.play()
+	elif target <= HOLE_DRONE_OFF_DB + 1.0 and _hole_drone.volume_db <= HOLE_DRONE_OFF_DB + 1.0:
+		_hole_drone.stop()
 
 
 # Build a ~70 ms low sine blip with a fast decay (no external asset). A slight downward

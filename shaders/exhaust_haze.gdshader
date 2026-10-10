@@ -18,6 +18,7 @@ uniform float flow_speed : hint_range(0.0, 6.0) = 1.4;
 uniform float strength : hint_range(0.0, 0.08) = 0.018;
 uniform float plume_length = 1.0;
 uniform float depth_fade = 0.0;
+uniform bool screen_refraction_enabled = true;
 
 const float INV_TAU = 0.15915494;
 
@@ -38,6 +39,7 @@ void vertex() {
 }
 
 void fragment() {
+	if (!screen_refraction_enabled) discard;
 	float a = axial;
 	float flow = TIME * flow_speed;
 	float ang = atan(local_position.z, local_position.x);

@@ -139,7 +139,9 @@ def lights(sc, scale):
 	sc.collection.objects.link(ao)
 
 
-def restyle():
+def restyle(slug):
+	if slug == "sovereign":
+		return
 	for m in bpy.data.materials:
 		d = LOOK.get(m.name)
 		if not d or not m.use_nodes:
@@ -150,10 +152,6 @@ def restyle():
 		p.inputs["Base Color"].default_value = (*d["color"], 1)
 		p.inputs["Metallic"].default_value = d["metallic"]
 		p.inputs["Roughness"].default_value = d["rough"]
-		if arg("--ship", None) in ("sovereign", "8") and m.name == "Hull_Paint":
-			p.inputs["Base Color"].default_value = (.55, .58, .64, 1)
-			p.inputs["Metallic"].default_value = .65
-			p.inputs["Roughness"].default_value = .32
 		if "coat" in d:
 			p.inputs["Coat Weight"].default_value = d["coat"]
 			p.inputs["Coat Roughness"].default_value = 0.08
@@ -166,7 +164,7 @@ def import_ship(slug):
 	for o in new:
 		if o.type == "EMPTY":
 			o.hide_render = True
-	restyle()
+	restyle(slug)
 	bpy.context.view_layer.update()
 	return new
 

@@ -8,11 +8,12 @@ The Class II cruiser is the reference for this layered arrangement.
 | File | Role |
 |---|---|
 | `build_ships.py` | Builds editable sources and exports fleet hulls |
-| `sovereign.py` | Tier 8 beveled armor, packed brushed-metal maps, panoramic bridge, half-length outer housings with ventilators, layered octagonal drives |
+| `sovereign.py` | Tier 8 matte armor with packed wear/finish maps, small bridge windows, radiator banks, coolant service channels, half-length housings and layered octagonal drives |
 | `ship_common.py`, `sleek.py` | Shared modelling helpers |
 | `sources/*.blend` | Editable hull parts, engine shoulders, armor and sockets |
 | `render_ships.py` | Side, rear, top and three-quarter views of game exports |
-| `concepts/fleet-direction.png`, `concepts/prompt.txt` | GPT Image reference and generation prompt |
+| `concepts/fleet-direction.png`, `concepts/prompt.txt` | GPT Image fleet reference and generation prompt |
+| `concepts/sovereign-realism.png`, `concepts/sovereign-realism-prompt.txt` | GPT Image reference for Sovereign's 2026-10-09 realism pass |
 | `test_ship_export.py` | Checks nozzle/socket alignment after manual transforms and parenting |
 | `build_modules.py`, `module_common.py` | Builds weapon and landing pad modules |
 | `render_modules.py` | Module previews |
@@ -20,6 +21,8 @@ The Class II cruiser is the reference for this layered arrangement.
 Open a file such as `sources/kestrel.blend` in Blender. Parts remain separate, with mirror
 and bevel modifiers intact. Authoring axes are nose +Y and up +Z; one Blender unit is one metre.
 Move each booster socket with its nozzle when editing an engine.
+Sovereign's 225 separate mesh parts are organized into six collections, with mirror and
+bevel modifiers intact and all five finish/wear images packed into the source.
 
 After saving a manual edit, export that source into the game without regenerating it:
 

@@ -23,13 +23,15 @@ def finish_materials():
 	image.colorspace_settings.name = "Non-Color"
 	image.pixels.foreach_set(normal.ravel())
 	image.pack()
-	for name, roughness, metallic in [("Hull_Paint", .36, .62), ("Hull_Dark", .52, .24), ("Hull_Steel", .26, .92)]:
+	for name, roughness, metallic in [("Hull_Paint", .59, .46), ("Hull_Dark", .71, .22), ("Hull_Steel", .43, .82)]:
 		material = C.mat(name)
 		nt = material.node_tree
 		bsdf = nt.nodes["Principled BSDF"]
-		grain = rng.normal(0, .013, (256, 256))
+		grain = rng.normal(0, .025, (256, 256))
 		grain = sum(np.roll(grain, i, axis=1) for i in range(-2, 3)) / 5
-		bands = np.sin(np.arange(256)[:, None] * 2 * math.pi / 16) * .015
+		yy, xx = np.mgrid[:256, :256] / 256
+		bands = (.025 * np.sin(2 * math.pi * (xx * 3 + yy * 2))
+			+ .018 * np.cos(2 * math.pi * (xx * 7 - yy * 5)))
 		mr = np.ones((256, 256, 4), dtype=np.float32)
 		mr[:, :, 1] = np.clip(roughness + grain + bands, 0, 1)
 		mr[:, :, 2] = metallic
@@ -46,11 +48,16 @@ def finish_materials():
 		norm_tex = nt.nodes.new("ShaderNodeTexImage")
 		norm_tex.image = image
 		norm = nt.nodes.new("ShaderNodeNormalMap")
-		norm.inputs["Strength"].default_value = .32
+		norm.inputs["Strength"].default_value = .18
 		nt.links.new(norm_tex.outputs["Color"], norm.inputs["Color"])
 		nt.links.new(norm.outputs["Normal"], bsdf.inputs["Normal"])
-	C.mat("Hull_Dark").node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (.023, .028, .034, 1)
-	C.mat("Hull_Steel").node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (.48, .51, .56, 1)
+	C.mat("Hull_Dark").node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (.025, .030, .035, 1)
+	C.mat("Hull_Steel").node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value = (.24, .27, .30, 1)
+	glass = C.mat("Glass").node_tree.nodes["Principled BSDF"]
+	glass.inputs["Base Color"].default_value = (.018, .045, .060, 1)
+	glass.inputs["Roughness"].default_value = .18
+	accent = C.mat("Accent_Emit").node_tree.nodes["Principled BSDF"]
+	accent.inputs["Emission Strength"].default_value = 2
 
 
 def armor_uv(ob):
@@ -180,11 +187,13 @@ def stern_cuff(name, x, z, radius, upper):
 		lip_rings.append(outer + inner)
 	lip = C.loft(name + "EdgeLip", lip_rings, ["Hull_Steel", "Hull_Dark"], caps=(1, 0))
 	C.mirror(lip)
-	for i in [1, 4]:
+	for i in [1]:
 		a = angles[i]
 		p0 = Vector((x + radius * 1.59 * math.cos(a), -113.0, z + sign * radius * 1.59 * math.sin(a)))
 		p1 = Vector((x + radius * 1.59 * math.cos(angles[i+1]), -113.0, z + sign * radius * 1.59 * math.sin(angles[i+1])))
-		path(name + "Nav", [p0, p1], .14, .10, mat="Accent_Emit")
+		mid = (p0 + p1) * .5
+		path(name + "Nav", [mid - (p1 - p0).normalized() * .45,
+			mid + (p1 - p0).normalized() * .45], .12, .08, mat="Accent_Emit")
 
 
 def ventilator(x, yf=0):
@@ -204,18 +213,205 @@ def ventilator(x, yf=0):
 		vane = C.loft("VentilatorSweptVane%d" % i, [front, rear], ["Hull_Steel", "Hull_Dark"], caps=(0, 1), band=[1])
 		C.mirror(vane)
 		C.bevel(vane, .06, seg=1)
-	path("VentilatorStatus", [(x - 4.5, yf + .18, 9.4), (x + 4.5, yf + .18, 9.4)],
+	path("VentilatorStatus", [(x - .5, yf + .18, 9.4), (x + .5, yf + .18, 9.4)],
 		.12, .10, mat="Accent_Emit")
+
+
+def armor_joints(body, stations, name):
+	for i, y in enumerate(stations):
+		S.seam(name + str(i), body, [(y + 1.2, -.78), (y, -.50),
+			(y, .26), (y - 2.3, .73)], .105, .035, mirror=bool(body.x0))
+
+
+def surface_wear():
+	rng = np.random.default_rng(240)
+	n = 512
+	freq = np.fft.fftfreq(n)
+	k2 = freq[:, None] ** 2 + freq[None, :] ** 2
+	noise = rng.normal(0, 1, (n, n))
+	smooth = np.fft.ifft2(np.fft.fft2(noise) * np.exp(-k2 * 6000)).real
+	smooth /= max(smooth.std(), .0001)
+	shade = np.clip(.86 + smooth * .034 + rng.normal(0, .008, (n, n)), .70, .98)
+	for _ in range(160):
+		x, y = rng.integers(0, n, 2)
+		length = int(rng.integers(2, 16))
+		shade[y:min(n, y + length), x] *= rng.uniform(.75, .91)
+	pixels = np.ones((n, n, 4), dtype=np.float32)
+	pixels[:, :, :3] = shade[:, :, None]
+	image = bpy.data.images.new("Sovereign_SurfaceWear", n, n, alpha=False)
+	image.pixels.foreach_set(pixels.ravel())
+	image.pack()
+	for name in ["Hull_Paint", "Hull_Steel", "Hull_Dark"]:
+		nt = C.mat(name).node_tree
+		p = nt.nodes["Principled BSDF"]
+		tex = nt.nodes.new("ShaderNodeTexImage")
+		tex.image = image
+		mix = nt.nodes.new("ShaderNodeMix")
+		mix.data_type = "RGBA"
+		mix.blend_type = "MULTIPLY"
+		mix.inputs[0].default_value = 1
+		mix.inputs[6].default_value = p.inputs["Base Color"].default_value
+		nt.links.new(tex.outputs["Color"], mix.inputs[7])
+		nt.links.new(mix.outputs[2], p.inputs["Base Color"])
+
+
+def flank_armor(body):
+	for i, (yf, yr) in enumerate([(-20, -45), (-48, -73), (-76, -99)]):
+		S.plate("FlankPanelSeal%d" % i, body, yf, yr, (.58, .65), (.93, .94),
+			.10, ny=2, nu=1, mat="Hull_Dark", wall="Hull_Dark")
+		S.plate("FlankArmorPanel%d" % i, body, yf - .3, yr + .3, (.595, .665), (.915, .925),
+			.16, ny=2, nu=1, mat="Hull_Paint", wall="Hull_Steel", bevel_w=.06)
+
+
+def access_hatch(body, name, y, u, length=3.0, width=1.8):
+	w = body.prof(y)[0]
+	du = width / (2 * w)
+	S.plate(name + "Seal", body, y + length / 2, y - length / 2,
+		u - du, u + du, .07, ny=1, nu=1, mat="Hull_Dark", wall="Hull_Dark")
+	S.plate(name + "Cover", body, y + length / 2 - .10, y - length / 2 + .10,
+		u - du + .10 / w, u + du - .10 / w, .09, ny=1, nu=1,
+		mat="Hull_Steel", wall="Hull_Dark")
+	latches = C.Boxes(name + "Latches", ["Hull_Dark"], mirror_x=True)
+	for dy in [-length * .28, length * .28]:
+		p = body.up(y + dy, u)
+		latches.add(p + Vector((0, 0, .15)), (.35, .12, .08))
+	latches.build()
+
+
+def radiator_bank(body, name, yf, yr, u=.27, width=5):
+	w = min(body.prof(yf)[0], body.prof(yr)[0])
+	du = width / (2 * w)
+	S.plate(name + "Well", body, yf, yr, u - du, u + du, .12,
+		ny=2, nu=1, mat="Hull_Dark", wall="Hull_Steel")
+	fins = C.Boxes(name + "Fins", ["Hull_Steel"], mirror_x=True)
+	for y in np.arange(yr + .6, yf - .4, .95):
+		p = body.up(float(y), u)
+		fins.add(p + Vector((0, 0, .24)), (width - .35, .14, .23))
+	fins.build()
+
+
+def service_channels():
+	trays = C.Boxes("ServiceChannelTrays", ["Hull_Dark", "Hull_Steel"], mirror_x=True)
+	for y in [-24, -44, -65, -87]:
+		trays.add((23.1, y, 9.0), (5.1, 17.5, .45))
+		for dy in [-7.5, 7.5]:
+			trays.add((23.1, y + dy, 9.35), (5.1, .35, .45), mi=1)
+	trays.build()
+	for x, height in [(21.4, 9.8), (23.0, 9.5), (24.6, 9.7)]:
+		C.mirror(C.cyl("CoolantMain", (x, -15, height), (x, -98, height), .28, .28, 8, "Hull_Steel"))
+		for y in [-24, -44, -65, -87]:
+			C.mirror(C.cyl("CoolantCoupling", (x, y - .32, height),
+				(x, y + .32, height), .39, .39, 8, "Hull_Dark"))
+	braces = C.Boxes("ServiceChannelBraces", ["Hull_Steel"], mirror_x=True)
+	for y in [-18, -37, -57, -77, -96]:
+		braces.add((23.1, y, 10.05), (5.8, .32, .28))
+	braces.build()
+
+
+def drive_service_detail(name, x, z, radius):
+	axis = Vector((0, -1, 0))
+	for y in [-107, -113.5]:
+		rings = [C.circle((x, y + d, z), axis, radius * scale, 16, phase=math.pi/8)
+			for d, scale in [(0, 1.10), (-.4, 1.10), (-.4, 1.04), (0, 1.04)]]
+		ob = C.loft(name + "HeatShieldBand", rings, ["Hull_Dark", "Hull_Steel"],
+			band=[0, 1, 0], caps=(0, 0))
+		C.mirror(ob)
+	for i in range(8):
+		a = math.pi/8 + i * math.pi/4
+		def p(y, scale):
+			return Vector((x + radius * scale * math.cos(a), y, z + radius * scale * math.sin(a)))
+		C.mirror(C.cyl(name + "Feedline", p(-101, 1.18), p(-117.5, 1.16), .12, .12, 6, "Hull_Steel"))
+		C.mirror(C.cyl(name + "Fastener", p(-118.4, 1.03), p(-118.8, 1.03), .19, .19, 6, "Hull_Dark"))
+		liner = [C.circle((x, y, z), axis, radius * r, 8, phase=math.pi/8)[i] for y, r in
+			[(-118.7, .80), (-111.2, .645)]]
+		C.mirror(C.cyl(name + "NozzleLinerRib", liner[0], liner[1], .07, .07, 5, "Hull_Steel"))
+
+
+def command_bridge():
+	outline = [Vector((x * .77, (y + 26) * .62 - 26, 0)) for x, y in
+		[(0, -4), (8, -13), (10.4, -23), (10.4, -39), (6.5, -50),
+		(-6.5, -50), (-10.4, -39), (-10.4, -23), (-8, -13)]]
+	rings = [[(p.x * scale, p.y, z) for p in outline] for z, scale in
+		[(12.3, 1.12), (13.7, 1), (15.2, .96), (15.6, 1.02)]]
+	bridge = C.loft("ArmoredCommandBridge", rings, ["Hull_Paint", "Hull_Steel"],
+		band=[0, 0, 1], caps=(0, 0))
+	C.bevel(bridge, .10, seg=2)
+	slab("BridgeRoof", [(p.x * 1.03, p.y, 15.65) for p in outline],
+		thick=.24, mirrored=False)
+	for a, b in zip(outline, outline[1:] + outline[:1]):
+		if max(a.y, b.y) < -38:
+			continue
+		tangent = (b - a).normalized()
+		normal = Vector((-tangent.y, tangent.x, 0))
+		n = max(1, int((b - a).length / 2.6))
+		for i in range(n):
+			c = a.lerp(b, (i + .5) / n)
+			c.x *= .98
+			c.z = 14.45
+			for name, width, height, offset, material in [
+				("BridgeWindowGasket", 2.0, .88, .09, "Hull_Dark"),
+				("BridgeWindow", 1.72, .62, .115, "Glass")]:
+				p = c + normal * offset
+				points = [p + tangent * dx + Vector((0, 0, dz)) for dx, dz in
+					[(-width/2, -height/2), (width/2, -height/2),
+					(width/2, height/2), (-width/2, height/2)]]
+				C.loft(name, [points, [q - normal * .04 for q in points]],
+					[material], caps=(0, 0))
+	for y in [-18, -31]:
+		C.cyl("BridgeSensorBase", (0, y, 15.9), (0, y, 16.25), .65, .5, 12, "Hull_Dark")
+		C.cyl("BridgeSensorMast", (0, y, 16.25), (0, y, 18.2), .08, .045, 8, "Hull_Steel")
+	roof = C.Boxes("BridgeRoofEquipment", ["Hull_Dark", "Hull_Steel"], mirror_x=False)
+	roof.add((0, -26, 15.98), (4, 5.5, .3))
+	for y in np.arange(-28, -24, .5):
+		roof.add((0, float(y), 16.17), (3.6, .1, .12), mi=1)
+	roof.build()
+
+
+def organize_source():
+	groups = {name: bpy.data.collections.new(name) for name in
+		["01 Hull and armor", "02 Bridge and sensors", "03 Thermal and services",
+		"04 Propulsion", "05 Navigation", "06 Gameplay sockets"]}
+	for group in groups.values():
+		bpy.context.scene.collection.children.link(group)
+	for ob in list(bpy.context.scene.objects):
+		name = ob.name
+		if name.startswith("SOCKET_"):
+			group = "06 Gameplay sockets"
+		elif "Bridge" in name or "Command" in name:
+			group = "02 Bridge and sensors"
+		elif "Nav" in name or "Status" in name:
+			group = "05 Navigation"
+		elif any(term in name for term in ["Drive", "UpperDeck", "LowerCradle", "Rcs"]):
+			group = "04 Propulsion"
+		elif any(term in name for term in ["Radiator", "Service", "Coolant", "Ventilator", "Hatch"]):
+			group = "03 Thermal and services"
+		else:
+			group = "01 Hull and armor"
+		for collection in list(ob.users_collection):
+			collection.objects.unlink(ob)
+		groups[group].objects.link(ob)
+	for material in bpy.data.materials:
+		material.diffuse_color = material.node_tree.nodes["Principled BSDF"].inputs["Base Color"].default_value
+	bpy.context.scene.unit_settings.system = "METRIC"
+	bpy.context.scene["design_revision"] = "2026-10-09 functional-scale realism"
+	for screen in bpy.data.screens:
+		for area in screen.areas:
+			if area.type == "VIEW_3D":
+				area.spaces.active.clip_end = 5000
+				area.spaces.active.region_3d.view_distance = 285
+				area.spaces.active.region_3d.view_location = (0, -4, 2)
+				area.spaces.active.region_3d.view_rotation = Vector((-0.95, 1, .65)).to_track_quat("Z", "Y")
+				area.spaces.active.shading.type = "MATERIAL"
 
 
 def build(k):
 	finish_materials()
 	paint = C.mat("Hull_Paint").node_tree.nodes["Principled BSDF"]
-	paint.inputs["Base Color"].default_value = (.55, .58, .64, 1)
-	paint.inputs["Metallic"].default_value = .65
+	paint.inputs["Base Color"].default_value = (.32, .35, .39, 1)
+	paint.inputs["Metallic"].default_value = .46
 	nozzle = C.mat("Nozzle_Emit").node_tree.nodes["Principled BSDF"]
 	nozzle.inputs["Emission Color"].default_value = (.12, .65, 1, 1)
-	nozzle.inputs["Emission Strength"].default_value = 3
+	nozzle.inputs["Emission Strength"].default_value = .8
 
 	b = ArmorBody([(120, 0, 1, 1, 1), (109, 1.2, 2, .3, -1), (77, 3.4, 3.5, .3, -2),
 		(42, 6, 5, .3, -3.7), (8, 14, 6.8, .3, -5.5), (-34, 20, 7.5, .3, -7),
@@ -233,13 +429,19 @@ def build(k):
 		k.hull(name, body, stations=stations, paint=1, dark=1, bevel=False)
 	ventilator(34)
 
-	ray(b, "SpearBlackRay", 107, 12, .1, .7, .2)
-	ray(prong, "ProwSweptRay", 99, -53, -.15, .55, .28)
-	ray(prong, "ProwInnerRay", 74, -48, -.45, -.74, .17)
-	ray(shoulder, "ShoulderMainRay", -10, -100, .48, -.4, .28)
-	ray(shoulder, "ShoulderOuterRay", -26, -100, .80, .38, .15)
-	ray(shoulder, "ShoulderInnerRay", -26, -98, .02, -.76, .12)
-	ray(deck, "CommandRay", 12, -99, .12, .75, .20)
+	ray(b, "SpearBlackRay", 107, 12, .1, .7, .08)
+	ray(prong, "ProwSweptRay", 99, -53, -.15, .55, .09)
+	ray(shoulder, "ShoulderMainRay", -10, -100, .70, .82, .10)
+	armor_joints(prong, [81, 53, 23, -10, -38], "ProwExpansionJoint")
+	armor_joints(b, [92, 62, 31], "KeelExpansionJoint")
+	armor_joints(shoulder, [-21, -49, -76, -95], "HousingExpansionJoint")
+	flank_armor(shoulder)
+	for y, u in [(64, .10), (30, -.22), (-8, .18), (-39, -.18)]:
+		access_hatch(prong, "ProwServiceHatch", y, u)
+	for yf, yr in [(-29, -45), (-54, -71), (-80, -96)]:
+		radiator_bank(shoulder, "DriveRadiator", yf, yr, u=.24, width=5.3)
+	for y in [-17, -49, -76]:
+		access_hatch(shoulder, "DriveServiceHatch", y, -.28, length=3.8, width=2.6)
 
 	k.blade("MantleStructure", [((23, 2, -1), 84, 4), ((46, -32, -1), 59, 3),
 		((61, -88, -2), 17, .7)], spans=3, tip_light=False, mats=("Hull_Dark", "Hull_Dark"))
@@ -248,21 +450,15 @@ def build(k):
 	slab("WingSweptRay", [(39, -32, 4.35), (42, -35, 4.1),
 		(55, -85, 1), (53, -86, 1.2)], thick=.07, paint="Hull_Dark")
 
-	bridge_outline = [(0, -4), (8, -13), (10.4, -23), (10.4, -39), (6.5, -50),
-		(-6.5, -50), (-10.4, -39), (-10.4, -23), (-8, -13)]
-	rings = [[(x * scale, y, z) for x, y in bridge_outline] for z, scale in [(11.5, 1.18), (13.3, 1), (15.8, .92), (16.4, .91)]]
-	bridge = C.loft("PanoramicBridge", rings, ["Hull_Paint", "Hull_Steel", "Glass"], band=[0, 2, 1], caps=(0, 0))
-	C.bevel(bridge, .20, seg=2)
-	slab("BridgeRoof", [(x * .92, y, 16.45) for x, y in bridge_outline], thick=.55, mirrored=False)
-	slab("BridgeForeApron", [(0, 8, 9.8), (8.6, -12, 12.7), (0, -5, 13.5)], thick=.35)
-	slab("BridgeAftApron", [(0, -45, 14.3), (7, -46, 13.6), (9, -60, 11.9), (0, -69, 11.8)], thick=.45)
-	window_frames = C.Boxes("BridgeMullions", ["Hull_Steel"], mirror_x=True)
-	for y in [-23, -31, -39]:
-		window_frames.add((10.0, y, 14.6), (.20, .20, 2.6), rot_x=-.08)
-	window_frames.build(bevel_w=.06)
+	command_bridge()
+	slab("BridgeForeApron", [(0, 3, 10.7), (6.2, -15, 12.7), (0, -12, 13.1)], thick=.25)
+	slab("BridgeAftApron", [(0, -39, 13.9), (6, -40, 13.3), (8, -52, 12.7), (0, -58, 12.5)], thick=.25)
+	radiator_bank(deck, "CommandThermal", -55, -73, u=.30, width=3.8)
 
 	inner = drive("InnerDrive", 10, -2.2, 5.5)
 	outer = drive("OuterDrive", 34, -3.2, 8.4)
+	drive_service_detail("InnerDrive", 10, -2.2, 5.5)
+	drive_service_detail("OuterDrive", 34, -3.2, 8.4)
 	handoff = ArmorBody([(-54, 0, 10.3, 10.3, 10.3), (-66, 6, 11.9, 8.5, 7.8),
 		(-82, 8.4, 11.2, 6.9, 5.8), (-100, 7.1, 8.7, 5.1, 4.2),
 		(-108, 4.7, 7.9, 4.3, 3.8)], x0=10)
@@ -272,10 +468,11 @@ def build(k):
 		stern_cuff(name + "UpperDeck", x, z, radius, True)
 		stern_cuff(name + "LowerCradle", x, z, radius, False)
 
-	for x, z in [(23, 8.5), (28, 7.2)]:
-		C.mirror(C.cyl("ChannelConduit", (x, -5, z), (x, -100, z), .38, .38, 8, "Hull_Steel"))
-	S.chine_strip("ProwNav", prong, 89, -43, .99, .22, .12, n=18)
-	S.chine_strip("DriveNav", shoulder, -35, -93, .99, .24, .12, n=18)
+	service_channels()
+	for y in [82, 18, -36]:
+		S.chine_strip("ProwNav", prong, y, y - 1.5, .99, .16, .09, n=1)
+	for y in [-39, -89]:
+		S.chine_strip("DriveNav", shoulder, y, y - 1.5, .99, .16, .09, n=1)
 
 	k.pair("BOOSTER", lambda s: Vector((10 * s, inner.y, inner.z)))
 	k.pair("BOOSTER", lambda s: Vector((34 * s, outer.y, outer.z)))
@@ -292,3 +489,5 @@ def build(k):
 	for ob in bpy.data.objects:
 		if ob.type == "MESH":
 			armor_uv(ob)
+	surface_wear()
+	organize_source()

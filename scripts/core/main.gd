@@ -21,6 +21,10 @@ extends Node3D
 
 var ship: Ship
 var galaxy: GalaxyModel              # the Milky Way model, hidden (the HYG field is the sky)
+var galactic_core: GalacticCore
+var black_hole_portal: CanvasLayer
+const HorizonPortal := preload("res://scripts/core/black_hole_portal.gd")
+var catalog_starfield: Starfield
 var _sun_light: DirectionalLight3D
 var _fill_light: DirectionalLight3D
 var planets: PlanetSystem
@@ -136,6 +140,9 @@ var music: MusicDirector
 # ~1e10 (≈1200 ly) is far above anything legitimate yet far below a corrupt ~8.7e11; a saved
 # position beyond it is discarded on load. See _restore_location.
 const MAX_SANE_POS := 1.0e10
+
+func _max_sane_position() -> float:
+	return 60000.0 * Ephemeris.UNITS_PER_LY if current_system == SystemDB.SAGITTARIUS_A else MAX_SANE_POS
 const HOME_PAD_ID := "kennedy_lc39a"
 
 
@@ -148,10 +155,13 @@ func _ready() -> void:
 	add_child(music)
 
 	# Fixed star backdrop on the world root (never rotates with the ship).
-	add_child(Starfield.new())
+	catalog_starfield = Starfield.new()
+	add_child(catalog_starfield)
 	# Galaxy node stays hidden: an outside-in spiral would be a lie; the HYG field is the real band.
 	galaxy = GalaxyModel.new()
 	add_child(galaxy)
+	galactic_core = GalacticCore.new()
+	add_child(galactic_core)
 
 	# Player ship (visual + flight). Pinned at origin; we move the universe.
 	ship = Ship.new()
@@ -188,6 +198,7 @@ func _ready() -> void:
 	# detail instead of washing pale. Stars/planets are emissive/unshaded, so the
 	# "dots and glow" look is untouched. Shadows off = nearly free on a potato.
 	var sun_dir: Vector3 = eph.rel_km(eph.primary_star, eph.spawn_body()).normalized()
+	if sun_dir.length_squared() < .1: sun_dir = Vector3.RIGHT
 	_sun_light = DirectionalLight3D.new()
 	var sun_light := _sun_light
 	sun_light.light_energy = 1.05
@@ -316,6 +327,7 @@ func _ready() -> void:
 		ship._cam_zoom_smooth = ship._cam_zoom # snap the eased value too — no visible 1.0->0.45 dolly on boot
 
 	_restore_location()   # resume where you left off (system + position + hull)
+	_update_scene_decorations()
 
 	# Onboarding is now the GETTING STARTED quest (always on, surfaced as the tip + J-log
 	# questline). The tutor's scripted drip is retired — it stays only as the occasional
@@ -342,9 +354,9 @@ func _restore_location() -> void:
 	# coordinate, ~8.7e11 units). The offset is ALWAYS a small local coord by design, so anything
 	# this enormous is garbage — drop it and keep the arrival/START position instead of restoring
 	# nonsense (which would re-show the piled-up "From Earth" number and look unfixed).
-	if _has_saved_pos and _saved_pos.length() > MAX_SANE_POS:
+	if _has_saved_pos and _saved_pos.length() > _max_sane_position():
 		_has_saved_pos = false
-	if _saved_anchor != "" and Ephemeris.has_pos(_saved_anchor) and _saved_off.length() < MAX_SANE_POS:
+	if _saved_anchor != "" and Ephemeris.has_pos(_saved_anchor) and _saved_off.length() < _max_sane_position():
 		_anchor_ship(_saved_anchor)
 		ship.relocate(_saved_off)
 		if _saved_surface_off is Vector3:
@@ -431,6 +443,8 @@ func _perf_mark(key: String, t0: int) -> void:
 
 
 func _process(delta: float) -> void:
+	if black_hole_portal != null: return
+	_update_scene_decorations()
 	combat.plasma.speed_multiplier = plasma_speed_multiplier
 	combat.plasma.damage_multiplier = plasma_damage_multiplier
 	_update_holds(delta)
@@ -443,7 +457,11 @@ func _process(delta: float) -> void:
 		ship.pending_frame_shift = Vector3.ZERO
 	_pt = _perf_t0()
 	planets.refresh(ship.anchor_off, delta, ship.anchor_name, ship.velocity)
+	galactic_core.refresh(ship.anchor_off, ship.anchor_name)
+	catalog_starfield.visible = current_system != SystemDB.SAGITTARIUS_A
 	_perf_mark("planets_refresh", _pt)
+	_update_black_hole_horizon(delta)
+	if black_hole_portal != null: return
 	_reanchor_to_nearest()
 	_update_solar_light()
 	# Hand the ship the SAME height function the ground rings and the contact kill
@@ -514,6 +532,12 @@ func _process(delta: float) -> void:
 	_pt = _perf_t0()
 	hud.refresh()
 	_perf_mark("hud_refresh", _pt)
+
+
+func _update_scene_decorations() -> void:
+	for child in get_children():
+		if child is Node3D and child.scene_file_path == "res://assets/Astronaut.glb":
+			child.visible = current_system == SystemDB.SOL
 
 
 
@@ -678,6 +702,18 @@ func _save_profile() -> void:
 				var inv := eph.surface_basis(ship.anchor_name).inverse()
 				cfg.set_value("player", "surface_off", ship.body_local(eph.surface_basis(ship.anchor_name), ship.anchor_off, true, eph.surface_angle(ship.anchor_name)))
 				cfg.set_value("player", "surface_basis", inv*ship.transform.basis)
+		if black_hole_portal != null:
+			var safe_offset: Vector3 = black_hole_portal.return_direction * (2.0*Ephemeris.KM_PER_AU)
+			var radial := safe_offset.normalized()
+			var up := Vector3.RIGHT if absf(radial.dot(Vector3.UP)) > .99 else Vector3.UP
+			cfg.set_value("player", "system", SystemDB.SAGITTARIUS_A)
+			cfg.set_value("player", "anchor", "Sagittarius A*")
+			cfg.set_value("player", "off", safe_offset)
+			cfg.set_value("player", "pos", safe_offset)
+			cfg.set_value("player", "star_velocity", eph.circular_velocity("Sagittarius A*",safe_offset,radial.cross(up)))
+			cfg.set_value("player", "landing_site", "")
+			if cfg.has_section_key("player", "surface_off"): cfg.erase_section_key("player", "surface_off")
+			if cfg.has_section_key("player", "surface_basis"): cfg.erase_section_key("player", "surface_basis")
 	cfg.save(GameState.profile_path())
 
 
@@ -1305,6 +1341,69 @@ var _prev_body := ""
 var _surface_position_revision := -1
 
 
+# Parks at a black hole ride the circular orbit of the force the ship integrates;
+# standing still there is already a radial plunge. Zero everywhere else.
+func _park_velocity() -> Vector3:
+	if eph.black_hole().get("name", "") != ship.anchor_name:
+		return Vector3.ZERO
+	var radial := ship.anchor_off.normalized()
+	var up := Vector3.RIGHT if absf(radial.dot(Vector3.UP)) > .99 else Vector3.UP
+	return eph.circular_velocity(ship.anchor_name, ship.anchor_off, radial.cross(up))
+
+
+func cancel_horizon_recovery() -> void:
+	if black_hole_portal != null:
+		black_hole_portal.close()
+		black_hole_portal = null
+	if not _skin_dying or not eph.is_black_hole(_skin_body): return
+	_skin_dying = false
+	_skin_t = 0.0
+	_skin_body = ""
+	ship.locked = false
+	hud.set_death(false)
+
+
+func _update_black_hole_horizon(delta: float) -> void:
+	if black_hole_portal != null: return
+	if not eph.is_black_hole(eph.primary_star): return
+	if _skin_dying:
+		_skin_t += delta
+		if _skin_t >= 2.5:
+			_skin_finish()
+			ship.velocity = _park_velocity()
+			planets.refresh(ship.anchor_off, 0.0, ship.anchor_name, ship.velocity)
+		return
+	if _tp_active or docked: return
+	var body: String = eph.primary_star
+	if not ship.horizon_crossed and ship.to_body(body).length() > eph.body_radius_km(body): return
+	black_hole_portal = HorizonPortal.new()
+	add_child(black_hole_portal)
+	black_hole_portal.begin(self)
+
+
+func return_from_black_hole_portal() -> void:
+	if black_hole_portal == null: return
+	var direction: Vector3 = black_hole_portal.return_direction
+	black_hole_portal.close()
+	black_hole_portal = null
+	_anchor_ship("Sagittarius A*")
+	ship.relocate(direction * (2.0*Ephemeris.KM_PER_AU))
+	ship.velocity = _park_velocity()
+	ship.locked = false
+	ship.horizon_crossed = false
+	ship.autopilot = false
+	ship.auto_cruise = false
+	ship.time_rate = 1.0
+	ship._time_idx = 0
+	ship._kill_turn_rates()
+	ship.face_toward(-ship.anchor_off)
+	planets.refresh(ship.anchor_off,0.0,ship.anchor_name,ship.velocity)
+	galactic_core.refresh(ship.anchor_off,ship.anchor_name)
+	hud.toast = "Welcome back. Sagittarius A* · 2 AU"
+	hud.toast_t = 4.0
+	_save_profile()
+
+
 func _update_skin_kill(_delta: float) -> void:
 	# Historical name retained for callers. Surface contact is now non-lethal
 	# and independent of FlightMode.kill_allowed()/the developer death toggle.
@@ -1375,7 +1474,7 @@ func _skin_finish() -> void:
 	_anchor_ship(park)
 	ship.relocate(Ephemeris.geo_start_pos() if ship.anchor_name == home \
 		else Ephemeris.sweet_spot_off(ship.anchor_name))
-	ship.velocity = Vector3.ZERO
+	ship.velocity = _park_velocity()
 	ship.face_toward(-ship.anchor_off)
 	combat.player_hp = ship.max_hp
 	hud.toast = "▲  respawn  ·  safe park above %s" % (who if who != "" else home)
@@ -1386,6 +1485,7 @@ func _skin_finish() -> void:
 # world and park at its spawn offset (km). Callers outside boot/restore go through
 # travel_to, which gates unreached systems.
 func _arrive(system_id: String) -> void:
+	if black_hole_portal != null: cancel_horizon_recovery()
 	if SystemDB.star_row(system_id).is_empty():
 		system_id = SystemDB.SOL
 	_skin_dying = false
@@ -1399,12 +1499,15 @@ func _arrive(system_id: String) -> void:
 	var first_visit := not GameState.visited.has(system_id)
 	GameState.visited[system_id] = true       # now a teleport destination from any dock
 	current_system = system_id
+	_update_scene_decorations()
 	Ephemeris.switch_system(system_id)
 	planets.load_system(SystemDB.bodies(system_id))
 	if ship.camera:
 		ship.camera.far = Ephemeris.CAM_RENDER_FAR_KM
 	ship.set_anchor(Ephemeris.spawn_body())
 	ship.relocate(Ephemeris.spawn_pos())
+	if not eph.black_hole().is_empty():
+		ship.velocity = _park_velocity()
 	ship.face_toward(-ship.anchor_off)        # look back toward the system's star
 	props.set_system(system_id)                    # park this system's station beside the spawn
 	# A large alien swarm haunts every star except peaceful Sol; Vortex (the boss)
@@ -1439,6 +1542,7 @@ func _arrive(system_id: String) -> void:
 const DOCK_SLOW_MARGIN := 40.0
 
 func _input(event: InputEvent) -> void:
+	if black_hole_portal != null: return
 	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	var key: int = event.keycode

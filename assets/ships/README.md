@@ -18,14 +18,15 @@ painted fairings (dark underside) ending in steel collars and recessed Nozzle_Em
 | 5 | osprey | Corvette: tall raised dorsal spine carrying the bridge, long raked ventral keel blade, anhedral stabilisers, three drives | 120 | 23014 |
 | 6 | condor | Strike cruiser: flat faceted wedge, bridge tower, swept wings with tip fins, layered engine block with upper pair aft of the lower faired pair | 150 | 24528 |
 | 7 | albatross | Flagship: swept hammer prow with prow fins, slim neck, three stepped armour decks up to a bridge tower, wide dark engine block with four drives | 200 | 23612 |
-| 8 | sovereign | Endgame flagship: triple spear prow, one swept wing pair, angular titanium shell with black rays, panoramic bridge, layered stern decks, four octagonal fusion drives, recessed outer ventilators | 240 | 18168 |
+| 8 | sovereign | Endgame flagship: triple spear prow, matte titanium armor, small armored bridge windows, radiator banks, exposed coolant service channels, one swept wing pair, four layered octagonal drives | 240 | 25396 |
 
 Sovereign alone has a 30,000-triangle ceiling (20% above the fleet's 25,000 ceiling).
 Its four nozzle mouths lie behind all armor; the socket test enforces exhaust clearance.
-Outer housings are approximately 120 m long, half the hull length. Four packed finish maps
-(one shared 512px normal and three 256px metallic/roughness maps) preserve the six material surfaces.
+Outer housings are approximately 120 m long, half the hull length. Five packed maps
+(a shared 512px wear/albedo, a shared 512px normal and three 256px metallic/roughness maps)
+preserve the six material surfaces and remain compatible with hangar recoloring.
 Source: `tools/blender/sources/sovereign.blend`; builder: `tools/blender/sovereign.py`.
-AI concept and prompt: `tools/blender/concepts/sovereign-direction.png` and `sovereign-prompt.txt`.
+Latest AI concept and prompt: `tools/blender/concepts/sovereign-realism.png` and `sovereign-realism-prompt.txt`.
 
 ## Commands (repo root, Blender 4.2)
 

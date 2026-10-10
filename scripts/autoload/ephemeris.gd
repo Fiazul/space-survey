@@ -9,7 +9,9 @@ var rotation_clock := _ROT.new()
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
 const _SOL := preload("res://scripts/world/sol_ephemeris.gd")
 const _GEN := preload("res://scripts/world/generated_ephemeris.gd")
+const _CORE := preload("res://scripts/world/galactic_core_ephemeris.gd")
 const _SYS := preload("res://scripts/world/system_ephemeris.gd")
+const _BHG := preload("res://scripts/flight/black_hole_gravity.gd")
 # Real positions for every physical star system, one SystemEphemeris per star
 # (docs/adr/0002). Sol is SolEphemeris (JPL/NASA, geocentric: Earth at the
 # origin); other physical systems are GeneratedEphemeris (star at the origin).
@@ -124,7 +126,7 @@ func system_for(id: String) -> _SYS:
 	var row: Dictionary = _system_db().star_row(id)
 	if row.is_empty():
 		return _sol
-	var e: _SYS = _GEN.build(id, row, rotation_clock.unix_s)
+	var e: _SYS = _CORE.build(id, row) if row.get("stellar_type", "") == "black_hole" else _GEN.build(id, row, rotation_clock.unix_s)
 	_systems[id] = e
 	return e
 
@@ -185,6 +187,33 @@ func rel_km(body_name: String, anchor: String) -> Vector3:
 
 func is_star(body_name: String) -> bool:
 	return _sys.is_star(body_name)
+
+func is_black_hole(body_name: String) -> bool:
+	return _sys._entry(body_name).get("stellar_type", "") == "black_hole"
+
+var _hole_sys: _SYS = null
+var _hole := {}
+
+# Kerr parameters of the current system's black hole (BlackHoleGravity.params), {} when
+# the primary is not one. Ship._newton_g reads this per substep, so it is cached.
+func black_hole() -> Dictionary:
+	if _hole_sys != _sys:
+		_hole_sys = _sys
+		_hole = {}
+		var star := primary_star
+		if is_black_hole(star):
+			var e: Dictionary = _sys._entry(star)
+			_hole = _BHG.params(star, float(e.get("mu", 0.0)), float(e.get("radius", 0.0)), e.get("black_hole", {}))
+	return _hole
+
+
+# Circular-orbit velocity along `direction` at `offset` from the body's centre, under
+# the same force the ship integrates (pseudo-Newtonian around a black hole).
+func circular_velocity(body_name: String, offset: Vector3, direction: Vector3) -> Vector3:
+	var hole := black_hole()
+	if not hole.is_empty() and hole.name == body_name:
+		return direction.normalized() * _BHG.circular_speed(hole, offset, direction)
+	return direction.normalized() * sqrt(gm(body_name) / offset.length())
 
 
 func has_drag_air(body_name: String) -> bool:
@@ -314,6 +343,9 @@ func sweet_spot(body_name: String = "") -> Vector3:
 # The same park as sweet_spot(), expressed as an offset from that body's centre —
 # the form the ship's anchored state actually wants (docs/adr/0002).
 func sweet_spot_off(body_name: String) -> Vector3:
+	var entry: Dictionary = _sys._entry(body_name)
+	if entry.get("stellar_type", "") == "black_hole":
+		return Vector3(1.0, .12, 0.0).normalized() * _sys.spawn_park_km()
 	var rad := body_radius_km(body_name)
 	if rad <= 0.0:
 		return Vector3.ZERO

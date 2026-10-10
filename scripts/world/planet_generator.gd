@@ -562,6 +562,8 @@ static func _tex_exists(path: String) -> bool:
 
 static func paint(spec: Dictionary, radius: float) -> Dictionary:
 	var recipe := recipe_for(spec)
+	if recipe.get("stellar", {}).get("type", "") == "black_hole":
+		return BlackHoleRenderer.paint(recipe)
 	var mi := MeshInstance3D.new()
 	var mesh := SphereMesh.new()
 	var physical: bool = spec.get("physical", false)

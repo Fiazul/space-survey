@@ -11,6 +11,7 @@ The player ship: physics, visuals, controls, and hull-specific design data.
 | `plasma_mount_mesh.gd` | geometry | Procedural cannon housing for the primitive fallback ship only |
 | `ship_mesh.gd` | feature area | Stateless mesh/FX helpers: fit/AABB, torch/haze/nozzle-light plume layers, fill-light layer tagging |
 | `anchor_frame.gd` | data | `AnchorFrame` — 64-bit arithmetic for the anchored ship frame (docs/adr/0002); static, autoload-free |
+| `black_hole_gravity.gd` | data | `BlackHoleGravity` — pseudo-Newtonian Kerr force (Artemova et al. 1996) the ship integrates near a black hole, plus orbit/plunge/clock-rate analysis for the HUD and fear cues; static, autoload-free |
 | `flight_mode.gd` | feature area | Zone (CENTER/INSIDE/SKIN/AIR/SPACE) vs mode (LOCAL/CRUISE/AIR) + exclusion-zone math |
 | `turn_carry.gd` | feature area | Sol steering assist carries forward flight; backward falls and lateral drift keep their direction |
 | `touch_controls.gd` | feature area | Mobile multi-touch control overlay, landscape/two-thumb (`--touch` to test on desktop) |
@@ -24,3 +25,5 @@ top-right DEV tap button reveals NODEATH/FASTAIR when dev mode is on. The stick�
 mapping is the pure static `TouchControls.stick_to_cmd()`, and the pinch and hold-zoom
 math are the pure static `TouchControls.pinch_zoom()` and `TouchControls.zoom_step()`,
 both unit-tested in `tools/test_touch_controls.gd`.
+
+Ship uses an explicit gameplay capture rule inside 0.6 AU of the black hole: radial infall overrides speed/thrust/NODEATH and reaches the horizon within four simulation seconds from the boundary. Outside it, pseudo-Newtonian gravity remains in force. See `tools/test_black_hole_capture.tscn`.

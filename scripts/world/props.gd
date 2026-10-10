@@ -123,6 +123,8 @@ func dock_rel(flyer: Ship) -> Vector3:
 func update(flyer: Ship, delta: float) -> void:
 	for it in _items:
 		if not _in_system(it):
+			it.holder.visible = false
+			if it.label != null: it.label.visible = false
 			continue
 		var rel: Vector3 = flyer.to_body(it.body) + it.off
 		it.holder.position = rel

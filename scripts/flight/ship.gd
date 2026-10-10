@@ -3,6 +3,7 @@ extends Node3D
 
 const _FM := preload("res://scripts/flight/flight_mode.gd")
 const _AF := preload("res://scripts/flight/anchor_frame.gd")
+const _BHG := preload("res://scripts/flight/black_hole_gravity.gd")
 # Player ship: loads the Class II cruiser or one of the tiered modular GLB hulls (see SHIP_MODELS), with
 # speed-reactive booster plumes, swappable weapon/pad modules, and arcade 6DOF
 # flight. If a .glb can't be loaded it falls back to a primitive fighter so the
@@ -230,6 +231,12 @@ var mach_number := 0.0         # FlightMode.mach(speed); only meaningful in Sol 
 var last_newton_g := Vector3.ZERO      # true-space g vector, for the HUD G readout
 var last_thrust_accel := Vector3.ZERO  # true-space thrust accel this frame
 var simulation_delta := 0.0 # actual elapsed simulation time of the latest fly()
+var horizon_crossed := false # swept crossing on the bounded Newton substeps
+var hole_captured := false   # forced gameplay infall inside HOLE_CAPTURE_AU
+var hole_orbit := {}         # BlackHoleGravity.orbit() for HUD warnings; {} outside a hole system
+var _hole_orbit_t := 0.0
+var _shake_deg := 0.0        # camera-only plunge shake; never touches ship state
+var _shake_t := 0.0
 var time_rate := 1.0           # Sol coast warp (1 / 5 / 10 / 50 / 100 / 1000)
 var debug_toast := ""          # one-shot note for the HUD (F6/F7/F9 snaps)
 var dev_speed := false         # Sol debug: fat engines + burn-warp so GEO is reachable
@@ -373,6 +380,8 @@ func _debug_circularize() -> void:
 	if tang.length_squared() < 0.0001:
 		tang = radial.cross(Vector3.RIGHT)
 	var v_c := sqrt(maxf(Ephemeris.gm(anchor_name), 1.0) / r)
+	if Ephemeris.black_hole().get("name", "") == anchor_name:
+		v_c = Ephemeris.circular_velocity(anchor_name, anchor_off, tang).length()
 	velocity = tang.normalized() * v_c
 	_time_idx = 0
 	time_rate = 1.0
@@ -513,6 +522,8 @@ func _exclusion_who() -> String:
 
 func _exclusion_km() -> float:
 	var who := _exclusion_who()
+	# A horizon has no chromosphere or entry-braking shell.
+	if Ephemeris.is_black_hole(who): return 0.0
 	var rad: float = nearest_radius if nearest_radius > 1.0 else Ephemeris.body_radius_km(who)
 	return _FM.exclusion_from_center(rad, Ephemeris.atmo_top_km(who), _nearest_is_star())
 
@@ -558,7 +569,11 @@ func _newton_g() -> Vector3:
 	var sx := float(anchor_off.x)
 	var sy := float(anchor_off.y)
 	var sz := float(anchor_off.z)
+	var hole := Ephemeris.black_hole()
+	var hole_name: String = hole.get("name", "")
 	for p in Ephemeris.gravity_bodies():
+		if hole_name != "" and str(p.name) == hole_name:
+			continue
 		var b64: PackedFloat64Array = Ephemeris.pos64(str(p.name))
 		var ax: float = b64[0] - a64[0]
 		var ay: float = b64[1] - a64[1]
@@ -581,6 +596,30 @@ func _newton_g() -> Vector3:
 			gx -= ax * ka
 			gy -= ay * ka
 			gz -= az * ka
+	if hole_name != "":
+		var h64: PackedFloat64Array = Ephemeris.pos64(hole_name)
+		var hx: float = h64[0] - a64[0]
+		var hy: float = h64[1] - a64[1]
+		var hz: float = h64[2] - a64[2]
+		var rx := hx - sx
+		var ry := hy - sy
+		var rz := hz - sz
+		var d2 := rx*rx + ry*ry + rz*rz
+		var a2 := hx*hx + hy*hy + hz*hz
+		var mu: float = hole.gm
+		if mu / d2 >= NEWTON_G_SKIP_THRESHOLD or mu / maxf(a2, 1.0e-6) >= NEWTON_G_SKIP_THRESHOLD:
+			if d2 > 1.0e-6:
+				var d := sqrt(d2)
+				var k := _BHG.pull(hole, d, _BHG.effective_spin(hole, Vector3(-rx, -ry, -rz), velocity)) / d
+				gx += rx * k
+				gy += ry * k
+				gz += rz * k
+			if a2 > 1.0e-6:
+				var ad := sqrt(a2)
+				var ka := _BHG.pull(hole, ad, 0.0) / ad
+				gx -= hx * ka
+				gy -= hy * ka
+				gz -= hz * ka
 	return Vector3(gx, gy, gz)
 
 
@@ -589,6 +628,38 @@ func _newton_g() -> Vector3:
 # is left into one enlarged final substep instead of iterating it out —
 # coarser at that one frame, but bounded cost instead of a linear blow-up.
 const MAX_SUBSTEPS := 64
+# Near a hole each substep covers BlackHoleGravity.STEP_RAD of local orbit, and warp
+# is clamped so a frame needs at most half this budget (_clamp_hole_warp).
+const HOLE_SUBSTEPS := 256
+const HOLE_CAPTURE_AU := 0.6
+const HOLE_CAPTURE_SECONDS := 4.0
+
+# Ship-to-hole offset, 64-bit until the final pack (ADR-0002).
+func _from_hole(hole_name: String) -> Vector3:
+	var h64: PackedFloat64Array = Ephemeris.pos64(hole_name)
+	var a64 := anchor64()
+	return Vector3(float(anchor_off.x) - (h64[0] - a64[0]), float(anchor_off.y) - (h64[1] - a64[1]),
+		float(anchor_off.z) - (h64[2] - a64[2]))
+
+
+func _hole_step_s(hole: Dictionary) -> float:
+	var rel := _from_hole(hole.name)
+	var r := rel.length()
+	var g := _BHG.pull(hole, r, _BHG.effective_spin(hole, rel, velocity))
+	return maxf(_BHG.STEP_RAD * sqrt(r / g), 0.001)
+
+
+# Lowers the applied warp (not the requested one, _time_idx) until a frame fits the
+# substep budget; leaving the hole restores the request.
+func _clamp_hole_warp(delta: float) -> void:
+	var hole := Ephemeris.black_hole()
+	if hole.is_empty() or time_rate <= 1.0:
+		return
+	var budget := HOLE_SUBSTEPS * 0.5 * _hole_step_s(hole)
+	var i := _time_idx
+	while i > 0 and delta * float(TIME_RATES[i]) > budget:
+		i -= 1
+	time_rate = minf(time_rate, TIME_RATES[i])
 
 func _motion_is_continuous() -> bool:
 	return anchor_off == _motion_position and anchor_name == _motion_anchor and surface_position_revision == _motion_revision
@@ -617,9 +688,32 @@ func anchor_distance_km() -> float:
 	return sqrt(x*x+y*y+z*z)
 
 
+func _advance_hole_capture(sim: float, center: Vector3, horizon: float, capture_radius: float) -> void:
+	# Fictional no-escape approach: steering, thrust and developer speed cannot
+	# move the ship outward. Keep faster inbound motion, with a four-second floor.
+	var rel := anchor_off-center
+	var r := rel.length()
+	var outward := rel/r if r > .000001 else Vector3.RIGHT
+	var speed := maxf(-velocity.dot(outward), maxf(capture_radius-horizon,1.0)/HOLE_CAPTURE_SECONDS)
+	velocity = -outward*speed
+	var next_r := r-speed*maxf(sim,0.0)
+	relocate(center+outward*maxf(horizon,next_r))
+	hole_captured = true
+	if next_r <= horizon: horizon_crossed = true
+
+
 func _newton_advance(sim: float) -> void:
+	hole_captured = false
 	var arad := anchor_radius_km()
 	var aair := Ephemeris.atmo_top_km(anchor_name)
+	var hole := Ephemeris.primary_star
+	var horizon := Ephemeris.body_radius_km(hole) if Ephemeris.is_black_hole(hole) else 0.0
+	var hole_center := Ephemeris.rel_km(hole,anchor_name) if horizon > 0.0 else Vector3.ZERO
+	var hole_g := Ephemeris.black_hole()
+	var capture_radius := maxf(horizon,HOLE_CAPTURE_AU*Ephemeris.KM_PER_AU)
+	if horizon > 0.0 and (anchor_off-hole_center).length() <= capture_radius:
+		_advance_hole_capture(sim,hole_center,horizon,capture_radius)
+		return
 	# Computed ONCE for the whole call — see _exclusion_center_off.
 	var ez_km: float = _exclusion_km()
 	var ez_center := _exclusion_center_off()
@@ -633,7 +727,11 @@ func _newton_advance(sim: float) -> void:
 			time_rate = 1.0
 		substeps += 1
 		var dt := minf(left, 0.05 if in_air else 0.25)
-		if substeps >= MAX_SUBSTEPS:
+		if not hole_g.is_empty():
+			# The local orbit, not the 0.25 s cap, bounds accuracy here; the cap would
+			# spend a warped frame's whole budget far out where orbits take days.
+			dt = minf(left, _hole_step_s(hole_g))
+		if substeps >= (MAX_SUBSTEPS if hole_g.is_empty() else HOLE_SUBSTEPS):
 			dt = left
 		# Snap onto the exclusion shell exactly on crossing (velocity is kept
 		# as-is, no cap) so an interplanetary-speed step can't land arbitrarily
@@ -648,6 +746,20 @@ func _newton_advance(sim: float) -> void:
 		velocity += _newton_g() * step_dt
 		_newton_atmo_drag(step_dt)
 		_advance_anchor(velocity * step_dt)
+		if horizon > 0.0:
+			var from_hole := ground_from-hole_center
+			var segment := anchor_off-ground_from
+			var fraction := clampf(-from_hole.dot(segment)/maxf(segment.length_squared(), .000001), 0.0, 1.0)
+			if (from_hole+segment*fraction).length() <= capture_radius:
+				# A huge step must still enter the capture zone on the near side.
+				var segment2 := maxf(segment.length_squared(), .000001)
+				var along := -from_hole.dot(segment)/segment2
+				var closest := from_hole+segment*along
+				var half_chord := sqrt(maxf(capture_radius*capture_radius-closest.length_squared(),0.0)/segment2)
+				var entry := clampf(along-half_chord,0.0,1.0)
+				relocate(ground_from+segment*entry)
+				_advance_hole_capture(left-dt*entry,hole_center,horizon,capture_radius)
+				return
 		_newton_ground(ground_from)
 		_newton_corotate(step_dt)
 		# Entry handshake fires on the exact outside->inside EDGE, tracked here —
@@ -1253,6 +1365,7 @@ func _hold_facility_pad(delta: float) -> bool:
 
 func fly(delta: float) -> void:
 	simulation_delta = delta
+	horizon_crossed = false
 	surface_impact = false
 	_surface_owned_revision = -1
 	if frozen or locked or not landing_site.is_empty(): _level_idle_s = 0.0
@@ -1286,6 +1399,7 @@ func fly(delta: float) -> void:
 		_clear_air_fx()
 		_update_authored_propulsion(0.15, delta)
 		_update_streaks(0.0)
+		_quiet_hole_cues(delta)
 		_update_camera(delta)
 		if audio:
 			audio.engine_off()
@@ -1309,6 +1423,7 @@ func fly(delta: float) -> void:
 		_clear_air_fx()
 		_update_authored_propulsion(0.0, delta)
 		_update_streaks(0.0)   # docked — no motion streaks
+		_quiet_hole_cues(delta)
 		_update_camera(delta)
 		if audio:
 			audio.engine_off()   # engine cut while docked
@@ -1448,6 +1563,7 @@ func fly(delta: float) -> void:
 	_rcs_braking = braking
 
 	_clamp_time_warp(g_thrusting, braking)
+	_clamp_hole_warp(delta)
 	if drop_flash > 0.0:
 		drop_flash = maxf(drop_flash - delta, 0.0)
 	var sim: float = delta * time_rate
@@ -1470,7 +1586,9 @@ func fly(delta: float) -> void:
 
 	if braking:
 		velocity = velocity.lerp(Vector3.ZERO, clampf(BRAKE_RATE * delta, 0.0, 1.0))
-	velocity = velocity.limit_length(MAX_SPEED * boost)
+	# SMBH inspection orbits exceed the legacy cap; limiting them destroys the orbit.
+	if not Ephemeris.is_black_hole(Ephemeris.primary_star):
+		velocity = velocity.limit_length(MAX_SPEED * boost)
 
 	# Platform approach: inside the station's landing zone the speed is force-reduced
 	# so you can actually land. The cap shrinks smoothly with proximity. (dock_approach
@@ -1543,6 +1661,7 @@ func fly(delta: float) -> void:
 
 	# Fat motion streaks during the flip, speed-based otherwise.
 	_update_streaks(maxf(velocity.length(), MAX_SPEED * 0.7) if flipping else velocity.length())
+	_update_hole_cues(delta)
 	_update_camera(delta)
 
 
@@ -1581,6 +1700,10 @@ func _update_authored_propulsion(throttle: float, delta: float) -> void:
 	# Keep a visible idle burn, then increase turbulence and flow with speed.
 	var heat := clampf(_propulsion_power * 1.12 + _propulsion_surge * 0.25, 0.0, 1.0)
 	for propulsion in _authored_propulsion:
+		if propulsion.shader == ShipMesh.EXHAUST_HAZE_SHADER:
+			# The opaque screen copy predates the lens pass; sampling it would
+			# punch stale sky through the disk. The additive exhaust stays lit.
+			propulsion.set_shader_parameter("screen_refraction_enabled", not Ephemeris.is_black_hole(Ephemeris.primary_star))
 		propulsion.set_shader_parameter("power", _propulsion_power * POWER_CEIL)
 		propulsion.set_shader_parameter("flow_speed", lerpf(0.8, 3.1, _propulsion_power))
 		# Exhaust runs orange when cold and blue-white when hot. Torch cones, the
@@ -1683,6 +1806,52 @@ func _stable_basis_slerp(from: Basis, to: Basis, t: float) -> Basis:
 	return Basis(q0.slerp(q1, t)).orthonormalized()
 
 
+# Best sustained acceleration the hull can hold: boosted main engine (dev thrust where
+# it would apply). The plunge warning compares this against the burn it needs.
+func max_thrust_accel() -> float:
+	var t := NEWTON_THRUST * BOOST_MULT
+	return t * DEV_THRUST_MULT if dev_speed and _cruise_ok_now() else t
+
+
+# Fear cues near a black hole, all derived from the real orbit: HUD state (hole_orbit),
+# a drone at the local Kerr orbital frequency (GameAudio scales it audible), and a
+# low-frequency camera shake inside 3 ISCO radii, strongest in a plunge. The shake
+# rotates the camera only.
+func _update_hole_cues(delta: float) -> void:
+	var hole := Ephemeris.black_hole()
+	if hole.is_empty():
+		hole_orbit = {}
+		_quiet_hole_cues(delta)
+		return
+	var rel := _from_hole(hole.name)
+	_hole_orbit_t -= delta
+	if _hole_orbit_t <= 0.0 or hole_orbit.is_empty():
+		hole_orbit = _BHG.orbit(hole, rel, velocity, max_thrust_accel())
+		# A plunge adds the escape-burn search (~8 ms); refresh it at 4 Hz.
+		_hole_orbit_t = 0.25 if hole_orbit.plunging else 0.1
+	hole_orbit["captured"] = hole_captured
+	hole_orbit["capture_radius_au"] = HOLE_CAPTURE_AU
+	var r := rel.length()
+	var a := _BHG.effective_spin(hole, rel, velocity)
+	var plunging: bool = hole_orbit.plunging
+	# A plunge sounds and shakes harder, but only within the same reach: a radial fall
+	# from 7.9 AU is just as doomed and stays silent until it gets close.
+	var level := _BHG.proximity(hole, r, a, 6.0)
+	if plunging:
+		level = sqrt(level)
+	if audio:
+		audio.update_black_hole(_BHG.kepler_hz(hole, r, a), level, delta)
+	var near := _BHG.proximity(hole, r, a, 3.0)
+	var target := 1.2 * sqrt(near) if plunging else .35 * near * near
+	_shake_deg = lerpf(_shake_deg, target, clampf(2.0 * delta, 0.0, 1.0))
+
+
+func _quiet_hole_cues(delta: float) -> void:
+	_shake_deg = lerpf(_shake_deg, 0.0, clampf(4.0 * delta, 0.0, 1.0))
+	if audio:
+		audio.update_black_hole(0.0, 0.0, delta)
+
+
 func _update_camera(delta: float) -> void:
 	if camera == null:
 		return
@@ -1706,6 +1875,11 @@ func _update_camera(delta: float) -> void:
 		* (Basis(Vector3.UP, _look_yaw_s) * Basis(Vector3.RIGHT, _look_pitch_s))
 	var cam_pos := basis * (CAM_OFFSET * _hull_km * maxf(_cam_zoom_smooth, _near_zoom_floor()))
 	camera.global_transform = Transform3D(basis, cam_pos)
+	if _shake_deg > 0.001:
+		_shake_t += delta
+		var amp := deg_to_rad(_shake_deg)
+		camera.rotate_object_local(Vector3.UP, amp * (sin(_shake_t * 4.1) * .6 + sin(_shake_t * 9.7 + 1.3) * .4))
+		camera.rotate_object_local(Vector3.RIGHT, amp * (sin(_shake_t * 5.3 + .7) * .6 + sin(_shake_t * 11.9 + 2.1) * .4))
 	# Clamp the fraction so warp speeds don't blow the FOV out into a fisheye.
 	var speed_frac := clampf(velocity.length() / MAX_SPEED, 0.0, 1.0)
 	camera.fov = lerpf(camera.fov, FOV_BASE + speed_frac * FOV_KICK, clampf(4.0 * delta, 0.0, 1.0))

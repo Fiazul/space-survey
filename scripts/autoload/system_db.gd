@@ -21,6 +21,7 @@ const K2_18 := "k2-18"
 const PROXIMA := "proxima"
 const TRAPPIST := "trappist"
 const ALIEN := "alien"           # the hostile combat zone (Vortex + aliens)
+const SAGITTARIUS_A := "sagittarius_a"
 
 # Catalog stars cook from spectral type. sol.obj is no longer the default sun.
 
@@ -79,6 +80,10 @@ static var STARS := [
 # Authored metadata; non-Sol worlds use the shared seeded generator.
 # `map` overrides the 2D chart position for the imaginary Alien zone.
 static var AUTHORED := [
+	# J2000 radio position (Reid & Brunthaler); GRAVITY 2019 distance 8.178 kpc.
+	{ "id": SAGITTARIUS_A, "name": "Sagittarius A*", "ly": 26673.0,
+		"ra": 266.416837, "dec": -29.007811, "spectral": "SMBH",
+		"stellar_type": "black_hole", "stellar": {"type": "black_hole", "mass_solar": 4.30e6} },
 	{ "id": SOL, "name": "Sol", "ly": 0.0, "ra": 0.0, "dec": 0.0, "spectral": "G2V", "color": Color(1.00, 0.85, 0.30) },
 	{ "id": PROXIMA, "name": "Proxima b", "star_name": "Proxima Centauri", "planet_prefix": "Proxima", "ly": 4.24, "ra": 217.429, "dec": -62.679, "spectral": "M5.5V", "color": Color(1.00, 0.40, 0.24) },
 	{ "id": TRAPPIST, "name": "TRAPPIST-1", "ly": 39.0, "ra": 346.622, "dec": -5.041, "spectral": "M8V", "color": Color(1.00, 0.50, 0.30) },
@@ -138,6 +143,7 @@ static func spectral(id: String) -> String:
 static func family_label(id: String) -> String:
 	var stellar: Dictionary = StarRecipe.resolve(_row(id)).stellar
 	var family := str(stellar.type)
+	if family == "black_hole": return "Milky Way Galactic Core · Supermassive Black Hole"
 	if family == "giant" and float(stellar.temperature_k) <= 5000.0:
 		return "Red Giant"
 	if family in ["pulsar", "magnetar"]:

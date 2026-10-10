@@ -71,6 +71,10 @@ func open_for(name: String) -> void:
 			facts["luminosity"] = "%.5f × Sun" % float(s.luminosity_solar)
 			facts["stellar_basis"] = "Spectral estimate / authored model" if s.estimated else "Solar reference"
 			facts["blurb"] = "No solid landing surface. Heat and radiation rise on approach. Composition: %s." % ", ".join(s.composition)
+			if s.type == "black_hole":
+				facts["temp"] = "No photosphere"
+				facts["stellar_basis"] = "Measured mass · Schwarzschild baseline"
+				facts["blurb"] = "Radius is the event horizon. Lensing includes light capture, the photon ring and warped accretion flow. Plasma colours use an enhanced display; Sagittarius A* is faint in visible light. Ship gravity uses the existing Newton model."
 	_populate(name, facts)
 	_open = true
 	_root.visible = true

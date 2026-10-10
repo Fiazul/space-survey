@@ -21,6 +21,8 @@ const M_ANCHORS := [[0.0,3850.0,.59,.57], [5.0,3060.0,.196,.162],
 	[5.5,2930.0,.156,.123], [8.0,2570.0,.114,.085], [10.0,2300.0,.10,.07]]
 
 static func resolve(spec: Dictionary) -> Dictionary:
+	if spec.get("stellar_type", "") == "black_hole" or spec.get("stellar", {}).get("type", "") == "black_hole":
+		return BlackHoleRecipe.resolve(spec)
 	var name := str(spec.get("name", "Star"))
 	var sp := str(spec.get("spectral", "G2V")).strip_edges().to_upper()
 	var overrides: Dictionary = spec.get("stellar", {})
@@ -228,6 +230,10 @@ static func scene_radius(recipe: Dictionary) -> float:
 static func exposure(recipe: Dictionary, distance: float, rendered_radius: float) -> Dictionary:
 	var s: Dictionary = recipe.stellar
 	var ratio := maxf(distance/maxf(rendered_radius, .000001), 1.0)
+	if s.type == "black_hole":
+		return {"name": recipe.name, "type": "black_hole", "level": 3 if ratio < 1.1 else (1 if ratio < 3.0 else 0),
+			"state": "EVENT HORIZON" if ratio < 1.1 else ("STRONG GRAVITY" if ratio < 3.0 else "NOMINAL"),
+			"flux_w_m2": 0.0, "equilibrium_k": 0.0, "radiation_index": 0.0, "radii": ratio}
 	var flux := SIGMA*pow(float(s.temperature_k),4)/(ratio*ratio)
 	var equilibrium := float(s.temperature_k)/sqrt(2.0*ratio)
 	# UV/wind/remnant indices are gameplay proxies, NOT dose in sieverts.

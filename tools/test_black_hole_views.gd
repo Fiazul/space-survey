@@ -13,6 +13,10 @@ class CoreWorld extends PlanetSystem:
 
 func _ready() -> void:
 	ProfileDir.isolate("test_black_hole_views")
+	var reference_shader := ""
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--shots="): output = argument.trim_prefix("--shots=")
+		elif argument.begins_with("--reference-shader="): reference_shader = argument.trim_prefix("--reference-shader=")
 	get_window().mode = Window.MODE_WINDOWED
 	get_window().size = Vector2i(1280,720)
 	DirAccess.make_dir_recursive_absolute(output)
@@ -29,6 +33,8 @@ func _ready() -> void:
 	camera.make_current()
 	var recipe := BlackHoleRecipe.resolve(SystemDB.star_row(SystemDB.SAGITTARIUS_A))
 	hole = BlackHoleRenderer.paint(recipe).sphere
+	if not reference_shader.is_empty():
+		(hole.material_override as ShaderMaterial).shader = load(reference_shader)
 	var horizon: float = recipe.stellar.horizon_km
 	add_child(hole)
 	var observer := Vector3(1.0,.12,0).normalized()*.572*149597870.7

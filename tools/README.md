@@ -4,6 +4,16 @@
 
 `test_galactic_core.tscn` checks Ctrl+P, physical scale, orbital inspection, nearby recipe stars, horizon capture/recovery, core density, saves and return travel. `test_black_hole_views.tscn` renders close outward/rolled flow and foreground-exhaust regressions. `test_black_hole_motion.tscn` verifies visible plasma turbulence over four normal-speed half-second intervals with a fixed observer; captures use optional `MOTION_SHOT_DIR`. `render_galactic_core.tscn` captures the real close/polar/wide/overview arrivals and checks for visible, rotating plasma; use a windowed renderer, with optional `CORE_SHOT_DIR`. `test_black_hole_plunge.tscn` checks the pseudo-Newtonian ship gravity (circular orbits under warp at 60/20 fps, capture below the ISCO, force-law ISCO vs recipe, Sol untouched) and the HUD/audio/camera plunge cues. See `docs/GALACTIC_CORE.md`.
 
+`profile_galactic_core.tscn` measures CPU/GPU frame times in close, approach,
+infall and distant views, with individual render effects disabled for comparison.
+Run with a real rendering display and `--max-fps 0`; optional user arguments:
+`--case=close`, `--size=1920x1080`, `--gpu-budget-ms=25`, `--cpu-budget-ms=5`,
+`--shader=res://path/to/reference.gdshader`, `--shots=res://.scratch-assets/core-profile`.
+The GPU budget checks the median; the CPU budget checks the 95th percentile.
+`test_black_hole_orbit_state.gd` checks lightweight flight telemetry and absent
+uncomputed escape advice. Visual tests also accept `--shots=<directory>` and
+`--reference-shader=<path>` for fixed-camera comparisons.
+
 Dev-only scripts: none of this ships in a build. See CLAUDE.md for exact invocation forms.
 
 `test_black_hole_portal.tscn` checks horizon entry without hull loss, cinematic

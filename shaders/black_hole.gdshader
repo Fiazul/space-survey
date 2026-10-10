@@ -66,15 +66,18 @@ void ks_metric(vec3 x, float a, out float r, out float f, out vec3 l) {
 void ks_flow(vec3 x, vec3 p, float a, out vec3 dx, out vec3 dp) {
 	float r = ks_radius(x,a);
 	float r2 = r*r;
-	float s = r2 + a*a;
-	float d = r2*r2 + a*a*x.z*x.z;
-	float f = 2.0*r2*r/d;
-	vec3 l = vec3((r*x.x + a*x.y)/s, (r*x.y - a*x.x)/s, x.z/r);
+	float a2 = a*a;
+	float inverse_r = 1.0/r;
+	float inverse_s = 1.0/(r2 + a2);
+	float inverse_d = 1.0/(r2*r2 + a2*x.z*x.z);
+	float f = 2.0*r2*r*inverse_d;
+	vec3 l = vec3((r*x.x + a*x.y)*inverse_s, (r*x.y - a*x.x)*inverse_s, x.z*inverse_r);
 	float null_l = 1.0 + dot(l,p);
-	vec3 dr = vec3(r2*x.x, r2*x.y, s*x.z) / (r*(2.0*r2 - dot(x,x) + a*a));
-	vec3 df = (6.0*r2*d - 8.0*r2*r2*r2)/(d*d)*dr - vec3(0.0, 0.0, 4.0*r2*r*a*a*x.z/(d*d));
-	vec3 dl = dr*((x.x*p.x + x.y*p.y - 2.0*r*(l.x*p.x + l.y*p.y))/s - x.z*p.z/r2)
-		+ vec3((r*p.x - a*p.y)/s, (r*p.y + a*p.x)/s, p.z/r);
+	// The oblate-radius identity replaces the second metric denominator with d/r.
+	vec3 dr = vec3(r2*x.x, r2*x.y, (r2 + a2)*x.z)*r*inverse_d;
+	vec3 df = f*((3.0*inverse_r - 2.0*f)*dr - vec3(0.0, 0.0, 2.0*a2*x.z*inverse_d));
+	vec3 dl = dr*((x.x*p.x + x.y*p.y - 2.0*r*(l.x*p.x + l.y*p.y))*inverse_s - x.z*p.z*inverse_r*inverse_r)
+		+ vec3((r*p.x - a*p.y)*inverse_s, (r*p.y + a*p.x)*inverse_s, p.z*inverse_r);
 	dx = p - f*null_l*l;
 	dp = .5*null_l*null_l*df + f*null_l*dl;
 }
@@ -192,15 +195,24 @@ void fragment() {
 		r = ks_radius(x, a);
 		if (r < horizon_rg*1.01) break;
 		if (r > reach*1.05 && dot(x,p) > 0.0) { captured = false; break; }
-		float h = clamp(.25*(r - .8*horizon_rg), .02, 4.0);
-		vec3 k1x, k1p, k2x, k2p, k3x, k3p, k4x, k4p;
-		ks_flow(x, p, a, k1x, k1p);
-		ks_flow(x + .5*h*k1x, p + .5*h*k1p, a, k2x, k2p);
-		ks_flow(x + .5*h*k2x, p + .5*h*k2p, a, k3x, k3p);
-		ks_flow(x + h*k3x, p + h*k3p, a, k4x, k4p);
-		vec3 next = x + h/6.0*(k1x + 2.0*k2x + 2.0*k3x + k4x);
-		vec3 next_p = p + h/6.0*(k1p + 2.0*k2p + 2.0*k3p + k4p);
-		velocity = k4x;
+		float step_scale = mix(.25, .5, smoothstep(8.0, 20.0, r));
+		float h = clamp(step_scale*(r - .8*horizon_rg), .02, 12.0);
+		vec3 flow_x, flow_p;
+		ks_flow(x, p, a, flow_x, flow_p);
+		// Resolve disk crossings separately from the longer weak-field steps.
+		if (x.z*flow_x.z < 0.0) h = min(h, max(.02, -x.z/flow_x.z)*1.05);
+		vec3 sum_x = flow_x;
+		vec3 sum_p = flow_p;
+		ks_flow(x + .5*h*flow_x, p + .5*h*flow_p, a, flow_x, flow_p);
+		sum_x += 2.0*flow_x;
+		sum_p += 2.0*flow_p;
+		ks_flow(x + .5*h*flow_x, p + .5*h*flow_p, a, flow_x, flow_p);
+		sum_x += 2.0*flow_x;
+		sum_p += 2.0*flow_p;
+		ks_flow(x + h*flow_x, p + h*flow_p, a, flow_x, flow_p);
+		vec3 next = x + h/6.0*(sum_x + flow_x);
+		vec3 next_p = p + h/6.0*(sum_p + flow_p);
+		velocity = flow_x;
 		if (x.z*next.z < 0.0) {
 			float t = x.z/(x.z-next.z);
 			vec3 hit = mix(x,next,t);

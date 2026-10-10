@@ -233,7 +233,7 @@ var last_thrust_accel := Vector3.ZERO  # true-space thrust accel this frame
 var simulation_delta := 0.0 # actual elapsed simulation time of the latest fly()
 var horizon_crossed := false # swept crossing on the bounded Newton substeps
 var hole_captured := false   # forced gameplay infall inside HOLE_CAPTURE_AU
-var hole_orbit := {}         # BlackHoleGravity.orbit() for HUD warnings; {} outside a hole system
+var hole_orbit := {}         # BlackHoleGravity.orbit_state() for HUD warnings; {} outside a hole system
 var _hole_orbit_t := 0.0
 var _shake_deg := 0.0        # camera-only plunge shake; never touches ship state
 var _shake_t := 0.0
@@ -1826,8 +1826,8 @@ func _update_hole_cues(delta: float) -> void:
 	var rel := _from_hole(hole.name)
 	_hole_orbit_t -= delta
 	if _hole_orbit_t <= 0.0 or hole_orbit.is_empty():
-		hole_orbit = _BHG.orbit(hole, rel, velocity, max_thrust_accel())
-		# A plunge adds the escape-burn search (~8 ms); refresh it at 4 Hz.
+		# Capture warnings do not use an escape burn; leave that search to orbit().
+		hole_orbit = _BHG.orbit_state(hole, rel, velocity)
 		_hole_orbit_t = 0.25 if hole_orbit.plunging else 0.1
 	hole_orbit["captured"] = hole_captured
 	hole_orbit["capture_radius_au"] = HOLE_CAPTURE_AU

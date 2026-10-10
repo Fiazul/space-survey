@@ -16,6 +16,56 @@ Representative stars share an enhanced exposure so their unresolved light adds i
 
 Core stars use one point draw and gas uses one batched draw. Twelve physical stars keep ordinary mesh/impostor LOD. The hole traces only within its projected bounds and disappears below the subpixel threshold. While visible in front of the camera, a 1024×512 all-sky background viewport projects the same physical core positions: transparent gas is included and the ship/UI are excluded. It covers escaping rays in every direction, including behind the observer. This background is cached and updates only after observer movement exceeding 10⁻⁸ ly; turning the camera does not redraw it. The background viewport suspends at unresolved distances and on return to ordinary systems. The original outside-in galaxy GLB remains hidden, and the local-Sol catalogue backdrop is hidden in the core.
 
+**Core performance, 2026-10-10.** The tracer retains RK4, the 96-step limit and
+the original strong-field step scale through 8 r_g. Between 8 and 20 r_g the
+scale grows smoothly from 0.25 to 0.5; the weak-field step cap is 12 r_g.
+Prospective disk-plane crossings shorten the step separately to retain fine
+intersection sampling. Metric derivatives reuse their denominators, and RK4
+accumulates each stage without retaining all four derivatives simultaneously.
+Flight calls `BlackHoleGravity.orbit_state()` for plunge, clock, audio and camera
+telemetry. It omits uncomputed escape-advice fields. The full `orbit()` API
+retains escape-burn/fall-time calculations for physical-analysis callers; the
+capture HUD does not use that advice.
+
+Measured on an i5-12400/UHD 730, Godot 4.7.2, Vulkan Forward+, 3D scale 1.0,
+V-Sync disabled. The matched shader comparison holds the observer, camera and
+field of view fixed, advances the real main update at 1/60 simulation seconds,
+discards 40 warm-up frames and samples 120 frames. Both runs use the same updated
+flight code; this comparison measures the tracer change. FPS below is the
+reciprocal of median measured wall-frame time, not an interactive playtest or
+a cross-GPU guarantee.
+
+| View | Original GPU ms | Optimized GPU ms | Original → optimized FPS |
+|---|---:|---:|---:|
+| 2 AU, 1280×720 | 37.86 | 20.44 | 26 → 46 |
+| 2 AU, 1920×1080 | 75.21 | 40.22 | 13 → 24 |
+
+Earlier exploratory profiling found that disabling the original lens reduced
+GPU time at 2 AU to 6.99 ms; disabling core stars or gas saved less than 1 ms.
+Inward-flight main CPU p95 fell from 6.65 to 3.95 ms after removing the unused
+escape search. The exploratory optimized infall case still measured 25.64 ms
+GPU time, narrowly exceeding the optional 25 ms budget; close views do not
+meet a 60 FPS budget on this hardware. Existing shutdown
+ObjectDB/resource warnings occur on the original shader and in headless tests
+as well. They were not repaired by this optimization.
+
+Reproduce the close-view budget with a rendering display:
+
+```sh
+godot --path . --max-fps 0 res://tools/profile_galactic_core.tscn -- --case=close --gpu-budget-ms=25
+```
+
+Omit `--case` to profile every case. `--size=1920x1080` selects a larger window.
+Screenshots default to `.scratch-assets/core-profile/`; saves are isolated.
+An unavailable GPU timer or invalid reference shader cannot pass a requested
+performance comparison. Reference visual captures retained the Kerr shadow
+edges at 2.853/6.838 r_g versus closed-form 2.844/6.832 r_g. Across the fixed
+views, mean RGB differences from the original shader were at most 0.00415 on
+a 0–1 scale; fewer than 0.01% of pixels differed by over 0.1 in any channel.
+Ten headless gameplay/physics tests passed, as did the view and motion tests
+on both Vulkan Forward+ and OpenGL Compatibility. Other GPUs and Android
+have not been measured.
+
 Close views cover the whole camera when the flow subtends a large angle, including outward views from inside the flow and camera roll. Far views keep bounded geometry and subpixel culling. Core batches draw before the lens; foreground transparent exhaust draws after it. The exhaust's screen refraction is skipped in black-hole systems because Godot's opaque screen copy precedes lens compositing; the emitting plume remains visible. The plasma uses the shared celestial simulation clock, so time warp advances both flight and flow. With a = 0.9 the innermost flow completes an orbit in about 9.8 minutes of real time (14.8 s in the ×40 sensor view); the galactic bulge itself has much longer orbital periods.
 
 Verify with `godot --headless --path . res://tools/test_galactic_core.tscn`. Render regressions for close outward/rolled views and transparent foreground effects use `xvfb-run -a godot --path . res://tools/test_black_hole_views.tscn`. Capture the real arrivals with `xvfb-run -a godot --path . res://tools/render_galactic_core.tscn`; images go to `/tmp/astryx-core`, or `CORE_SHOT_DIR`, including side and rolled views with a modular hull. These tools isolate player profiles.

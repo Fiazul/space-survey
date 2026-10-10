@@ -267,20 +267,16 @@ static func _try_heading(h: Dictionary, rel: Vector3, vel: Vector3, radial: Vect
 	found[1] = heading
 
 
-# What the ship's orbit does with engines off, and the burn that would stop a plunge
-# (escape_burn). `thrust` is the ship's best sustained acceleration; no_escape means
-# even that, held all the way to the horizon, delivers less Δv than the burn needs.
-static func orbit(h: Dictionary, rel: Vector3, vel: Vector3, thrust: float) -> Dictionary:
+static func orbit_state(h: Dictionary, rel: Vector3, vel: Vector3) -> Dictionary:
 	var split := _split(rel, vel)
 	var r := split[0]
 	var a := effective_spin(h, rel, vel)
 	var r_g: float = h.r_g
 	var out := {"r": r, "spin": a, "isco_km": isco_rg(a) * r_g, "photon_km": photon_rg(a) * r_g,
-		"plunging": false, "no_escape": false, "dv_kms": 0.0, "burn": Vector3.ZERO, "fall_s": INF,
+		"plunging": false,
 		"clock_rate": 0.0, "kepler_hz": kepler_hz(h, r, a)}
 	if r <= float(h.horizon_km):
 		out.plunging = true
-		out.no_escape = true
 		return out
 	var vr := split[1]
 	var vt := split[2]
@@ -290,6 +286,26 @@ static func orbit(h: Dictionary, rel: Vector3, vel: Vector3, thrust: float) -> D
 	if not _plunges(h, a, l, e, r, vr):
 		return out
 	out.plunging = true
+	return out
+
+
+# What the ship's orbit does with engines off, and the burn that would stop a plunge
+# (escape_burn). `thrust` is the ship's best sustained acceleration; no_escape means
+# even that, held all the way to the horizon, delivers less Δv than the burn needs.
+static func orbit(h: Dictionary, rel: Vector3, vel: Vector3, thrust: float) -> Dictionary:
+	var out := orbit_state(h, rel, vel)
+	out.merge({"no_escape": false, "dv_kms": 0.0, "burn": Vector3.ZERO, "fall_s": INF})
+	if float(out.r) <= float(h.horizon_km):
+		out.no_escape = true
+		return out
+	if not out.plunging: return out
+	var split := _split(rel, vel)
+	var r: float = out.r
+	var a: float = out.spin
+	var vr := split[1]
+	var vt := split[2]
+	var l := r * vt
+	var e := 0.5 * (vr*vr + vt*vt) + potential(h, r, a)
 	var fall := _inbound_s(h, a, l, e, r)
 	if vr > 0.0:
 		fall += 2.0 * _outbound_s(h, a, l, e, r)
